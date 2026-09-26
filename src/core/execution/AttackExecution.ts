@@ -70,6 +70,14 @@ export class AttackExecution implements Execution {
   /** B2: capture the attack march state (border heap + PRNG + link to Attack). */
   checkpoint(): ExecutionCheckpoint {
     const target = this.target as Player | TerraNullius | undefined;
+    // Another AttackExecution can merge or delete this attack during its init
+    // (see the outgoing/incoming merge loops below); this execution keeps the
+    // now-inactive reference until its next tick notices and deactivates.
+    // `this.attack === null` means the execution is still pending its first
+    // init, so leave `active` alone there.
+    const hasLiveAttack = this.attack !== null && this.attack.isActive();
+    const active =
+      this.attack === null ? this.active : this.active && hasLiveAttack;
     return {
       kind: "attack",
       data: {
@@ -83,9 +91,9 @@ export class AttackExecution implements Execution {
               : null,
         sourceTile: this.sourceTile,
         removeTroops: this.removeTroops,
-        active: this.active,
+        active,
         random: this.random.state(),
-        attackId: this.attack?.id() ?? null,
+        attackId: hasLiveAttack ? this.attack!.id() : null,
         toConquer: this.toConquer.snapshot(),
       } satisfies AttackExecutionCheckpoint,
     };

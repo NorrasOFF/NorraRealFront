@@ -18,6 +18,7 @@ import {
  *   bigint       -> { "$bigint": "123" }
  *   Uint8Array   -> { "$u8": "<base64>" }
  *   Uint16Array  -> { "$u16": "<base64>" }
+ *   other typed arrays (Uint32Array, Float64Array, ...) -> { "$ta": "<ctor>", "d": "<base64>" }
  *   NaN/±Infinity -> { "$num": "NaN" | "Infinity" | "-Infinity" }
  *
  * `undefined` object properties are dropped by JSON, which matches how an absent
@@ -82,6 +83,50 @@ const BIGINT_TAG = "$bigint";
 const U8_TAG = "$u8";
 const U16_TAG = "$u16";
 const NUM_TAG = "$num";
+// Every other typed array a checkpoint can hold. The map buffers ride the
+// binary section or the `$u8`/`$u16` tags above, but execution/stepper state
+// carries others — PathFinderStepper stores numeric routes as `Uint32Array` —
+// and plain `JSON.stringify` would silently turn those into `{"0":...}`.
+const TA_TAG = "$ta";
+const TYPED_ARRAY_NAMES = new Set([
+  "Int8Array",
+  "Uint8Array",
+  "Uint8ClampedArray",
+  "Int16Array",
+  "Uint16Array",
+  "Int32Array",
+  "Uint32Array",
+  "Float32Array",
+  "Float64Array",
+  "BigInt64Array",
+  "BigUint64Array",
+]);
+
+/** Raw byte view of a typed array, excluding its backing buffer's slack. */
+function typedArrayBytesView(value: ArrayBufferView): Uint8Array {
+  return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+}
+
+/** Rebuild a typed array tagged by the replacer as `{ $ta, d }`. */
+function decodeTaggedTypedArray(name: string, base64: string): unknown {
+  if (!TYPED_ARRAY_NAMES.has(name)) {
+    return undefined;
+  }
+  const ctor = (globalThis as Record<string, unknown>)[name] as
+    | (new (
+        buffer: ArrayBufferLike,
+        byteOffset: number,
+        length: number,
+      ) => ArrayBufferView)
+    | undefined;
+  if (typeof ctor !== "function") {
+    return undefined;
+  }
+  const bytes = base64ToBytes(base64);
+  const perElement = (ctor as unknown as { BYTES_PER_ELEMENT: number })
+    .BYTES_PER_ELEMENT;
+  return new ctor(bytes.buffer, bytes.byteOffset, bytes.length / perElement);
+}
 
 // Chunked so `String.fromCharCode(...)` cannot blow the argument stack on a
 // multi-megabyte map buffer.
@@ -118,6 +163,12 @@ function replacer(_key: string, value: unknown): unknown {
       ),
     };
   }
+  if (ArrayBuffer.isView(value) && !(value instanceof DataView)) {
+    const name = value.constructor.name;
+    if (TYPED_ARRAY_NAMES.has(name)) {
+      return { [TA_TAG]: name, d: bytesToBase64(typedArrayBytesView(value)) };
+    }
+  }
   if (typeof value === "number" && !Number.isFinite(value)) {
     return { [NUM_TAG]: String(value) };
   }
@@ -145,6 +196,13 @@ function reviver(_key: string, value: unknown): unknown {
   const num = tagged[NUM_TAG];
   if (typeof num === "string") {
     return Number(num);
+  }
+  const ta = tagged[TA_TAG];
+  if (typeof ta === "string" && typeof tagged.d === "string") {
+    const decoded = decodeTaggedTypedArray(ta, tagged.d);
+    if (decoded !== undefined) {
+      return decoded;
+    }
   }
   return value;
 }

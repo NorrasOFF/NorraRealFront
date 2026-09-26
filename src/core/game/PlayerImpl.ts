@@ -2057,6 +2057,17 @@ export class PlayerImpl implements Player {
     return {
       id: this.playerInfo.id,
       smallID: this._smallID,
+      playerInfo: {
+        name: this.playerInfo.name,
+        playerType: this.playerInfo.playerType,
+        clientID: this.playerInfo.clientID,
+        id: this.playerInfo.id,
+        isLobbyCreator: this.playerInfo.isLobbyCreator,
+        clanTag: this.playerInfo.clanTag,
+        friends: [...this.playerInfo.friends],
+        teamIndex: this.playerInfo.teamIndex,
+        nationFlag: this.playerInfo.nationFlag,
+      },
       gold: this._gold,
       troops: this._troops,
       tradeGold: this._tradeGold,
@@ -2068,6 +2079,7 @@ export class PlayerImpl implements Player {
         number,
       ][],
       avoidedTiles: Array.from(this._avoidedTiles),
+      borderTiles: Array.from(this._borderTiles),
       unitIds: this._units.map((u) => u.id()),
       allianceIds: this._alliances.map((a) => a.id()),
       outgoingAttackIds: this._outgoingAttacks.map((a) => a.id()),
@@ -2168,7 +2180,7 @@ export class PlayerImpl implements Player {
     this.relations = new Map();
     for (const [smallId, value] of cp.relations) {
       const other = this.mg.playerBySmallID(smallId);
-      if (other.isPlayer()) {
+      if (other !== undefined && other.isPlayer()) {
         this.relations.set(other, value);
       }
     }
@@ -2203,7 +2215,6 @@ export class PlayerImpl implements Player {
 
     // Derived/cache state: drop so it is rebuilt lazily from the restored
     // authoritative fields.
-    this._borderTiles.clear();
     this.myUnitsMemo.clear();
     this.myUnitCountMemo.clear();
     this.myUnitsOwnedMemo.clear();
@@ -2212,6 +2223,14 @@ export class PlayerImpl implements Player {
     this.largestClusterBoundingBox = null;
     this._tileChangeVersion = 0;
     this._myUnitsVersion = 0;
+
+    // Border tiles are insertion-ordered and consumers assign per-neighbour
+    // PRNG draws in that order, so restore the captured order rather than
+    // rebuilding from the (differently ordered) ownership map.
+    this._borderTiles.clear();
+    for (const tile of cp.borderTiles) {
+      this._borderTiles.add(tile);
+    }
 
     // Alliance history. These objects are not re-linked elsewhere, so rebuild
     // them here from their checkpoints (see AllianceRequestImpl /

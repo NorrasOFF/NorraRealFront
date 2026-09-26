@@ -2,6 +2,7 @@ import {
   EmojiMessage,
   NukeState,
   PlayerID,
+  PlayerType,
   SamLauncherState,
   Team,
   TrainType,
@@ -26,7 +27,7 @@ import { PlayerStats } from "./StatsSchemas";
  * The format is versioned and `gitCommit`-pinned like the rest of the save
  * system: a checkpoint from a different build may not replay identically.
  */
-export const CHECKPOINT_VERSION = 2;
+export const CHECKPOINT_VERSION = 3;
 
 // Checkpoints are captured on demand (the in-game save button), not on a fixed
 // cadence: the player decides when to pay the capture/encode cost. The only hard
@@ -191,9 +192,30 @@ export interface TrainExecutionCheckpoint {
   pathIndex: number;
 }
 
+/**
+ * B2: the immutable `PlayerInfo` of a player, captured so a checkpoint can
+ * recreate players that were added *after* game construction. `GameImpl`
+ * constructs only humans + map nations; bot tribes are appended during play by
+ * `SpawnExecution`, so a late-game checkpoint's roster is larger than a freshly
+ * built game's. Without this, restore silently dropped those players.
+ */
+export interface PlayerInfoCheckpoint {
+  name: string;
+  playerType: PlayerType;
+  clientID: ClientID | null;
+  id: PlayerID;
+  isLobbyCreator: boolean;
+  clanTag: string | null;
+  friends: ClientID[];
+  teamIndex: number | null;
+  nationFlag: string | null;
+}
+
 export interface PlayerCheckpoint {
   id: PlayerID;
   smallID: number;
+  /** Roster entry so a missing player can be recreated on restore. */
+  playerInfo: PlayerInfoCheckpoint;
   gold: bigint;
   troops: bigint;
   tradeGold: bigint;
@@ -207,6 +229,14 @@ export interface PlayerCheckpoint {
    * it on restore. Serializing every ref dominated large-map checkpoints.
    */
   avoidedTiles: TileRef[];
+  /**
+   * The player's border tiles, in insertion order. Unlike owned tiles these are
+   * captured: several consumers (e.g. AttackExecution.refreshToConquer) assign
+   * per-neighbour PRNG draws by iterating them, so rebuilding them from the
+   * ownership map in a different order changes the simulation. The border is
+   * O(perimeter), a small fraction of the owned set.
+   */
+  borderTiles: TileRef[];
   unitIds: number[];
   allianceIds: number[];
   outgoingAttackIds: string[];

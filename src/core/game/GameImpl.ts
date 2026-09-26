@@ -7,6 +7,7 @@ import {
   CheckpointWinner,
   ExecutionCheckpoint,
   GameCheckpoint,
+  PlayerInfoCheckpoint,
   UnitCheckpoint,
 } from "../Checkpoint";
 import { Config } from "../configuration/Config";
@@ -1584,7 +1585,8 @@ export class GameImpl implements Game {
     this._ticks = cp.ticks;
     this.startTick = cp.startTick;
     this._isPaused = cp.isPaused;
-    this.nextPlayerID = cp.nextPlayerID;
+    // `nextPlayerID` is re-stamped after the roster is rebuilt below: creating
+    // the checkpoint-only players advances it.
     this._nextUnitID = cp.nextUnitID;
     this._nextFleetId = cp.nextFleetId;
     this.nextAllianceID = cp.nextAllianceID;
@@ -1608,20 +1610,35 @@ export class GameImpl implements Game {
     this._sharedWaterCache = new SharedWaterCache(this);
 
     const playerCpById = new Map(cp.players.map((p) => [p.id, p]));
-    const players: PlayerImpl[] = [];
+    // Construction players (humans + map nations) must all be present in the
+    // checkpoint; a mismatch means the checkpoint was taken for a different
+    // roster.
     for (const raw of this._playersBySmallID) {
       const player = raw as PlayerImpl;
-      const pcp = playerCpById.get(player.id());
-      if (pcp === undefined) {
+      if (!playerCpById.has(player.id())) {
         throw new Error(`checkpoint is missing player ${player.id()}`);
       }
+    }
+    // The checkpoint's roster can be larger than the fresh game's: bot tribes
+    // are appended mid-game by SpawnExecution. Recreate every missing player
+    // from its captured PlayerInfo, in checkpoint (smallID) order so
+    // `playerBySmallID` indexing stays aligned.
+    const players: PlayerImpl[] = [];
+    for (const pcp of cp.players) {
+      let player = this._players.get(pcp.id) as PlayerImpl | undefined;
+      player ??= this.addPlayer(
+        playerInfoFromCheckpoint(pcp.playerInfo),
+      ) as PlayerImpl;
       player.restoreFromCheckpoint(pcp);
       players.push(player);
     }
+    // All players now exist; stamp the authoritative next id.
+    this.nextPlayerID = cp.nextPlayerID;
 
     // Owned-tile sets are derived from the restored ownership map rather than
     // serialized (that dominated large-map checkpoints). Rebuild them now so
-    // every later step — units, border tiles, executions — sees them.
+    // every later step — units, executions — sees them. Border tiles were
+    // already restored in order by each player's restoreFromCheckpoint.
     this.rebuildPlayerTiles();
 
     // Units: rebuild spatially and re-link ownership. Two passes so a unit's
@@ -1719,12 +1736,10 @@ export class GameImpl implements Game {
         ),
     );
 
-    // Border tiles are derived from ownership; rebuild them.
-    for (const player of players) {
-      player._tiles.forEach((tile) => {
-        if (this.isBorder(tile)) player._borderTiles.add(tile);
-      });
-    }
+    // Border tiles are restored (in insertion order) by each player's
+    // restoreFromCheckpoint, not rebuilt from the ownership map: consumers such
+    // as AttackExecution.refreshToConquer draw from the PRNG while iterating
+    // them, so a different order would change the simulation.
 
     // Rail network: rebuild before executions so restored train executions can
     // resolve their stations and railroad segments.
@@ -1803,6 +1818,21 @@ export class GameImpl implements Game {
     // merged: importMapState bypassed those methods, so recompute it here.
     this.tileOwnershipChecksum = checksum;
   }
+}
+
+/** Rebuild a `PlayerInfo` from a checkpoint roster entry (see PlayerInfoCheckpoint). */
+function playerInfoFromCheckpoint(cp: PlayerInfoCheckpoint): PlayerInfo {
+  return new PlayerInfo(
+    cp.name,
+    cp.playerType,
+    cp.clientID,
+    cp.id,
+    cp.isLobbyCreator,
+    cp.clanTag,
+    cp.friends,
+    cp.teamIndex,
+    cp.nationFlag,
+  );
 }
 
 // Or a more dynamic approach that will catch new enum values:
