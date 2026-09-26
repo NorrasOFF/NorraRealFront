@@ -24,6 +24,12 @@ export interface ShellExecutionCheckpoint {
   active: boolean;
   shellId: number | null;
   destroyAtTick: number;
+  /**
+   * Veterancy of the firing unit at capture time. The shell keeps flying after
+   * its owner unit is destroyed, so a restore may not be able to resolve it;
+   * this keeps the damage roll exact. Optional for pre-existing checkpoints.
+   */
+  ownerVeterancy?: number;
   random: PseudoRandomState;
   pathFinder: PathFinderStepperSnapshot<TileRef>;
 }
@@ -35,13 +41,21 @@ export class ShellExecution implements Execution {
   private mg: Game;
   private destroyAtTick: number = -1;
   private random: PseudoRandom;
+  /** Fallback veterancy used once the firing unit no longer exists. */
+  private ownerVeterancy = 0;
+  /** Id of the firing unit, retained even after the unit is destroyed. */
+  private ownerUnitId: number;
 
   constructor(
     private spawn: TileRef,
     private _owner: Player,
-    private ownerUnit: Unit,
+    private ownerUnit: Unit | undefined,
     private target: Unit,
-  ) {}
+    ownerUnitId?: number,
+  ) {
+    this.ownerUnitId = ownerUnit?.id() ?? ownerUnitId ?? -1;
+    this.ownerVeterancy = ownerUnit?.veterancy() ?? 0;
+  }
 
   /** B2: capture the shell's in-flight route, PRNG and lifetime state. */
   checkpoint(): ExecutionCheckpoint {
@@ -50,11 +64,12 @@ export class ShellExecution implements Execution {
       data: {
         spawn: this.spawn,
         ownerId: this._owner.id(),
-        ownerUnitId: this.ownerUnit.id(),
+        ownerUnitId: this.ownerUnitId,
         targetId: this.target.id(),
         active: this.active,
         shellId: this.shell?.id() ?? null,
         destroyAtTick: this.destroyAtTick,
+        ownerVeterancy: this.currentOwnerVeterancy(),
         random: this.random.state(),
         pathFinder: this.pathFinder.snapshot(),
       } satisfies ShellExecutionCheckpoint,
@@ -63,9 +78,11 @@ export class ShellExecution implements Execution {
 
   /** B2: overwrite this execution from a checkpoint. Returns false if a referenced unit is gone. */
   restoreCheckpoint(game: Game, data: ShellExecutionCheckpoint): boolean {
+    // The firing unit may already be destroyed while the shell is still in
+    // flight; only the target is required to rebuild the flight.
     const ownerUnit = game.unit(data.ownerUnitId);
     const target = game.unit(data.targetId);
-    if (ownerUnit === undefined || target === undefined) return false;
+    if (target === undefined) return false;
     const shell = data.shellId === null ? undefined : game.unit(data.shellId);
     if (data.shellId !== null && shell === undefined) return false;
 
@@ -74,6 +91,7 @@ export class ShellExecution implements Execution {
     this.spawn = data.spawn;
     this._owner = game.player(data.ownerId);
     this.ownerUnit = ownerUnit;
+    this.ownerVeterancy = data.ownerVeterancy ?? ownerUnit?.veterancy() ?? 0;
     this.target = target;
     this.shell = shell;
     this.destroyAtTick = data.destroyAtTick;
@@ -88,6 +106,11 @@ export class ShellExecution implements Execution {
     this.pathFinder = PathFinding.Air(mg);
     this.mg = mg;
     this.random = new PseudoRandom(mg.ticks());
+  }
+
+  /** Live firing-unit veterancy, or the captured value once it is gone. */
+  private currentOwnerVeterancy(): number {
+    return this.ownerUnit?.veterancy() ?? this.ownerVeterancy;
   }
 
   tick(ticks: number): void {
@@ -106,7 +129,7 @@ export class ShellExecution implements Execution {
       return;
     }
 
-    if (this.destroyAtTick === -1 && !this.ownerUnit.isActive()) {
+    if (this.destroyAtTick === -1 && !(this.ownerUnit?.isActive() ?? false)) {
       this.destroyAtTick = this.mg.ticks() + this.mg.config().shellLifetime();
     }
 
@@ -123,13 +146,15 @@ export class ShellExecution implements Execution {
         this.target.modifyHealth(-this.effectOnTarget(), this._owner);
         // Award veterancy to the firing warship when this shell lands the
         // killing blow on an enemy warship or transport ship.
+        const owner = this.ownerUnit;
         if (
           targetWasActive &&
           !this.target.isActive() &&
-          this.ownerUnit.isActive() &&
-          this.ownerUnit.type() === UnitType.Warship
+          owner !== undefined &&
+          owner.isActive() &&
+          owner.type() === UnitType.Warship
         ) {
-          this.ownerUnit.recordKill(targetType);
+          owner.recordKill(targetType);
         }
         this.shell.setReachedTarget();
         this.shell.delete(false);
@@ -149,7 +174,7 @@ export class ShellExecution implements Execution {
 
     // Veteran warships hit harder — scale the (integer) multiplier by the firing
     // unit's veterancy. Integer percent math keeps src/core float-free.
-    const veterancy = this.ownerUnit.veterancy();
+    const veterancy = this.currentOwnerVeterancy();
     if (veterancy > 0) {
       const bonusPercent = this.mg.config().warshipVeterancyShellDamageBonus();
       damageMultiplier = Math.floor(

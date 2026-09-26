@@ -372,14 +372,17 @@ export function restoreExecution(
     case "shell": {
       const data = cp.data as ShellExecutionCheckpoint;
       if (!game.hasPlayer(data.ownerId)) return undefined;
+      // The firing unit can be destroyed mid-flight; the shell still lands, so
+      // only the target is required.
       const ownerUnit = game.unit(data.ownerUnitId);
       const target = game.unit(data.targetId);
-      if (ownerUnit === undefined || target === undefined) return undefined;
+      if (target === undefined) return undefined;
       const exec = new ShellExecution(
         data.spawn,
         game.player(data.ownerId),
         ownerUnit,
         target,
+        data.ownerUnitId,
       );
       if (!exec.restoreCheckpoint(game, data)) return undefined;
       return exec;

@@ -21,9 +21,11 @@ export class DefensePostExecution implements Execution {
         active: this.active,
         targetId: this.target?.id() ?? null,
         lastShellAttack: this.lastShellAttack,
-        alreadySentShellIds: Array.from(this.alreadySentShell).map((u) =>
-          u.id(),
-        ),
+        // Drop deleted targets (ids are not reused, so they can never be sent
+        // another shell); this keeps re-captures after a restore identical.
+        alreadySentShellIds: Array.from(this.alreadySentShell)
+          .filter((u) => u.isActive())
+          .map((u) => u.id()),
       },
     };
   }

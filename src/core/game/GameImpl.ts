@@ -1629,8 +1629,14 @@ export class GameImpl implements Game {
       player ??= this.addPlayer(
         playerInfoFromCheckpoint(pcp.playerInfo),
       ) as PlayerImpl;
-      player.restoreFromCheckpoint(pcp);
       players.push(player);
+    }
+    // Restore players in a second pass, once the whole roster exists: a player's
+    // captured relations/embargoes/targets/donations resolve other players by
+    // smallID or id, and those players may be created after it in the loop
+    // above. Restoring inline dropped every cross-reference to a later player.
+    for (let i = 0; i < players.length; i++) {
+      players[i].restoreFromCheckpoint(cp.players[i]);
     }
     // All players now exist; stamp the authoritative next id.
     this.nextPlayerID = cp.nextPlayerID;

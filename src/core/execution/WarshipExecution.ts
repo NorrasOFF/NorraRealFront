@@ -54,7 +54,12 @@ export class WarshipExecution implements Execution {
         warshipId: this.warship?.id() ?? null,
         random: this.random.state(),
         lastShellAttack: this.lastShellAttack,
-        alreadySentShellIds: [...this.alreadySentShell].map((u) => u.id()),
+        // Deleted targets can never be re-targeted (unit ids are not reused),
+        // so drop them: it keeps the captured set identical whether or not the
+        // checkpoint is re-captured after a restore.
+        alreadySentShellIds: [...this.alreadySentShell]
+          .filter((u) => u.isActive())
+          .map((u) => u.id()),
         lastManualMoveTickRetreatDisabled:
           this.lastManualMoveTickRetreatDisabled,
         lastObservedPatrolTile: this.lastObservedPatrolTile ?? null,

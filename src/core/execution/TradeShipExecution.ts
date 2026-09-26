@@ -60,14 +60,17 @@ export class TradeShipExecution implements Execution {
   private motionPlanId = 1;
   private motionPlanDst: TileRef | null = null;
   private initialized = false;
+  private srcPort: Unit | undefined;
   private srcPortId: number;
+  /** Fallback owner/tile used once the source port unit no longer exists. */
   private srcPortOwner: Player;
   private srcPortTile: TileRef;
 
   /**
-   * The source port is only used for its owner and tile (both immutable once
-   * the unit is deleted). `srcPortInfo` lets a restore reconstruct an execution
-   * whose source port unit is already gone.
+   * The source port is used for its owner and tile. While the unit exists the
+   * owner is read live (a port can be captured mid-voyage); `srcPortInfo` lets a
+   * restore reconstruct an execution whose source port unit is already gone, at
+   * which point its owner and tile are immutable.
    */
   constructor(
     private origOwner: Player,
@@ -75,17 +78,28 @@ export class TradeShipExecution implements Execution {
     private _dstPort: Unit,
     srcPortInfo?: TradeShipSrcPort,
   ) {
-    if (srcPortInfo !== undefined) {
-      this.srcPortId = srcPortInfo.id;
-      this.srcPortOwner = srcPortInfo.owner;
-      this.srcPortTile = srcPortInfo.tile;
-    } else if (srcPort !== undefined) {
+    this.srcPort = srcPort;
+    if (srcPort !== undefined) {
       this.srcPortId = srcPort.id();
       this.srcPortOwner = srcPort.owner();
       this.srcPortTile = srcPort.tile();
+    } else if (srcPortInfo !== undefined) {
+      this.srcPortId = srcPortInfo.id;
+      this.srcPortOwner = srcPortInfo.owner;
+      this.srcPortTile = srcPortInfo.tile;
     } else {
       throw new Error("TradeShipExecution requires a source port");
     }
+  }
+
+  /** Live source-port owner while the unit exists, else its frozen owner. */
+  private srcPortOwnerNow(): Player {
+    return this.srcPort?.owner() ?? this.srcPortOwner;
+  }
+
+  /** Live source-port tile while the unit exists, else its frozen tile. */
+  private srcPortTileNow(): TileRef {
+    return this.srcPort?.tile() ?? this.srcPortTile;
   }
 
   init(mg: Game, ticks: number): void {
@@ -102,8 +116,8 @@ export class TradeShipExecution implements Execution {
       data: {
         origOwnerId: this.origOwner.id(),
         srcPortId: this.srcPortId,
-        srcPortOwnerId: this.srcPortOwner.id(),
-        srcPortTile: this.srcPortTile,
+        srcPortOwnerId: this.srcPortOwnerNow().id(),
+        srcPortTile: this.srcPortTileNow(),
         dstPortId: this._dstPort.id(),
         tradeShipId: this.tradeShip?.id() ?? null,
         wasCaptured: this.wasCaptured,
@@ -156,7 +170,7 @@ export class TradeShipExecution implements Execution {
     if (this.tradeShip === undefined) {
       const spawn = this.origOwner.canBuild(
         UnitType.TradeShip,
-        this.srcPortTile,
+        this.srcPortTileNow(),
       );
       if (spawn === false) {
         console.warn(`cannot build trade ship`);
@@ -396,16 +410,16 @@ export class TradeShipExecution implements Execution {
         .stats()
         .boatCapturedTrade(this.tradeShip!.owner(), this.origOwner, gold);
     } else {
-      const srcOwner = this.srcPortOwner;
+      const srcOwner = this.srcPortOwnerNow();
       const dstOwner = this._dstPort.owner();
       if (srcOwner.id() === dstOwner.id()) {
         // Trading with your own nation yields half as much gold, paid once.
         const sameNationGold = gold / 2n;
-        srcOwner.addGold(sameNationGold, this.srcPortTile);
+        srcOwner.addGold(sameNationGold, this.srcPortTileNow());
         srcOwner.addTradeGold(sameNationGold);
         this.mg.stats().boatArriveTrade(srcOwner, dstOwner, sameNationGold);
       } else {
-        srcOwner.addGold(gold, this.srcPortTile);
+        srcOwner.addGold(gold, this.srcPortTileNow());
         dstOwner.addGold(gold, this._dstPort.tile());
         srcOwner.addTradeGold(gold);
         dstOwner.addTradeGold(gold);

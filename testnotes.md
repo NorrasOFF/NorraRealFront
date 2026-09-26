@@ -1,5 +1,13 @@
 # Test Notes
 
+## Pre-existing failure: SAM dynamic-range test
+
+`tests/core/executions/SAMLauncherExecution.test.ts` →
+"SAM intercepts incoming nuke during dynamic range expansion that is out of
+level 1 range" fails on this branch (`expected 23.333… to be close to 25.555`).
+It is unrelated to the save/resume work: it reproduces with the `src/core`
+changes stashed at commit `aa4816a58`, and exercises no checkpoint/shell code.
+
 ## Known environment-only test failures (`localStorage`)
 
 `UserSettings` reads/writes the global `localStorage` directly. On some local
