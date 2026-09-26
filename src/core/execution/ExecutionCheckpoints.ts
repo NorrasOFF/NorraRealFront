@@ -52,6 +52,7 @@ import { SpawnTimerExecution } from "./SpawnTimerExecution";
 import {
   TradeShipExecution,
   TradeShipExecutionCheckpoint,
+  TradeShipSrcPort,
 } from "./TradeShipExecution";
 import { TrainExecution } from "./TrainExecution";
 import { TrainStationExecution } from "./TrainStationExecution";
@@ -299,13 +300,32 @@ export function restoreExecution(
     case "trade_ship": {
       const data = cp.data as TradeShipExecutionCheckpoint;
       if (!game.hasPlayer(data.origOwnerId)) return undefined;
-      const srcPort = game.unit(data.srcPortId);
       const dstPort = game.unit(data.dstPortId);
-      if (srcPort === undefined || dstPort === undefined) return undefined;
+      if (dstPort === undefined) return undefined;
+      const srcPort = game.unit(data.srcPortId);
+      // A trade ship can outlive its source port: the port unit is deleted
+      // while the ship is at sea. Rebuild from the captured owner/tile, which
+      // are immutable once the unit is gone.
+      let srcPortInfo: TradeShipSrcPort | undefined;
+      if (srcPort === undefined) {
+        if (
+          data.srcPortOwnerId === undefined ||
+          data.srcPortTile === undefined ||
+          !game.hasPlayer(data.srcPortOwnerId)
+        ) {
+          return undefined;
+        }
+        srcPortInfo = {
+          id: data.srcPortId,
+          owner: game.player(data.srcPortOwnerId),
+          tile: data.srcPortTile,
+        };
+      }
       const exec = new TradeShipExecution(
         game.player(data.origOwnerId),
         srcPort,
         dstPort,
+        srcPortInfo,
       );
       if (!exec.restoreCheckpoint(game, data)) return undefined;
       return exec;

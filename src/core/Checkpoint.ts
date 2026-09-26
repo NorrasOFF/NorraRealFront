@@ -27,7 +27,10 @@ import { PlayerStats } from "./StatsSchemas";
  * The format is versioned and `gitCommit`-pinned like the rest of the save
  * system: a checkpoint from a different build may not replay identically.
  */
-export const CHECKPOINT_VERSION = 3;
+// 4: trade-ship checkpoints capture the source port owner/tile so a ship that
+// outlived its (deleted) source port can be restored instead of forcing a
+// full-history replay.
+export const CHECKPOINT_VERSION = 4;
 
 // Checkpoints are captured on demand (the in-game save button), not on a fixed
 // cadence: the player decides when to pay the capture/encode cost. The only hard

@@ -109,6 +109,44 @@ describe("B2 ship checkpoints", () => {
     expect(actualHashes).toEqual(expectedHashes);
   });
 
+  test("restores a trade ship whose source port was destroyed mid-voyage", async () => {
+    const { game: original, alphaId, betaId } = await buildGame();
+    const alpha = original.player(alphaId);
+    const beta = original.player(betaId);
+
+    alpha.conquer(original.ref(7, 2));
+    alpha.conquer(original.ref(7, 3));
+    beta.conquer(original.ref(7, 12));
+    beta.conquer(original.ref(7, 13));
+
+    const srcPort = alpha.buildUnit(UnitType.Port, original.ref(7, 2), {});
+    const dstPort = beta.buildUnit(UnitType.Port, original.ref(7, 13), {});
+    original.addExecution(new TradeShipExecution(alpha, srcPort, dstPort));
+
+    executeTicks(original, 6);
+    expect(original.units(UnitType.TradeShip)).toHaveLength(1);
+
+    // The source port is destroyed while the ship is still at sea. The live
+    // execution keeps sailing and will still pay out at the destination, so a
+    // resumed game must reproduce that rather than fail to restore.
+    srcPort.delete(false);
+    expect(original.units(UnitType.Port)).toHaveLength(1);
+
+    const checkpoint = original.checkpoint();
+    expect(checkpoint).toBeDefined();
+
+    const expectedHashes = drainHashes(original, 40);
+    expect(expectedHashes.length).toBeGreaterThan(0);
+
+    const { game: restored } = await buildGame();
+    restored.restoreFromCheckpoint(checkpoint!);
+    expect(restored.units(UnitType.TradeShip)).toHaveLength(1);
+    expect(restored.units(UnitType.Port)).toHaveLength(1);
+
+    const actualHashes = drainHashes(restored, 40);
+    expect(actualHashes).toEqual(expectedHashes);
+  });
+
   test("restores a live transport ship and replays its voyage identically", async () => {
     const { game: original, betaId } = await buildGame();
     const beta = original.player(betaId);

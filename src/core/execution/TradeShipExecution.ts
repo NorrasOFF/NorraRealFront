@@ -22,6 +22,15 @@ import { findClosestBy } from "../Util";
 export interface TradeShipExecutionCheckpoint {
   origOwnerId: PlayerID;
   srcPortId: number;
+  /**
+   * Source port owner and tile. Captured because a trade ship can outlive its
+   * source port: the port may be destroyed while the ship is at sea, leaving
+   * the execution holding a deleted unit. Once a unit is deleted its owner and
+   * tile never change, so replaying from these is exact. Optional for
+   * checkpoints written before these fields existed.
+   */
+  srcPortOwnerId?: PlayerID;
+  srcPortTile?: TileRef;
   /** Current destination port id (can change after a capture). */
   dstPortId: number;
   tradeShipId: number | null;
@@ -34,6 +43,13 @@ export interface TradeShipExecutionCheckpoint {
   pathFinder: WaterPathFinderSnapshot | null;
 }
 
+/** Identity of the source port, usable after the port unit is destroyed. */
+export interface TradeShipSrcPort {
+  id: number;
+  owner: Player;
+  tile: TileRef;
+}
+
 export class TradeShipExecution implements Execution {
   private active = true;
   private mg: Game;
@@ -44,12 +60,33 @@ export class TradeShipExecution implements Execution {
   private motionPlanId = 1;
   private motionPlanDst: TileRef | null = null;
   private initialized = false;
+  private srcPortId: number;
+  private srcPortOwner: Player;
+  private srcPortTile: TileRef;
 
+  /**
+   * The source port is only used for its owner and tile (both immutable once
+   * the unit is deleted). `srcPortInfo` lets a restore reconstruct an execution
+   * whose source port unit is already gone.
+   */
   constructor(
     private origOwner: Player,
-    private srcPort: Unit,
+    srcPort: Unit | undefined,
     private _dstPort: Unit,
-  ) {}
+    srcPortInfo?: TradeShipSrcPort,
+  ) {
+    if (srcPortInfo !== undefined) {
+      this.srcPortId = srcPortInfo.id;
+      this.srcPortOwner = srcPortInfo.owner;
+      this.srcPortTile = srcPortInfo.tile;
+    } else if (srcPort !== undefined) {
+      this.srcPortId = srcPort.id();
+      this.srcPortOwner = srcPort.owner();
+      this.srcPortTile = srcPort.tile();
+    } else {
+      throw new Error("TradeShipExecution requires a source port");
+    }
+  }
 
   init(mg: Game, ticks: number): void {
     this.mg = mg;
@@ -64,7 +101,9 @@ export class TradeShipExecution implements Execution {
       kind: "trade_ship",
       data: {
         origOwnerId: this.origOwner.id(),
-        srcPortId: this.srcPort.id(),
+        srcPortId: this.srcPortId,
+        srcPortOwnerId: this.srcPortOwner.id(),
+        srcPortTile: this.srcPortTile,
         dstPortId: this._dstPort.id(),
         tradeShipId: this.tradeShip?.id() ?? null,
         wasCaptured: this.wasCaptured,
@@ -117,7 +156,7 @@ export class TradeShipExecution implements Execution {
     if (this.tradeShip === undefined) {
       const spawn = this.origOwner.canBuild(
         UnitType.TradeShip,
-        this.srcPort.tile(),
+        this.srcPortTile,
       );
       if (spawn === false) {
         console.warn(`cannot build trade ship`);
@@ -357,16 +396,16 @@ export class TradeShipExecution implements Execution {
         .stats()
         .boatCapturedTrade(this.tradeShip!.owner(), this.origOwner, gold);
     } else {
-      const srcOwner = this.srcPort.owner();
+      const srcOwner = this.srcPortOwner;
       const dstOwner = this._dstPort.owner();
       if (srcOwner.id() === dstOwner.id()) {
         // Trading with your own nation yields half as much gold, paid once.
         const sameNationGold = gold / 2n;
-        srcOwner.addGold(sameNationGold, this.srcPort.tile());
+        srcOwner.addGold(sameNationGold, this.srcPortTile);
         srcOwner.addTradeGold(sameNationGold);
         this.mg.stats().boatArriveTrade(srcOwner, dstOwner, sameNationGold);
       } else {
-        srcOwner.addGold(gold, this.srcPort.tile());
+        srcOwner.addGold(gold, this.srcPortTile);
         dstOwner.addGold(gold, this._dstPort.tile());
         srcOwner.addTradeGold(gold);
         dstOwner.addTradeGold(gold);

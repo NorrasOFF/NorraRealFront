@@ -21,14 +21,21 @@
  *   6. Decode the checkpoint out of that start frame (what the browser does) to
  *      prove the client receives a usable blob.
  *
- * Run (defaults: world, 100 bots, 1200 game ticks after spawn):
+ * Run (defaults: world, 400 bots, 10000 game ticks after spawn):
  *
  *   $env:LATEGAME_TEST="1"; npx vitest run tests/LateGameSaveResume.test.ts
  *
- * Scale it up / pick a larger map:
+ * That default is a genuine late game: ~470 players at spawn, ~1000 units and
+ * ~1200 live executions at the checkpoint, and a ~4 MB gzipped wire. The long
+ * run to the checkpoint only executes ticks; the per-tick state fingerprint is
+ * recorded for the short suffix window alone, so the harness does not pay for a
+ * full-game `hash()` on top of the simulation.
+ *
+ * Scale it up / pick a larger map / lengthen the suffix:
  *
  *   $env:LATEGAME_TEST="1"; $env:LATEGAME_MAP="giantworldmap"; `
- *   $env:LATEGAME_BOTS="200"; $env:LATEGAME_TICKS="1800"; `
+ *   $env:LATEGAME_BOTS="400"; $env:LATEGAME_TICKS="10000"; `
+ *   $env:LATEGAME_SUFFIX="120"; `
  *   npx vitest run tests/LateGameSaveResume.test.ts
  */
 import fs from "node:fs";
@@ -70,13 +77,14 @@ const PROJECT_ROOT = path.resolve(
 );
 
 // Scale knobs. Defaults are a genuine late game on the medium-large World map
-// (~2M tiles, default nations + 100 bots).
+// (~2M tiles, default nations + 400 bots) run to 10000 ticks after spawn.
 const MAP = (process.env.LATEGAME_MAP as GameMapType) ?? GameMapType.World;
-const BOTS = Number(process.env.LATEGAME_BOTS ?? 100);
-const GAME_TICKS = Number(process.env.LATEGAME_TICKS ?? 1200);
+const BOTS = Number(process.env.LATEGAME_BOTS ?? 400);
+const GAME_TICKS = Number(process.env.LATEGAME_TICKS ?? 10000);
 // Suffix replayed after the checkpoint; kept short so the golden comparison
-// covers a live window without another long run.
-const SUFFIX_TICKS = 60;
+// covers a live window (both the original and the restored run) without a
+// second long simulation.
+const SUFFIX_TICKS = Number(process.env.LATEGAME_SUFFIX ?? 60);
 
 // Schema-valid ids (8 alphanumerics) so the real wire encoder accepts them.
 const GAME_ID = "late0001";
@@ -132,7 +140,12 @@ interface CoreRun {
   hashes: number[];
   /** Cheap per-tick fingerprint, to catch a divergence between periodic hashes. */
   stateHashes: number[];
-  tick(turnNumber: number): void;
+  /**
+   * Execute one tick. The per-tick fingerprint is only computed when
+   * `recordState` is set: it is needed for the suffix comparison but is pure
+   * overhead on the long run to the checkpoint (the run that dominates cost).
+   */
+  tick(turnNumber: number, recordState?: boolean): void;
 }
 
 async function buildCore(): Promise<CoreRun> {
@@ -156,13 +169,13 @@ async function buildCore(): Promise<CoreRun> {
     runner,
     hashes,
     stateHashes,
-    tick(turnNumber: number) {
+    tick(turnNumber: number, recordState = false) {
       runner.addTurn({ turnNumber, intents: [] });
       const ok = runner.executeNextTick();
       if (!ok && coreError !== undefined) {
         throw new Error(`core tick failed: ${coreError}`);
       }
-      stateHashes.push(stateHash(runner.game));
+      if (recordState) stateHashes.push(stateHash(runner.game));
     },
   };
 }
@@ -208,11 +221,15 @@ describe.skipIf(process.env.LATEGAME_TEST !== "1")(
         .reduce((sum, p) => sum + p.outgoingAttacks().length, 0);
       console.log(
         `[late-game] map=${MAP} tick=${checkpointTick} ` +
-          `players=${game.players().length} alive=${alive} units=${units} ` +
+          `total=${game.allPlayers().length} alive=${alive} units=${units} ` +
           `attacks=${attacks} alliances=${alliances}`,
       );
       expect(checkpointTick).toBe(spawnTicks + GAME_TICKS);
-      expect(units).toBeGreaterThan(0);
+      // This must be a genuinely entity-rich late game, not an empty board:
+      // every bot tribe (plus map nations and humans) is in the roster, and a
+      // long run produces a large unit population.
+      expect(game.allPlayers().length).toBeGreaterThanOrEqual(BOTS);
+      expect(units).toBeGreaterThan(100);
 
       // ── 2. Capture + encode a real checkpoint ───────────────────────────
       const checkpoint = run.runner.checkpoint();
@@ -237,13 +254,16 @@ describe.skipIf(process.env.LATEGAME_TEST !== "1")(
           `players=${checkpoint.players.length} units=${checkpoint.units.length} ` +
           `attacks=${checkpoint.attacks.length} execs=${checkpoint.executions.length}`,
       );
+      // The captured blob itself carries the whole roster and unit population.
+      expect(checkpoint.players.length).toBeGreaterThanOrEqual(BOTS);
+      expect(checkpoint.units.length).toBeGreaterThan(100);
 
       // ── 3. Continue the original, recording the suffix hash stream ──────
       const checkpointStateHash = stateHash(game);
       run.hashes.length = 0;
       run.stateHashes.length = 0;
       for (let i = 0; i < SUFFIX_TICKS; i++) {
-        run.tick(checkpointTick + i);
+        run.tick(checkpointTick + i, true);
       }
       const expectedHashes = [...run.hashes];
       const expectedStateHashes = [...run.stateHashes];
@@ -258,7 +278,7 @@ describe.skipIf(process.env.LATEGAME_TEST !== "1")(
       // The restored state must be bit-identical at the checkpoint itself...
       expect(stateHash(restoredRun.runner.game)).toBe(checkpointStateHash);
       for (let i = 0; i < SUFFIX_TICKS; i++) {
-        restoredRun.tick(checkpointTick + i);
+        restoredRun.tick(checkpointTick + i, true);
       }
       // ...and every tick after it (per-tick first, then the periodic stream
       // the wire/DesyncDetector actually compares).
@@ -356,7 +376,6 @@ describe.skipIf(process.env.LATEGAME_TEST !== "1")(
       } finally {
         GameServer.RESUME_START_DELAY_MS = prevDelay;
       }
-    }, // A late game on World/Giant is minutes of simulation, not milliseconds.
-    600_000);
+    }, 600_000); // A late game on World/Giant is minutes of simulation, not milliseconds.
   },
 );
