@@ -1109,11 +1109,22 @@ export class ClientGameRunner {
     this.worker.setCheckpointCallback((wire, ticks) => {
       this.latestCheckpointWire = wire;
       this.latestCheckpointTicks = ticks;
+      const serverBacked = !this.transport.isLocal && this.isLobbyCreator();
       this.uploadCheckpoint(wire, ticks);
       void this.saveManager.persist(true);
+      // A server-hosted save is confirmed (or refused) by the server's
+      // `save_ack`; showing "saved" here would be a lie when the upload is
+      // dropped or the write fails. A local/non-host save has no ack, so it is
+      // reported immediately.
       window.dispatchEvent(
         new CustomEvent("show-message", {
-          detail: { message: translateText("save_game.checkpoint_saved") },
+          detail: {
+            message: translateText(
+              serverBacked
+                ? "save_game.checkpoint_pending"
+                : "save_game.checkpoint_saved",
+            ),
+          },
         }),
       );
     });
@@ -1327,6 +1338,29 @@ export class ClientGameRunner {
         // group can hop over. NewLobbyPrompt navigates the host and prompts
         // everyone else.
         this.eventBus.emit(new NewLobbyEvent(message.gameID));
+      }
+      if (message.type === "save_ack") {
+        // The server's verdict on the in-game Save. This, not the client-side
+        // capture, is what "Resumable lobbies" will show, so it is the message
+        // the host needs to see.
+        if (message.status === "persisted") {
+          window.dispatchEvent(
+            new CustomEvent("show-message", {
+              detail: { message: translateText("save_game.checkpoint_saved") },
+            }),
+          );
+        } else {
+          window.dispatchEvent(
+            new CustomEvent("show-message", {
+              detail: {
+                message: translateText("save_game.checkpoint_not_saved", {
+                  reason: message.reason ?? message.status,
+                }),
+                color: "red",
+              },
+            }),
+          );
+        }
       }
       if (message.type === "turn") {
         if (

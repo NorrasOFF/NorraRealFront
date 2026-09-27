@@ -42,6 +42,7 @@ import {
   ServerLobbyInfoMessage,
   ServerNewLobbyMessage,
   ServerPrestartMessageSchema,
+  ServerSaveAckMessage,
   ServerStartGameMessage,
   ServerTurnChunkMessage,
   ServerTurnMessage,
@@ -231,6 +232,11 @@ export class GameServer {
   // means full-history resume.
   private checkpoint?: string;
   private checkpointTurn = -1;
+  // Set when a host checkpoint is accepted, so the next `persistSave` reports
+  // its write result back to the host (`save_ack`). Without this the host's
+  // "Checkpoint saved" toast is the only feedback and an empty save list has no
+  // explanation.
+  private pendingSaveAck = false;
 
   // Phase 7: in-progress chunked checkpoint uploads, keyed by
   // `${clientID}:${uploadId}`. Bounded by MAX_CHECKPOINT_UPLOAD_CHUNKS and the
@@ -596,8 +602,14 @@ export class GameServer {
   private persistSave(): Promise<void> {
     const snapshot = this.snapshot();
     if (snapshot === null) {
+      this.pendingSaveAck = false;
       return Promise.resolve();
     }
+    // Capture the ack request and the checkpoint turn now: a newer checkpoint
+    // may arrive while this write is in flight.
+    const ackOnSave = this.pendingSaveAck;
+    const ackTicks = this.checkpointTurn;
+    this.pendingSaveAck = false;
     const fromTurn = this.lastPersistedTurn + 1;
     const persistedThrough = snapshot.turns.length - 1;
     this.saveInFlight = true;
@@ -613,12 +625,14 @@ export class GameServer {
           stage: snapshot.stage,
           throughTurn: persistedThrough,
         });
+        if (ackOnSave) this.sendSaveAck("persisted", undefined, ackTicks);
       })
       .catch((error) => {
         this.log.error("failed to persist game save", {
           gameID: this.id,
           error: error instanceof Error ? error.message : String(error),
         });
+        if (ackOnSave) this.sendSaveAck("failed", "write_failed", ackTicks);
       })
       .finally(() => {
         this.saveInFlight = false;
@@ -1167,30 +1181,71 @@ export class GameServer {
   // that decodes to a checkpoint at or behind our turn count is accepted. It is
   // never trusted for anything but a resume optimisation: the client that
   // restores it re-derives its own state, and a bad blob only costs a replay.
+  // The lobby creator's live client, if connected. The host is the only one
+  // whose checkpoint can be persisted, so later-stage acks target this client.
+  private hostClient(): Client | undefined {
+    const creatorID = this.lobbyCreatorID;
+    return creatorID === undefined ? undefined : this.clients.get(creatorID);
+  }
+
+  // Report the outcome of an in-game Save (see ServerSaveAckSchema). Best-effort:
+  // the socket may already be gone, and a failed ack must never affect the save.
+  // Targets `client` when given (a rejection is addressed to whoever pressed
+  // Save), else the host.
+  private sendSaveAck(
+    status: "persisted" | "dropped" | "failed",
+    reason?: string,
+    ticks?: number,
+    client: Client | undefined = this.hostClient(),
+  ): void {
+    const ws = client?.ws;
+    if (ws === undefined || ws.readyState !== WebSocket.OPEN) return;
+    try {
+      ws.send(
+        encodeServerMessage(
+          {
+            type: "save_ack",
+            status,
+            ...(reason !== undefined ? { reason } : {}),
+            ...(ticks !== undefined ? { ticks } : {}),
+          } satisfies ServerSaveAckMessage,
+          this.zbinCtx,
+        ),
+      );
+    } catch (error) {
+      this.log.warn("failed to send save ack", {
+        gameID: this.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
   private handleClientCheckpoint(
     client: Client,
     message: ClientCheckpointMessage,
   ): void {
-    // Every early return is logged: a host pressing Save sees a client-side
-    // confirmation regardless, so without these the server silently discards an
-    // upload and the save list just stays empty with nothing to diagnose.
+    // Every rejection is both logged (server side) and acked to the host, so a
+    // dropped save is not mistaken for a missing feature.
     if (this.stage !== "started") {
       this.log.info("checkpoint upload ignored: game not started", {
         clientID: client.clientID,
         stage: this.stage,
       });
+      this.sendSaveAck("dropped", "not_started", undefined, client);
       return;
     }
     if (this.isPublic()) {
       this.log.info("checkpoint upload ignored: public game", {
         clientID: client.clientID,
       });
+      this.sendSaveAck("dropped", "public_game", undefined, client);
       return;
     }
     if (this.creatorPersistentID === undefined) {
       this.log.info("checkpoint upload ignored: no creator account", {
         clientID: client.clientID,
       });
+      this.sendSaveAck("dropped", "no_account", undefined, client);
       return;
     }
     if (client.clientID !== this.lobbyCreatorID) {
@@ -1198,6 +1253,7 @@ export class GameServer {
         clientID: client.clientID,
         lobbyCreatorID: this.lobbyCreatorID,
       });
+      this.sendSaveAck("dropped", "not_host", undefined, client);
       return;
     }
     if (message.checkpoint.length > MAX_CHECKPOINT_TRANSFER_BYTES) {
@@ -1206,6 +1262,7 @@ export class GameServer {
         bytes: message.checkpoint.length,
         limit: MAX_CHECKPOINT_TRANSFER_BYTES,
       });
+      this.sendSaveAck("dropped", "too_large", undefined, client);
       return;
     }
     this.trackCheckpointUpload(this.acceptCheckpointWire(message.checkpoint));
@@ -1252,12 +1309,14 @@ export class GameServer {
         stage: this.stage,
         isPublic: this.isPublic(),
       });
+      this.sendSaveAck("dropped", "not_started", undefined, client);
       return;
     }
     if (this.creatorPersistentID === undefined) {
       this.log.info("checkpoint chunks ignored: no creator account", {
         clientID: client.clientID,
       });
+      this.sendSaveAck("dropped", "no_account", undefined, client);
       return;
     }
     if (client.clientID !== this.lobbyCreatorID) {
@@ -1265,6 +1324,7 @@ export class GameServer {
         clientID: client.clientID,
         lobbyCreatorID: this.lobbyCreatorID,
       });
+      this.sendSaveAck("dropped", "not_host", undefined, client);
       return;
     }
     if (message.encoding !== "gzip") {
@@ -1272,6 +1332,7 @@ export class GameServer {
         clientID: client.clientID,
         encoding: message.encoding,
       });
+      this.sendSaveAck("dropped", "bad_encoding", undefined, client);
       return;
     }
     if (
@@ -1283,6 +1344,7 @@ export class GameServer {
         total: message.total,
         max: GameServer.MAX_CHECKPOINT_UPLOAD_CHUNKS,
       });
+      this.sendSaveAck("dropped", "too_many_chunks", undefined, client);
       return;
     }
     if (message.seq >= message.total) return;
@@ -1307,6 +1369,7 @@ export class GameServer {
           clientID: client.clientID,
           uploadsThisMinute: this.checkpointUploadsThisMinute,
         });
+        this.sendSaveAck("dropped", "rate_limited", undefined, client);
         return;
       }
       this.checkpointUploadsThisMinute++;
@@ -1341,6 +1404,7 @@ export class GameServer {
         bytes: upload.bytes,
         limit: MAX_CHECKPOINT_COMPRESSED_TRANSFER_BYTES,
       });
+      this.sendSaveAck("dropped", "too_large", undefined, client);
       return;
     }
     if (upload.received < message.total) return;
@@ -1351,12 +1415,14 @@ export class GameServer {
         clientID: client.clientID,
         bytes: wire.length,
       });
+      this.sendSaveAck("dropped", "too_large", undefined, client);
       return;
     }
     if (!isCompressedCheckpoint(wire)) {
       this.log.warn("checkpoint chunks dropped: not a gzip payload", {
         clientID: client.clientID,
       });
+      this.sendSaveAck("dropped", "unreadable", undefined, client);
       return;
     }
     this.log.info("reassembled chunked checkpoint, decoding", {
@@ -1377,6 +1443,7 @@ export class GameServer {
         gameID: this.id,
         bytes: wire.length,
       });
+      this.sendSaveAck("dropped", "unreadable");
       return;
     }
     if (checkpoint.ticks < 0 || checkpoint.ticks > this.turns.length) {
@@ -1385,6 +1452,7 @@ export class GameServer {
         ticks: checkpoint.ticks,
         turns: this.turns.length,
       });
+      this.sendSaveAck("dropped", "tick_out_of_range");
       return;
     }
     // Never regress to an older checkpoint; the host only ever moves forward.
@@ -1397,6 +1465,7 @@ export class GameServer {
         ticks: checkpoint.ticks,
         held: this.checkpointTurn,
       });
+      this.sendSaveAck("dropped", "not_newer", checkpoint.ticks);
       return;
     }
     this.checkpoint = wire;
@@ -1410,7 +1479,9 @@ export class GameServer {
     // The Save button is an explicit "make this resumable" request, so persist
     // a SavedLobby immediately instead of waiting for the creator to leave. The
     // save appears in the host's server-save list right away and survives a
-    // restart, which is what lets a private lobby be reopened from it.
+    // restart, which is what lets a private lobby be reopened from it. The write
+    // result is reported back to the host from persistSave.
+    this.pendingSaveAck = true;
     this.scheduleSave();
   }
 

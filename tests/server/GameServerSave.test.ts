@@ -500,6 +500,49 @@ describe("GameServer checkpoint resume", () => {
     expect(loaded.checkpointTurn).toBe(5);
     expect(loaded.turns.length).toBe(10);
   });
+
+  // The host needs the server's verdict: the client-side "Checkpoint saved"
+  // toast fires on capture alone, so without an ack an empty save list is
+  // unexplained.
+  it("acks the host once the checkpoint is persisted", async () => {
+    const saveStore = new MemorySaveStore();
+    const { game, host } = startedGame(saveStore);
+    await vi.advanceTimersByTimeAsync(10 * TURN_MS);
+
+    await mockWsOf(host).emit({
+      type: "checkpoint",
+      checkpoint: checkpointJson(5),
+    });
+    await game.whenCheckpointUploadsSettled();
+    await vi.advanceTimersByTimeAsync(0);
+
+    const ctx = createGameWireContext(game.snapshot()!.gameStartInfo!.players);
+    const acks = mockWsOf(host)
+      .sent(ctx)
+      .filter((m) => m.type === "save_ack");
+    expect(acks).toHaveLength(1);
+    expect(acks[0]).toMatchObject({ status: "persisted", ticks: 5 });
+  });
+
+  it("acks a non-host that its save was dropped", async () => {
+    const saveStore = new MemorySaveStore();
+    const { game, p2 } = startedGame(saveStore);
+    await vi.advanceTimersByTimeAsync(10 * TURN_MS);
+
+    await mockWsOf(p2).emit({
+      type: "checkpoint",
+      checkpoint: checkpointJson(4),
+    });
+    await game.whenCheckpointUploadsSettled();
+    await vi.advanceTimersByTimeAsync(0);
+
+    const ctx = createGameWireContext(game.snapshot()!.gameStartInfo!.players);
+    const acks = mockWsOf(p2)
+      .sent(ctx)
+      .filter((m) => m.type === "save_ack");
+    expect(acks).toHaveLength(1);
+    expect(acks[0]).toMatchObject({ status: "dropped", reason: "not_host" });
+  });
 });
 
 // Phase 4: a long resume backlog is delivered as a small `start` plus a stream

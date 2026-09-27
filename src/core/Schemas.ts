@@ -134,7 +134,8 @@ export type ServerMessage =
   | ServerPrestartMessage
   | ServerErrorMessage
   | ServerLobbyInfoMessage
-  | ServerNewLobbyMessage;
+  | ServerNewLobbyMessage
+  | ServerSaveAckMessage;
 
 export type ServerTurnMessage = z.infer<typeof ServerTurnMessageSchema>;
 export type ServerTurnChunkMessage = z.infer<
@@ -151,6 +152,7 @@ export type ServerLobbyInfoMessage = z.infer<
   typeof ServerLobbyInfoMessageSchema
 >;
 export type ServerNewLobbyMessage = z.infer<typeof ServerNewLobbyMessageSchema>;
+export type ServerSaveAckMessage = z.infer<typeof ServerSaveAckSchema>;
 export type ClientSendWinnerMessage = z.infer<typeof ClientSendWinnerSchema>;
 export type ClientSendLiveStatsMessage = z.infer<
   typeof ClientSendLiveStatsSchema
@@ -1073,6 +1075,18 @@ export const ServerNewLobbyMessageSchema = z.object({
   gameID: ID,
 });
 
+// Host feedback for the in-game Save button. The client confirms the local
+// capture on its own; only the server knows whether the uploaded checkpoint was
+// accepted and written, so this tells the host the real outcome (and why, on a
+// drop/failure) instead of leaving an empty "Resumable lobbies" list
+// unexplained. `reason` is a short machine code, never rendered verbatim.
+export const ServerSaveAckSchema = z.object({
+  type: z.literal("save_ack"),
+  status: z.enum(["persisted", "dropped", "failed"]),
+  reason: z.string().optional(),
+  ticks: zb.uint().optional(),
+});
+
 export const ServerMessageSchema = zb.discriminatedUnion("type", [
   ServerTurnMessageSchema,
   ServerPrestartMessageSchema,
@@ -1085,6 +1099,8 @@ export const ServerMessageSchema = zb.discriminatedUnion("type", [
   // Phase 4: appended last so existing variant indices (and therefore the wire
   // encoding of every other server message) are unchanged.
   ServerTurnChunkMessageSchema,
+  // Appended last for the same reason as TurnChunk.
+  ServerSaveAckSchema,
 ]);
 
 //
