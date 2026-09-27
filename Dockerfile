@@ -93,6 +93,16 @@ RUN <<'EOF' tee /usr/local/bin/start.sh
 # Generate the create-game nginx upstream from NUM_WORKERS before nginx starts.
 /usr/local/bin/generate-nginx-upstream.sh
 
+# The node worker runs as the unprivileged `node` user, but /usr/src/app and a
+# mounted Fly volume are both root-owned, so the resumable-save directory is not
+# writable out of the box and every save silently fails (the host sees an empty
+# "resumable lobbies" list). Create it and hand it to node. SAVE_DIR is the same
+# value the worker reads, defaulting to ./saves under the app directory.
+SAVE_DIR="${SAVE_DIR:-/usr/src/app/saves}"
+mkdir -p "$SAVE_DIR"
+chown -R node:node "$SAVE_DIR" 2>/dev/null || true
+echo "resumable saves directory: $SAVE_DIR"
+
 if [ "$DOMAIN" = openfront.dev ] && [ "$SUBDOMAIN" != main ]; then
     exec timeout 25h /usr/bin/supervisord -c /etc/supervisor/conf.d/supervisord.conf
 else

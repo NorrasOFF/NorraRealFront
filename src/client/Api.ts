@@ -1155,6 +1155,39 @@ export interface SavedLobbiesResult {
   errors: SavedLobbyLookupError[];
 }
 
+// The game server runs on a single Fly machine that can be stopped while idle
+// and is replaced during a deploy; nginx answers 502/503/504 until the worker is
+// listening again. A save request issued in that window would otherwise look
+// exactly like "this account has no saves", so it is retried with backoff
+// instead of being reported as a false empty.
+const SAVE_REQUEST_RETRY_DELAYS_MS = [800, 1600, 3200, 6400];
+
+function isRetryableGatewayStatus(status: number): boolean {
+  return status === 502 || status === 503 || status === 504;
+}
+
+async function fetchSaveEndpoint(
+  url: string,
+  init: RequestInit,
+): Promise<Response> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const res = await fetch(url, init);
+      if (
+        attempt >= SAVE_REQUEST_RETRY_DELAYS_MS.length ||
+        !isRetryableGatewayStatus(res.status)
+      ) {
+        return res;
+      }
+    } catch (e) {
+      if (attempt >= SAVE_REQUEST_RETRY_DELAYS_MS.length) throw e;
+    }
+    await new Promise((resolve) =>
+      setTimeout(resolve, SAVE_REQUEST_RETRY_DELAYS_MS[attempt]),
+    );
+  }
+}
+
 // GET /wN/api/saves on every worker — saves are sharded with the game, so the
 // host's list is the union. One worker being down/slow must not hide the rest.
 // Every per-worker outcome is logged and returned so an empty list is
@@ -1167,7 +1200,7 @@ export async function listSavedLobbies(): Promise<SavedLobbiesResult> {
     Array.from({ length: workers }, async (_, worker) => {
       const url = `${ClientEnv.serverHttpBase()}/w${worker}/api/saves`;
       try {
-        const res = await fetch(url, {
+        const res = await fetchSaveEndpoint(url, {
           headers: { Authorization: `Bearer ${token}` },
         });
         if (!res.ok) {
@@ -1207,7 +1240,7 @@ export async function resumeSavedLobby(
   gameID: string,
 ): Promise<ResumableSeat[]> {
   const token = await getPlayToken();
-  const res = await fetch(
+  const res = await fetchSaveEndpoint(
     `${ClientEnv.serverHttpBase()}/${ClientEnv.workerPath(gameID)}/api/saves/${gameID}/resume`,
     {
       method: "POST",
@@ -1224,7 +1257,7 @@ export async function resumeSavedLobby(
 // DELETE /wN/api/saves/:id — forget a saved game (creator-only).
 export async function deleteSavedLobby(gameID: string): Promise<void> {
   const token = await getPlayToken();
-  await fetch(
+  await fetchSaveEndpoint(
     `${ClientEnv.serverHttpBase()}/${ClientEnv.workerPath(gameID)}/api/saves/${gameID}`,
     {
       method: "DELETE",
@@ -1237,8 +1270,9 @@ export async function deleteSavedLobby(gameID: string): Promise<void> {
 // Empty for a normally created game.
 export async function fetchGameSeats(gameID: string): Promise<ResumableSeat[]> {
   try {
-    const res = await fetch(
+    const res = await fetchSaveEndpoint(
       `${ClientEnv.serverHttpBase()}/${ClientEnv.workerPath(gameID)}/api/game/${gameID}/seats`,
+      {},
     );
     if (!res.ok) return [];
     const body = await res.json();

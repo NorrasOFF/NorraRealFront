@@ -254,10 +254,11 @@ export class SavesModal extends BaseModal {
           ${translateText("save_game.server_section")}
         </h3>
         ${this.serverSaves.length === 0
-          ? html`<p class="text-white/40 text-sm">
+          ? this.hasServerLookupErrors()
+            ? this.renderServerDiagnostic()
+            : html`<p class="text-white/40 text-sm">
                 ${translateText("save_game.server_empty")}
-              </p>
-              ${this.renderServerDiagnostic()}`
+              </p>`
           : this.serverSaves.map((meta) => this.renderServerRow(meta))}
         <h3
           class="text-sm font-semibold uppercase tracking-wider text-white/50 mt-2"
@@ -271,6 +272,20 @@ export class SavesModal extends BaseModal {
           : this.saves.map((meta) => this.renderRow(meta))}
       </div>
     `;
+  }
+
+  private hasServerLookupErrors(): boolean {
+    return (this.serverLookup?.errors.length ?? 0) > 0;
+  }
+
+  // A failed lookup is not "no saves": the worker may simply be cold-starting
+  // (Fly stops an idle machine) or rolling during a deploy. Offer a retry rather
+  // than letting the host believe their save is gone.
+  private async retryServerLookup(): Promise<void> {
+    this.serverSaves = null;
+    this.serverLookup = null;
+    this.error = "";
+    await this.refresh();
   }
 
   private renderServerDiagnostic(): TemplateResult | typeof nothing {
@@ -290,9 +305,17 @@ export class SavesModal extends BaseModal {
             }),
       )
       .join(" · ");
-    return html`<p class="text-xs text-red-300">
-      ${translateText("save_game.server_diagnostic", { details })}
-    </p>`;
+    return html`
+      <p class="text-xs text-red-300">
+        ${translateText("save_game.server_diagnostic", { details })}
+      </p>
+      <button
+        class="self-start px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider bg-white/10 text-white border border-white/20 hover:bg-white/20"
+        @click=${() => void this.retryServerLookup()}
+      >
+        ${translateText("save_game.retry")}
+      </button>
+    `;
   }
 
   private renderRow(meta: SavedGameMeta): TemplateResult {

@@ -7,7 +7,7 @@ vi.mock("../../src/client/Auth", async (importOriginal) => ({
   isSessionActive: vi.fn(() => false),
 }));
 
-import { createLobby } from "../../src/client/Api";
+import { createLobby, listSavedLobbies } from "../../src/client/Api";
 import { ClientEnv } from "../../src/client/ClientEnv";
 import { JoinLobbyModal } from "../../src/client/JoinLobbyModal";
 import { MatchmakingModal } from "../../src/client/Matchmaking";
@@ -104,5 +104,69 @@ describe("MatchmakingModal.checkGame", () => {
     expect(lastUrl()).toBe(
       `https://${SERVER_HOST}/${ClientEnv.workerPath("game-1")}/api/game/game-1/exists`,
     );
+  });
+});
+
+// A self-hosted Fly machine is stopped while idle and replaced on deploy, so
+// nginx answers 502/503/504 until the worker is back. Reporting that as "no
+// saves" would look like the save was lost, so the listing retries the gateway
+// error before giving up.
+describe("listSavedLobbies gateway retry", () => {
+  const summary = {
+    gameID: "GAME0001",
+    label: "World · host",
+    createdAt: 1,
+    savedAt: 2,
+    stage: "started",
+    numTurns: 10,
+    playerCount: 2,
+    gameMap: "World",
+    gitCommit: "test",
+  };
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("rides out a transient 502 instead of reporting an empty list", async () => {
+    let calls = 0;
+    fetchMock.mockImplementation(async () => {
+      calls++;
+      if (calls === 1) return new Response("bad gateway", { status: 502 });
+      return new Response(JSON.stringify({ saves: [summary] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+
+    const promise = listSavedLobbies();
+    await vi.advanceTimersByTimeAsync(10_000);
+    const result = await promise;
+
+    expect(calls).toBe(2);
+    expect(result.errors).toEqual([]);
+    expect(result.saves.map((s) => s.gameID)).toEqual(["GAME0001"]);
+  });
+
+  it("surfaces a persistent gateway error after the retries are exhausted", async () => {
+    let calls = 0;
+    fetchMock.mockImplementation(async () => {
+      calls++;
+      return new Response("bad gateway", { status: 502 });
+    });
+
+    const promise = listSavedLobbies();
+    await vi.advanceTimersByTimeAsync(30_000);
+    const result = await promise;
+
+    // Initial attempt + one per backoff delay, all on worker 0.
+    expect(calls).toBe(5);
+    expect(result.saves).toEqual([]);
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0]).toMatchObject({ worker: 0, status: 502 });
   });
 });
