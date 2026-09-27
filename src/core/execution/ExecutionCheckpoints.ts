@@ -54,7 +54,7 @@ import {
   TradeShipExecutionCheckpoint,
   TradeShipSrcPort,
 } from "./TradeShipExecution";
-import { TrainExecution } from "./TrainExecution";
+import { TrainExecution, resolveStation } from "./TrainExecution";
 import { TrainStationExecution } from "./TrainStationExecution";
 import {
   TransportShipExecution,
@@ -133,15 +133,11 @@ export function restoreExecution(
     case "train": {
       const data = cp.data as TrainExecutionCheckpoint;
       if (!game.hasPlayer(data.playerId)) return undefined;
-      const stationManager = game.railNetwork().stationManager();
-      const source = stationManager.getById(data.sourceStationId);
-      const destination = stationManager.getById(data.destinationStationId);
-      if (source === undefined || destination === undefined) return undefined;
       const exec = new TrainExecution(
         game.railNetwork(),
         game.player(data.playerId),
-        source,
-        destination,
+        resolveStation(game, data.source),
+        resolveStation(game, data.destination),
         data.numCars,
       );
       if (!exec.restoreCheckpoint(game, data)) return undefined;
@@ -326,6 +322,7 @@ export function restoreExecution(
         srcPort,
         dstPort,
         srcPortInfo,
+        data.stagger,
       );
       if (!exec.restoreCheckpoint(game, data)) return undefined;
       return exec;
@@ -338,6 +335,7 @@ export function restoreExecution(
         data.ref,
         data.troops,
         data.escort,
+        data.stagger,
       );
       if (!exec.restoreCheckpoint(game, data)) return undefined;
       return exec;

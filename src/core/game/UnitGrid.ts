@@ -174,7 +174,7 @@ export class UnitGrid {
           }
         }
       }
-      return nearby;
+      return this.sortNearby(nearby);
     }
 
     const type = types;
@@ -197,6 +197,24 @@ export class UnitGrid {
           nearby.push(value);
         }
       }
+    }
+    return this.sortNearby(nearby);
+  }
+
+  /**
+   * Deterministic order for a spatial query result: nearest first, ties broken by
+   * unit id. The per-cell sets are insertion-ordered, and a resumed game rebuilds
+   * the grid in checkpoint order rather than the original build order, so a
+   * caller that picks a target by scanning `nearbyUnits` (e.g. warship targeting)
+   * would otherwise resolve equal-distance ties differently after a restore.
+   */
+  private sortNearby(
+    nearby: Array<{ unit: Unit | UnitView; distSquared: number }>,
+  ): Array<{ unit: Unit | UnitView; distSquared: number }> {
+    if (nearby.length > 1) {
+      nearby.sort(
+        (a, b) => a.distSquared - b.distSquared || a.unit.id() - b.unit.id(),
+      );
     }
     return nearby;
   }

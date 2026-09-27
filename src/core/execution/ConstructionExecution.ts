@@ -18,7 +18,7 @@ export class ConstructionExecution implements Execution {
   private active: boolean = true;
   private mg: Game;
 
-  private ticksUntilComplete: Tick;
+  private ticksUntilComplete: Tick | undefined;
 
   constructor(
     private player: Player,
@@ -60,9 +60,10 @@ export class ConstructionExecution implements Execution {
         ? (this.mg.unit(data.structureId) ?? null)
         : null;
     this.active = data.active;
-    // Only read once `structure` is set; a not-yet-built construction never
-    // consumes it, so null safely maps to 0.
-    this.ticksUntilComplete = data.ticksUntilComplete ?? 0;
+    // Preserve "not started yet" as undefined rather than coercing to 0: a
+    // pending build (structure not yet built) captures `null`, and re-capturing
+    // a restored game must reproduce that exact value, not 0.
+    this.ticksUntilComplete = data.ticksUntilComplete ?? undefined;
   }
 
   init(mg: Game, ticks: number): void {
@@ -134,7 +135,7 @@ export class ConstructionExecution implements Execution {
       this.active = false;
       return;
     }
-    this.ticksUntilComplete--;
+    this.ticksUntilComplete = this.ticksUntilComplete! - 1;
   }
 
   private completeConstruction() {

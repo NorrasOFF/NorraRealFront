@@ -41,6 +41,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, test } from "vitest";
+import { GameCheckpoint } from "../src/core/Checkpoint";
 import {
   decodeCheckpointWire,
   encodeCheckpointWire,
@@ -56,6 +57,7 @@ import {
 import { GameUpdateType, HashUpdate } from "../src/core/game/GameUpdates";
 import { createGameRunner, GameRunner } from "../src/core/GameRunner";
 import {
+  GAME_ID_REGEX,
   GameConfig,
   GameRecord,
   GameRecordSchema,
@@ -138,6 +140,84 @@ const botStart: GameStartInfo = {
 /** `GameImpl.hash()` is not on the `Game` interface; reach it by cast. */
 function stateHash(game: Game): number {
   return (game as unknown as { hash(): number }).hash();
+}
+
+/**
+ * Collect structural differences between two checkpoint objects, as JSON-ish
+ * paths. Used to explain a re-captured-blob mismatch: the two encoded strings
+ * are equivalent, but the byte comparison alone never says *which* field
+ * diverged. Handles bigint, typed arrays and nested objects/arrays. Capped so a
+ * wholesale divergence does not produce a megabyte of output.
+ */
+function checkpointDiffs(
+  a: unknown,
+  b: unknown,
+  path = "$",
+  out: string[] = [],
+  limit = 25,
+): string[] {
+  if (out.length >= limit) return out;
+  if (a === b) return out;
+  if (typeof a === "bigint" || typeof b === "bigint") {
+    out.push(
+      `${path}: ${String(a)} (${typeof a}) != ${String(b)} (${typeof b})`,
+    );
+    return out;
+  }
+  if (
+    a === null ||
+    b === null ||
+    typeof a !== "object" ||
+    typeof b !== "object"
+  ) {
+    out.push(
+      `${path}: ${JSON.stringify(a)} (${typeof a}) != ${JSON.stringify(b)} (${typeof b})`,
+    );
+    return out;
+  }
+  if (ArrayBuffer.isView(a) || ArrayBuffer.isView(b)) {
+    if (!(ArrayBuffer.isView(a) && ArrayBuffer.isView(b))) {
+      out.push(`${path}: typed array vs ${JSON.stringify(b)?.slice(0, 40)}`);
+      return out;
+    }
+    const av = a as ArrayBufferView;
+    const bv = b as ArrayBufferView;
+    const ab = new Uint8Array(av.buffer, av.byteOffset, av.byteLength);
+    const bb = new Uint8Array(bv.buffer, bv.byteOffset, bv.byteLength);
+    if (ab.length !== bb.length) {
+      out.push(`${path}: byte length ${ab.length} != ${bb.length}`);
+      return out;
+    }
+    for (let i = 0; i < ab.length && out.length < limit; i++) {
+      if (ab[i] !== bb[i]) out.push(`${path}[byte ${i}]: ${ab[i]} != ${bb[i]}`);
+    }
+    return out;
+  }
+  const aArr = Array.isArray(a);
+  const bArr = Array.isArray(b);
+  if (aArr !== bArr) {
+    out.push(`${path}: array vs object`);
+    return out;
+  }
+  if (aArr && bArr) {
+    const A = a as unknown[];
+    const B = b as unknown[];
+    if (A.length !== B.length) {
+      out.push(`${path}.length: ${A.length} != ${B.length}`);
+      return out;
+    }
+    for (let i = 0; i < A.length && out.length < limit; i++) {
+      checkpointDiffs(A[i], B[i], `${path}[${i}]`, out, limit);
+    }
+    return out;
+  }
+  const ao = a as Record<string, unknown>;
+  const bo = b as Record<string, unknown>;
+  for (const key of new Set([...Object.keys(ao), ...Object.keys(bo)])) {
+    if (out.length >= limit) break;
+    checkpointDiffs(ao[key], bo[key], `${path}.${key}`, out, limit);
+  }
+  return out;
 }
 
 /**
@@ -243,13 +323,43 @@ async function loadRecord(source: string): Promise<GameRecord> {
   if (fs.existsSync(source)) {
     raw = JSON.parse(fs.readFileSync(source, "utf8"));
   } else {
-    const url = `${API_BASE}/game/${source}`;
+    // The public archive lives under /public/game/:id (docs/API.md). The bare
+    // /game/:id path is not served and returns 403, which made record mode
+    // unusable from a game id.
+    const url = `${API_BASE}/public/game/${source}`;
     const res = await fetch(url);
     if (!res.ok) throw new Error(`failed to fetch record: HTTP ${res.status}`);
     raw = await res.json();
   }
   const parsed = GameRecordSchema.safeParse(raw);
   return parsed.success ? parsed.data : (raw as GameRecord);
+}
+
+// The save store only accepts this fork's 8-char `ID`, but archived public
+// records carry the upstream 10-char game id (e.g. "dKLqTLUg9j"). Map any
+// record id onto a stable 8-char id (same record -> same id) so a real record
+// can be persisted through the real store. The replay stays internally
+// consistent because the source and every restored run share this id; only the
+// exact production id is dropped.
+function wireGameId(gameID: string): string {
+  if (gameID.length === 8 && GAME_ID_REGEX.test(gameID)) return gameID;
+  const alphabet =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+  let state = 2166136261 >>> 0;
+  for (let i = 0; i < gameID.length; i++) {
+    state ^= gameID.charCodeAt(i);
+    state = Math.imul(state, 16777619) >>> 0;
+  }
+  let out = "";
+  for (let i = 0; i < 8; i++) {
+    state ^= state << 13;
+    state >>>= 0;
+    state ^= state >>> 17;
+    state ^= state << 5;
+    state >>>= 0;
+    out += alphabet[state % alphabet.length];
+  }
+  return out;
 }
 
 const temporaryDirs: string[] = [];
@@ -277,8 +387,9 @@ async function buildEndgame(
   if (RECORD !== undefined) {
     const record = decompressGameRecord(await loadRecord(RECORD));
     const info = record.info;
+    const replayId = wireGameId(info.gameID);
     gameStart = toWireGameStartInfo({
-      gameID: info.gameID,
+      gameID: replayId,
       lobbyCreatedAt: info.lobbyCreatedAt,
       config: info.config,
       players: info.players,
@@ -286,9 +397,9 @@ async function buildEndgame(
     });
     turns = record.turns;
     console.log(
-      `[endgame] record ${info.gameID}: ${info.config.gameMap} ` +
-        `${info.config.gameMode}, ${info.players.length} players, ` +
-        `${turns.length} turns`,
+      `[endgame] record ${info.gameID} -> ${replayId}: ` +
+        `${info.config.gameMap} ${info.config.gameMode}, ` +
+        `${info.players.length} players, ${turns.length} turns`,
     );
   }
 
@@ -362,9 +473,15 @@ describe.skipIf(process.env.ENDGAME_TEST !== "1")(
       const { state, source } = await buildEndgame(mapLoader);
 
       // ── Uninterrupted run: record each suffix segment + its checkpoint ──
+      // The uninterrupted source and the resumed games run in separate phases,
+      // never interleaved: the trade/transport pathfinder stagger is a
+      // process-global counter, so two games ticking in one process would draw
+      // from the same counter. Each resume restores the counter from the
+      // checkpoint first, so a clean phase reproduces the source's slots.
       const expectedState: number[][] = [];
       const expectedPeriodic: number[][] = [];
       const segmentWires: string[] = [];
+      const expectedCps: GameCheckpoint[] = [];
       for (let c = 0; c < CYCLES; c++) {
         source.clearStreams();
         source.run(SUFFIX, true);
@@ -372,7 +489,71 @@ describe.skipIf(process.env.ENDGAME_TEST !== "1")(
         expectedPeriodic.push([...source.hashes]);
         const cp = source.runner.checkpoint();
         expect(cp, `uninterrupted checkpoint ${c + 1}`).toBeDefined();
+        expectedCps.push(cp!);
         segmentWires.push((await encodeCheckpointWire(cp!))!);
+      }
+
+      // ── Resume chain: restore each checkpoint into a fresh game ─────────
+      let wire = state.wire;
+      let checkpointHash = state.checkpointStateHash;
+      for (let c = 0; c < CYCLES; c++) {
+        const decoded = await decodeCheckpointWire(wire);
+        expect(decoded, `cycle ${c} decode`).toBeDefined();
+        const resumed = await Rig.build(
+          state.gameStart,
+          mapLoader,
+          state.turns,
+        );
+        // Replay mode must feed the same intents in the suffix, so seek the
+        // fresh rig to the checkpoint before running the segment.
+        resumed.seek(decoded!.ticks);
+        resumed.runner.restoreFromCheckpoint(decoded!);
+        // Capture the restored game before it ticks again. If this differs from
+        // the decoded blob, the asymmetry is in capture/restore itself.
+        const recaptured = resumed.runner.checkpoint();
+        if (recaptured !== undefined) {
+          const diffs = checkpointDiffs(decoded!, recaptured);
+          if (diffs.length > 0) {
+            console.log(
+              `[endgame] cycle ${c} immediate re-capture diffs (${diffs.length}):\n  ` +
+                diffs.join("\n  "),
+            );
+          }
+        }
+        expect(stateHash(resumed.game), `cycle ${c} checkpoint hash`).toBe(
+          checkpointHash,
+        );
+
+        resumed.clearStreams();
+        resumed.run(SUFFIX, true);
+        expect(resumed.stateHashes, `cycle ${c} per-tick`).toEqual(
+          expectedState[c],
+        );
+        expect(resumed.hashes, `cycle ${c} periodic`).toEqual(
+          expectedPeriodic[c],
+        );
+
+        // A checkpoint taken from the resumed run must drive the next cycle, and
+        // must structurally match the uninterrupted run's checkpoint at the same
+        // tick. The comparison is structural: the encoded bytes are also
+        // sensitive to JSON key insertion order, which is not deterministic
+        // state.
+        const next = resumed.runner.checkpoint();
+        expect(next, `cycle ${c} next checkpoint`).toBeDefined();
+        const nextWire = (await encodeCheckpointWire(next!))!;
+        const blobDiffs = checkpointDiffs(expectedCps[c], next!);
+        expect(
+          blobDiffs,
+          `cycle ${c} re-captured checkpoint differs:\n  ${blobDiffs.join("\n  ")}`,
+        ).toEqual([]);
+        if (nextWire !== segmentWires[c]) {
+          console.log(
+            `[endgame] cycle ${c} note: re-captured wire differs only by ` +
+              `encoding order (structurally equal)`,
+          );
+        }
+        wire = nextWire;
+        checkpointHash = stateHash(resumed.game);
       }
 
       // ── Persist + reload through a FRESH store (server restart) ─────────
@@ -419,50 +600,6 @@ describe.skipIf(process.env.ENDGAME_TEST !== "1")(
       expect(reloaded!.checkpointTurn).toBe(finalTick);
       expect(reloaded!.turns.length).toBe(finalTick);
 
-      // ── Resume chain: restore each checkpoint into a fresh game ─────────
-      let wire = state.wire;
-      let checkpointHash = state.checkpointStateHash;
-      for (let c = 0; c < CYCLES; c++) {
-        const decoded = await decodeCheckpointWire(wire);
-        expect(decoded, `cycle ${c} decode`).toBeDefined();
-        const resumed = await Rig.build(
-          state.gameStart,
-          mapLoader,
-          state.turns,
-        );
-        // Replay mode must feed the same intents in the suffix, so seek the
-        // fresh rig to the checkpoint before running the segment.
-        resumed.seek(decoded!.ticks);
-        resumed.runner.restoreFromCheckpoint(decoded!);
-        expect(stateHash(resumed.game), `cycle ${c} checkpoint hash`).toBe(
-          checkpointHash,
-        );
-
-        resumed.clearStreams();
-        resumed.run(SUFFIX, true);
-        expect(resumed.stateHashes, `cycle ${c} per-tick`).toEqual(
-          expectedState[c],
-        );
-        expect(resumed.hashes, `cycle ${c} periodic`).toEqual(
-          expectedPeriodic[c],
-        );
-
-        // The state at the end of the segment must equal the uninterrupted run.
-        expect(stateHash(resumed.game), `cycle ${c} end hash`).toBe(
-          expectedState[c][expectedState[c].length - 1],
-        );
-        // A checkpoint taken from the resumed run must drive the next cycle.
-        const next = resumed.runner.checkpoint();
-        expect(next, `cycle ${c} next checkpoint`).toBeDefined();
-        const nextWire = (await encodeCheckpointWire(next!))!;
-        // Re-capturing a restored game must yield the same blob as the live run:
-        // this guards against capture/restore asymmetries that do not show up in
-        // the hashed state until many ticks later.
-        expect(nextWire, `cycle ${c} re-captured blob`).toBe(segmentWires[c]);
-        wire = nextWire;
-        checkpointHash = stateHash(resumed.game);
-      }
-
       // ── Server delivers checkpoint + suffix as a start frame (private) ──
       if (state.gameType === GameType.Private) {
         const prevDelay = GameServer.RESUME_START_DELAY_MS;
@@ -495,6 +632,6 @@ describe.skipIf(process.env.ENDGAME_TEST !== "1")(
           GameServer.RESUME_START_DELAY_MS = prevDelay;
         }
       }
-    }, 900_000); // A long endgame is minutes of simulation, not milliseconds.
+    }, 1_800_000); // A long endgame is minutes of simulation, not milliseconds.
   },
 );

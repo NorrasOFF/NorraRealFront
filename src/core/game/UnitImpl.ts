@@ -23,6 +23,33 @@ import { GameUpdateType, UnitUpdate } from "./GameUpdates";
 import { PlayerImpl } from "./PlayerImpl";
 import { maxHealthWithVeterancy } from "./Veterancy";
 
+/**
+ * An inert stand-in for a unit that is still referenced by another unit's
+ * `targetUnit` but no longer exists (it was destroyed in the same tick). Carries
+ * only the captured identity so `Unit.hash()` and any re-captured checkpoint stay
+ * stable. It is never registered in the game and never ticks.
+ */
+function missingUnitStub(
+  mg: GameImpl,
+  id: number,
+  type: UnitType | null,
+  ownerId: string | null,
+): Unit {
+  return {
+    id: () => id,
+    isActive: () => false,
+    type: () => type ?? UnitType.Train,
+    owner: () =>
+      ownerId !== null
+        ? (mg.player(ownerId) as Player)
+        : (mg.terraNullius() as unknown as Player),
+    tile: () => 0,
+    lastTile: () => 0,
+    hasHealth: () => false,
+    health: () => 0n,
+  } as unknown as Unit;
+}
+
 export class UnitImpl implements Unit {
   private _active = true;
   private _targetTile: TileRef | undefined;
@@ -155,12 +182,22 @@ export class UnitImpl implements Unit {
       targetIsTerraNullius:
         this._targetPlayer !== undefined && !this._targetPlayer.isPlayer(),
       targetUnitId: this._targetUnit?.id() ?? null,
+      targetUnitType: this._targetUnit?.type() ?? null,
+      targetUnitOwnerId: this._targetUnit?.owner().id() ?? null,
       health: this._health,
       troops: this._troops,
       lastSetSafeFromPirates: this._lastSetSafeFromPirates,
-      transportShipState: this._transportShipState ?? null,
-      warshipState: this._warshipState ?? null,
-      nukeState: this._nukeState ?? null,
+      // Copy the mutable state objects (and the nuke trajectory array): a
+      // checkpoint is a snapshot, and callers may hold it while the game keeps
+      // ticking. Returning the live references let a captured blob mutate after
+      // capture.
+      transportShipState: this._transportShipState
+        ? { ...this._transportShipState }
+        : null,
+      warshipState: this._warshipState ? { ...this._warshipState } : null,
+      nukeState: this._nukeState
+        ? { ...this._nukeState, trajectory: [...this._nukeState.trajectory] }
+        : null,
       reachedTarget: this._reachedTarget,
       underConstruction: this._underConstruction,
       lastOwnerId: this._lastOwner?.id() ?? null,
@@ -172,7 +209,9 @@ export class UnitImpl implements Unit {
       loaded: this._loaded ?? null,
       trainType: this._trainType ?? null,
       deletionAt: this._deletionAt,
-      samLauncherState: this._samLauncherState ?? null,
+      samLauncherState: this._samLauncherState
+        ? { ...this._samLauncherState }
+        : null,
       defensePostUpgradeFinishTick: this._defensePostUpgradeFinishTick,
       tollTicks: [...this._tollTicks],
       tolls: this._tolls.map((t) => ({ ...t })),
@@ -193,13 +232,27 @@ export class UnitImpl implements Unit {
           ? this.mg.terraNullius()
           : undefined;
     this._targetUnit =
-      cp.targetUnitId !== null ? this.mg.unit(cp.targetUnitId) : undefined;
+      cp.targetUnitId === null
+        ? undefined
+        : (this.mg.unit(cp.targetUnitId) ??
+          missingUnitStub(
+            this.mg as GameImpl,
+            cp.targetUnitId,
+            cp.targetUnitType,
+            cp.targetUnitOwnerId,
+          ));
     this._health = cp.health;
     this._troops = cp.troops;
     this._lastSetSafeFromPirates = cp.lastSetSafeFromPirates;
-    this._transportShipState = cp.transportShipState ?? undefined;
-    this._warshipState = cp.warshipState ?? undefined;
-    this._nukeState = cp.nukeState ?? undefined;
+    // Copy the nested state so the restored unit does not alias the checkpoint
+    // object (which a caller may reuse or mutate).
+    this._transportShipState = cp.transportShipState
+      ? { ...cp.transportShipState }
+      : undefined;
+    this._warshipState = cp.warshipState ? { ...cp.warshipState } : undefined;
+    this._nukeState = cp.nukeState
+      ? { ...cp.nukeState, trajectory: [...cp.nukeState.trajectory] }
+      : undefined;
     this._reachedTarget = cp.reachedTarget;
     this._underConstruction = cp.underConstruction;
     this._lastOwner =
@@ -214,7 +267,9 @@ export class UnitImpl implements Unit {
     this._loaded = cp.loaded ?? undefined;
     this._trainType = cp.trainType ?? undefined;
     this._deletionAt = cp.deletionAt;
-    this._samLauncherState = cp.samLauncherState ?? undefined;
+    this._samLauncherState = cp.samLauncherState
+      ? { ...cp.samLauncherState }
+      : undefined;
     this._defensePostUpgradeFinishTick = cp.defensePostUpgradeFinishTick;
     this._tollTicks = [...cp.tollTicks];
     this._tolls = cp.tolls.map((t) => ({ ...t }));

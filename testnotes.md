@@ -45,3 +45,72 @@ nation), not just foreign ports. Rules to keep in mind:
   behavior is gone.
 - `StatsImpl.boatArriveTrade` skips the second `_addGold` when player ===
   target so same-nation trades are not double-counted in stats.
+
+## Recorded endgame replay: harness fixes and new checkpoint version (v5)
+
+`tests/EndgameSaveResume.test.ts` has a `ENDGAME_RECORD` mode that replays a
+real archived game (its turns, with intents) instead of empty bot turns. It did
+not actually work against the public archive; fixed here:
+
+- `loadRecord` queried `GET /game/:id`, which 404s/403s. The archive lives at
+  `GET /public/game/:id` (docs/API.md).
+- The store's `ID` regex is `^[A-Za-z0-9]{8}$`, but archived public ids are 10
+  chars. `wireGameId()` now maps any record id to a stable 8-char id used for the
+  whole replay, so a real record can pass through `SavedLobbyHeadSchema`.
+
+`CHECKPOINT_VERSION` is now **5** (was 4). New captures: a unit's target-unit
+type/owner, the trade/transport pathfinder `stagger`, and a train's route and
+endpoint station descriptors; nested unit state is deep-copied so a checkpoint is
+a true snapshot. Old v4 blobs are rejected and fall back to full-history replay.
+
+Real bugs found by replaying the 171-minute, 4-team private game
+`dKLqTLUg9j` (20 players, nukes/transports/trains) and by the all-bot endgame:
+
+- `ConstructionExecution` restored `ticksUntilComplete` as `0` when the live
+  value was `undefined`, so a re-captured checkpoint differed. Now preserves the
+  exact value.
+- `UnitGrid.nearbyUnits` returned units in per-cell `Set` (insertion) order. A
+  resumed game rebuilds the grid in checkpoint order, so equal-distance ties
+  (e.g. warship target selection) resolved differently and the simulation
+  diverged on the first suffix tick. Results are now ordered by
+  `(distSquared, unit.id())`.
+- The trade/transport pathfinder stagger was drawn from a process-global counter
+  at `init`. A restored execution redrew it in a different order, so a
+  re-captured checkpoint differed. The stagger is now assigned at construction
+  and captured.
+- `UnitImpl.checkpoint()` stored live references to `warshipState`/`nukeState`/
+  `transportShipState`/`samLauncherState`, so a held checkpoint mutated as the
+  game kept ticking. Captured (and restored) as copies.
+- A train can outlive a station on its route (the station's unit was destroyed):
+  only the endpoints were required to exist, so restore failed with
+  `cannot restore execution kind train`. Route/endpoints are now captured as
+  `{id, unitId, ownerId, type, tile}` and a removed station is rebuilt as an
+  inert stub; a destroyed car becomes an inert stub too.
+- A unit can outlive its `targetUnit` (train cars target the destination station
+  unit). Restore dropped the dangling reference, changing `Unit.hash()`. The
+  target's type/owner are captured and the reference is restored as an inert
+  stub.
+
+Validate a real long game (defaults for this record; nations are disabled, so
+`nation` must not be required):
+
+```
+$env:ENDGAME_TEST="1"
+$env:ENDGAME_RECORD="<path to record.json, or a game id>"
+$env:ENDGAME_TICKS="60000"; $env:ENDGAME_MIN_UNITS="300"
+$env:ENDGAME_REQUIRED_KINDS="player,nuke,warship,transport_ship,train,trade_ship,port,city,factory,missile_silo,sam_launcher,defense_post,attack"
+$env:ENDGAME_SUFFIX="60"; $env:ENDGAME_CYCLES="1"
+npx vitest run tests/EndgameSaveResume.test.ts
+```
+
+The gated soak timeout was raised from 15 to 30 minutes so a 60 000-tick replay
+plus resume cycles fits. The re-captured-checkpoint comparison is structural
+(`checkpointDiffs`), not byte-identical: encoded bytes are also sensitive to JSON
+key insertion order, which is not deterministic state. When a raw wire still
+differs the test logs `re-captured wire differs only by encoding order`, which is
+benign.
+
+Remaining known gap: this fork replays records with upstream ids/intents, so some
+intents fail locally (`cannot build ...`, `Failed to spawn warship ...`). That is
+expected and does not affect the save/resume comparison, which only requires the
+local source and its resumed copies to agree.

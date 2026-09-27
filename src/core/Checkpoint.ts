@@ -30,7 +30,11 @@ import { PlayerStats } from "./StatsSchemas";
 // 4: trade-ship checkpoints capture the source port owner/tile so a ship that
 // outlived its (deleted) source port can be restored instead of forcing a
 // full-history replay.
-export const CHECKPOINT_VERSION = 4;
+// 5: capture the target unit's type/owner (a unit can outlive its target); the
+// trade/transport pathfinder stagger and the train route/endpoint station
+// descriptors; and deep-copy nested unit state so a checkpoint is a true
+// snapshot. Old blobs are rejected and fall back to full-history replay.
+export const CHECKPOINT_VERSION = 5;
 
 // Checkpoints are captured on demand (the in-game save button), not on a fixed
 // cadence: the player decides when to pay the capture/encode cost. The only hard
@@ -63,6 +67,14 @@ export interface UnitCheckpoint {
   targetPlayerId: PlayerID | null;
   targetIsTerraNullius: boolean;
   targetUnitId: number | null;
+  /**
+   * Type/owner of the targeted unit. A unit can outlive its target (e.g. a train
+   * car whose destination station was destroyed), and `Unit.hash()` folds in the
+   * target id, so restore has to reproduce the dangling reference. These fields
+   * let an inert stub be rebuilt when the target unit itself is gone.
+   */
+  targetUnitType: UnitType | null;
+  targetUnitOwnerId: PlayerID | null;
   health: bigint;
   troops: number;
   lastSetSafeFromPirates: number;
@@ -176,6 +188,14 @@ export interface TrainStationExecutionCheckpoint {
   random: PseudoRandomState | null;
 }
 
+export interface TrainStationRefCheckpoint {
+  id: number;
+  unitId: number;
+  ownerId: PlayerID;
+  type: UnitType;
+  tile: TileRef;
+}
+
 export interface TrainExecutionCheckpoint {
   playerId: PlayerID;
   numCars: number;
@@ -186,9 +206,16 @@ export interface TrainExecutionCheckpoint {
   currentTile: number;
   spacing: number;
   usedTiles: TileRef[];
-  stationIds: number[];
-  sourceStationId: number;
-  destinationStationId: number;
+  /**
+   * The train's route stations. Captured as identity + owner + tile rather than
+   * just ids because a route station can be removed mid-journey (its unit was
+   * destroyed) while an active train still holds it; on restore the station is
+   * rebuilt from this descriptor even when the station manager no longer has it.
+   */
+  stations: TrainStationRefCheckpoint[];
+  /** The train's original endpoints (may no longer be in `stations`). */
+  source: TrainStationRefCheckpoint;
+  destination: TrainStationRefCheckpoint;
   speed: number;
   tradeStopsVisited: number;
   pathTiles: TileRef[];

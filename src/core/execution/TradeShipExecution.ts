@@ -41,6 +41,12 @@ export interface TradeShipExecutionCheckpoint {
   active: boolean;
   /** null for an execution captured before its first tick. */
   pathFinder: WaterPathFinderSnapshot | null;
+  /**
+   * The pathfinder rebuild stagger assigned to this voyage. Captured so a
+   * restored execution keeps the exact slot instead of drawing a fresh one from
+   * the process-global counter (which would depend on restore ordering).
+   */
+  stagger: number;
 }
 
 /** Identity of the source port, usable after the port unit is destroyed. */
@@ -65,6 +71,7 @@ export class TradeShipExecution implements Execution {
   /** Fallback owner/tile used once the source port unit no longer exists. */
   private srcPortOwner: Player;
   private srcPortTile: TileRef;
+  private stagger: number;
 
   /**
    * The source port is used for its owner and tile. While the unit exists the
@@ -77,6 +84,7 @@ export class TradeShipExecution implements Execution {
     srcPort: Unit | undefined,
     private _dstPort: Unit,
     srcPortInfo?: TradeShipSrcPort,
+    stagger?: number,
   ) {
     this.srcPort = srcPort;
     if (srcPort !== undefined) {
@@ -90,6 +98,9 @@ export class TradeShipExecution implements Execution {
     } else {
       throw new Error("TradeShipExecution requires a source port");
     }
+    // Assigned once, at construction, so the slot is part of the execution's
+    // own state and restores exactly rather than being redrawn on a later tick.
+    this.stagger = stagger ?? tradeShipStagger.next();
   }
 
   /** Live source-port owner while the unit exists, else its frozen owner. */
@@ -104,8 +115,7 @@ export class TradeShipExecution implements Execution {
 
   init(mg: Game, ticks: number): void {
     this.mg = mg;
-    const stagger = tradeShipStagger.next();
-    this.pathFinder = new WaterPathFinder(mg, stagger, true); // memoized: port tile to port tile repeats
+    this.pathFinder = new WaterPathFinder(mg, this.stagger, true); // memoized: port tile to port tile repeats
     this.initialized = true;
   }
 
@@ -126,6 +136,7 @@ export class TradeShipExecution implements Execution {
         motionPlanDst: this.motionPlanDst,
         active: this.active,
         pathFinder: this.initialized ? this.pathFinder.snapshot() : null,
+        stagger: this.stagger,
       } satisfies TradeShipExecutionCheckpoint,
     };
   }
@@ -143,6 +154,7 @@ export class TradeShipExecution implements Execution {
     this.tilesTraveled = data.tilesTraveled;
     this.motionPlanId = data.motionPlanId;
     this.motionPlanDst = data.motionPlanDst;
+    this.stagger = data.stagger ?? data.pathFinder?.stagger ?? 0;
     if (data.tradeShipId === null) {
       this.tradeShip = undefined;
     } else {
@@ -153,7 +165,7 @@ export class TradeShipExecution implements Execution {
     if (data.pathFinder !== null) {
       this.pathFinder = new WaterPathFinder(
         game,
-        data.pathFinder.stagger,
+        this.stagger,
         data.pathFinder.memoized,
       );
       this.pathFinder.restore(data.pathFinder);

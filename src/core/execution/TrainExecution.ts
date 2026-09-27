@@ -1,4 +1,8 @@
-import { ExecutionCheckpoint, TrainExecutionCheckpoint } from "../Checkpoint";
+import {
+  ExecutionCheckpoint,
+  TrainExecutionCheckpoint,
+  TrainStationRefCheckpoint,
+} from "../Checkpoint";
 import {
   Execution,
   Game,
@@ -12,6 +16,52 @@ import { MotionPlanRecord } from "../game/MotionPlans";
 import { RailNetwork } from "../game/RailNetwork";
 import { getOrientedRailroad, OrientedRailroad } from "../game/Railroad";
 import { TrainStation } from "../game/TrainStation";
+
+/**
+ * Resolve a route station on restore. A route station whose unit was destroyed
+ * mid-journey is removed from the station manager, but the live train still
+ * holds it as an inactive, railroad-less station, and its `isActive()`/`tile()`
+ * still decide where the train stops. Rebuild an equivalent inert station from
+ * the captured descriptor so a resumed train behaves exactly like the live one.
+ */
+export function resolveStation(
+  game: Game,
+  ref: TrainStationRefCheckpoint,
+): TrainStation {
+  const existing = game.railNetwork().stationManager().getById(ref.id);
+  if (existing !== undefined) return existing;
+  const owner = game.player(ref.ownerId);
+  const unit = {
+    id: () => ref.unitId,
+    isActive: () => false,
+    type: () => ref.type,
+    owner: () => owner,
+    tile: () => ref.tile,
+  } as unknown as Unit;
+  const station = new TrainStation(game, unit);
+  station.id = ref.id;
+  return station;
+}
+
+/**
+ * Resolve a train car on restore. A car can be destroyed mid-journey while the
+ * train keeps running; the live execution still holds its (inactive) unit, which
+ * only matters for `cars.length` and for no-op moves/deletes. Rebuild an inert
+ * stub for a missing car so the restored train keeps the same slot.
+ */
+function resolveCar(game: Game, carId: number): Unit {
+  const car = game.unit(carId);
+  if (car !== undefined) return car;
+  return {
+    id: () => carId,
+    isActive: () => false,
+    move: () => {},
+    setReachedTarget: () => {},
+    setLoaded: () => {},
+    delete: () => {},
+    tile: () => 0,
+  } as unknown as Unit;
+}
 
 export class TrainExecution implements Execution {
   private active = true;
@@ -316,9 +366,27 @@ export class TrainExecution implements Execution {
         currentTile: this.currentTile,
         spacing: this.spacing,
         usedTiles: [...this.usedTiles],
-        stationIds: this.stations.map((s) => s.id),
-        sourceStationId: this.source.id,
-        destinationStationId: this.destination.id,
+        stations: this.stations.map((s) => ({
+          id: s.id,
+          unitId: s.unit.id(),
+          ownerId: s.unit.owner().id(),
+          type: s.unit.type(),
+          tile: s.unit.tile(),
+        })),
+        source: {
+          id: this.source.id,
+          unitId: this.source.unit.id(),
+          ownerId: this.source.unit.owner().id(),
+          type: this.source.unit.type(),
+          tile: this.source.unit.tile(),
+        },
+        destination: {
+          id: this.destination.id,
+          unitId: this.destination.unit.id(),
+          ownerId: this.destination.unit.owner().id(),
+          type: this.destination.unit.type(),
+          tile: this.destination.unit.tile(),
+        },
         speed: this.speed,
         tradeStopsVisited: this._tradeStopsVisited,
         pathTiles: [...this.pathTiles],
@@ -342,21 +410,16 @@ export class TrainExecution implements Execution {
     this.pathIndex = data.pathIndex;
 
     this.train =
-      data.trainUnitId === null ? null : (game.unit(data.trainUnitId) ?? null);
+      data.trainUnitId === null ? null : resolveCar(game, data.trainUnitId);
     const cars: Unit[] = [];
     for (const carId of data.carUnitIds) {
-      const car = game.unit(carId);
-      if (car === undefined) return false;
-      cars.push(car);
+      cars.push(resolveCar(game, carId));
     }
     this.cars = cars;
 
-    const stationManager = game.railNetwork().stationManager();
     const stations: TrainStation[] = [];
-    for (const stationId of data.stationIds) {
-      const station = stationManager.getById(stationId);
-      if (station === undefined) return false;
-      stations.push(station);
+    for (const ref of data.stations) {
+      stations.push(resolveStation(game, ref));
     }
     this.stations = stations;
     this.currentRailroad =

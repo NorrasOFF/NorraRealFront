@@ -43,6 +43,12 @@ export interface TransportShipExecutionCheckpoint {
   motionPlanDst: TileRef | null;
   /** null for an execution captured before its first tick. */
   pathFinder: WaterPathFinderSnapshot | null;
+  /**
+   * The pathfinder rebuild stagger assigned to this voyage. Captured so a
+   * restored execution keeps the exact slot instead of drawing a fresh one from
+   * the process-global counter (which would depend on restore ordering).
+   */
+  stagger: number;
 }
 
 export class TransportShipExecution implements Execution {
@@ -67,14 +73,19 @@ export class TransportShipExecution implements Execution {
   private motionPlanDst: TileRef | null = null;
 
   private originalOwner: Player;
+  private stagger: number;
 
   constructor(
     private attacker: Player,
     private ref: TileRef,
     private troops: number,
     private escort: boolean = false,
+    stagger?: number,
   ) {
     this.originalOwner = this.attacker;
+    // Assigned once, at construction, so the slot is part of the execution's
+    // own state and restores exactly rather than being redrawn on a later tick.
+    this.stagger = stagger ?? transportShipStagger.next();
   }
 
   activeDuringSpawnPhase(): boolean {
@@ -91,8 +102,7 @@ export class TransportShipExecution implements Execution {
     this.lastMove = ticks;
     this.mg = mg;
     this.target = mg.owner(this.ref);
-    const stagger = transportShipStagger.next();
-    this.pathFinder = new WaterPathFinder(mg, stagger);
+    this.pathFinder = new WaterPathFinder(mg, this.stagger);
     this.initialized = true;
 
     if (
@@ -236,6 +246,7 @@ export class TransportShipExecution implements Execution {
         motionPlanId: this.motionPlanId,
         motionPlanDst: this.motionPlanDst,
         pathFinder: this.initialized ? this.pathFinder.snapshot() : null,
+        stagger: this.stagger,
       } satisfies TransportShipExecutionCheckpoint,
     };
   }
@@ -266,6 +277,7 @@ export class TransportShipExecution implements Execution {
     this.retreating = data.retreating;
     this.motionPlanId = data.motionPlanId;
     this.motionPlanDst = data.motionPlanDst;
+    this.stagger = data.stagger ?? data.pathFinder?.stagger ?? 0;
     if (data.boatId === null) {
       this.boat = undefined as unknown as Unit;
     } else {
@@ -276,7 +288,7 @@ export class TransportShipExecution implements Execution {
     if (data.pathFinder !== null) {
       this.pathFinder = new WaterPathFinder(
         game,
-        data.pathFinder.stagger,
+        this.stagger,
         data.pathFinder.memoized,
       );
       this.pathFinder.restore(data.pathFinder);
