@@ -14,8 +14,9 @@ appear under "Resumable lobbies". Companion notes: `testnotes.md`,
 - Working branch: `feature/save-resume-checkpoints`.
 - **Deployed branch is now `main`, and `main` == the feature tip** (the Fly.io
   GitHub integration auto-deploys `main`; there is no deploy workflow). Latest:
+  - `7008b22bb` Report the server save outcome to the host (save_ack) (this session)
   - `c3e96b250` Ride out gateway cold starts and give the worker a writable save dir
-  - `0c8f030b3` Make server-side save failures diagnosable (this session)
+  - `0c8f030b3` Make server-side save failures diagnosable
   - `0c07e594e` Note that future sessions should overwrite the handoff
 - Push auth (do not print the token):
   ```powershell
@@ -45,6 +46,21 @@ What is already established:
   covered-by-tests code path.
 
 ## 3. What this session changed (pushed)
+
+**Self-diagnosing Save (commit `7008b22bb`)** — so the host does not need logs.
+
+- New server→client `ServerSaveAckSchema` (`save_ack`, appended last in the
+  `ServerMessageSchema` union so wire indices of every other message are
+  unchanged): `{status: "persisted"|"dropped"|"failed", reason?, ticks?}`.
+- `GameServer.sendSaveAck` targets the client that pressed Save (or the host);
+  every rejection path acks with a short reason (`not_host`, `no_account`,
+  `not_started`, `public_game`, `too_large`, `unreadable`, `tick_out_of_range`,
+  `not_newer`, `too_many_chunks`, `rate_limited`, `bad_encoding`,
+  `write_failed`). `persistSave` reports `persisted`/`failed`.
+- Client: on capture, a server-backed save shows `save_game.checkpoint_pending`
+  ("Saving checkpoint…"); the `save_ack` replaces it with
+  `save_game.checkpoint_saved` or a red `save_game.checkpoint_not_saved`
+  carrying the reason. A local/non-host save still confirms immediately.
 
 **Diagnostics (commit `0c8f030b3`)** — the point of the session: make the next
 run conclusive.
@@ -81,13 +97,16 @@ transient 502; surfaces a persistent one after retries).
 - `npm run lint` (oxlint + eslint) — clean.
 - Targeted: `tests/client/GameServerApiCallers.test.ts`,
   `tests/client/SavesModalResume.test.ts`, `tests/EnJsonSorted.test.ts`,
-  `tests/server/SaveStore.test.ts`, `tests/server/GameServerSave.test.ts` —
-  56 passed.
+  `tests/zbin/wire.test.ts`, `tests/server/SaveStore.test.ts`,
+  `tests/server/GameServerSave.test.ts` — all passed (the last now covers both
+  `save_ack` persisted and dropped-not-host).
 - Full suite NOT re-run this session.
 
 ## 5. Next step (do this before changing more)
 
-Re-test on the deployed app and read the logs; they now name the failure:
+Re-test on the deployed app. As of `7008b22bb` the **in-game toast names the
+outcome**: a red "Checkpoint not saved on the server (…)" carries the reason, so
+you may not need the logs at all. If you do want them, they name the failure:
 
 ```
 fly logs -a openfrontio --no-tail
