@@ -1,5 +1,9 @@
 # Handoff — robust save/resume for long private-lobby games
 
+> Future sessions: this file is the current handoff. When you write your own,
+> **overwrite this file** (`HANDOFF.md`) rather than appending — keep only the
+> latest handoff here.
+
 Audience: the next session working on `feature/save-resume-checkpoints`.
 Companion notes: `testnotes.md`, `docs/SaveResumeLongGames.md`.
 
