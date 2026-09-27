@@ -86,7 +86,7 @@ describe("SavesModal server-save reopen", () => {
     vi.clearAllMocks();
   });
 
-  it("rebuilds a started save and opens the join lobby", async () => {
+  it("rebuilds a started save and opens the host lobby in resume mode", async () => {
     const host = stubLobby("host-lobby-modal");
     const join = stubLobby("join-lobby-modal");
     const modal = new SavesModal();
@@ -94,11 +94,14 @@ describe("SavesModal server-save reopen", () => {
     await (modal as any).selectServerSave(startedSave);
 
     expect(api.resumeSavedLobby).toHaveBeenCalledWith("GAME0001");
-    expect(join.open).toHaveBeenCalledWith({ lobbyId: "GAME0001" });
-    expect(host.open).not.toHaveBeenCalled();
+    expect(host.open).toHaveBeenCalledWith({
+      existingLobbyId: "GAME0001",
+      resume: true,
+    });
+    expect(join.open).not.toHaveBeenCalled();
   });
 
-  it("rebuilds a not-yet-started save and opens the host lobby", async () => {
+  it("rebuilds a not-yet-started save and opens the host lobby in resume mode", async () => {
     const host = stubLobby("host-lobby-modal");
     const join = stubLobby("join-lobby-modal");
     const modal = new SavesModal();
@@ -106,7 +109,10 @@ describe("SavesModal server-save reopen", () => {
     await (modal as any).selectServerSave(lobbySave);
 
     expect(api.resumeSavedLobby).toHaveBeenCalledWith("GAME0002");
-    expect(host.open).toHaveBeenCalledWith({ existingLobbyId: "GAME0002" });
+    expect(host.open).toHaveBeenCalledWith({
+      existingLobbyId: "GAME0002",
+      resume: true,
+    });
     expect(join.open).not.toHaveBeenCalled();
   });
 

@@ -22,6 +22,10 @@ export interface IntentGameState {
   isPublic: boolean;
   isListed: boolean;
   hasStarted: boolean;
+  // A save restored into a lobby that the host has not started yet. It reports
+  // hasStarted (the saved turns are a running game) but the host must still be
+  // allowed to start it.
+  isResumeLobby?: boolean;
 }
 
 // The actor and game-state guards of GameServer.handleIntent, in the order
@@ -106,7 +110,9 @@ export function authorizeIntent(
       if (game.isPublic) {
         return { status: 403, error: "cannot start a public game" };
       }
-      if (game.hasStarted) {
+      // A restored save is a running game held in a lobby for the host to
+      // start; every other already-started game refuses the intent.
+      if (game.hasStarted && !game.isResumeLobby) {
         return { status: 409, error: "game already started" };
       }
       return null;

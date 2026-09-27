@@ -189,10 +189,11 @@ export class SavesModal extends BaseModal {
   // --- Server-hosted lobbies --------------------------------------------
 
   // Reopen a server save as a private lobby. The save is rebuilt on its worker
-  // first, then the private-lobby screen is handed the game: a not-yet-started
-  // save reopens the host lobby (config, roster, share link, Start), while a
-  // running save reopens the join lobby, where players claim a saved nation and
-  // wait out the resume countdown together.
+  // first, then the host lobby screen is handed the game: the host sees the
+  // invite link and the roster, others can join and claim a saved nation, and
+  // the host presses Start when ready. A running save is held in this lobby
+  // (rather than resumed immediately) so the host — not a timer — decides when
+  // play continues.
   private async selectServerSave(meta: SavedLobbySummary): Promise<void> {
     if (!commitMatches(meta.gitCommit)) {
       this.error = translateText("save_game.version_mismatch");
@@ -206,15 +207,9 @@ export class SavesModal extends BaseModal {
       return;
     }
     this.close();
-    if (meta.stage === "lobby") {
-      (
-        document.querySelector("host-lobby-modal") as LobbyScreenElement | null
-      )?.open({ existingLobbyId: meta.gameID });
-    } else {
-      (
-        document.querySelector("join-lobby-modal") as LobbyScreenElement | null
-      )?.open({ lobbyId: meta.gameID });
-    }
+    (
+      document.querySelector("host-lobby-modal") as LobbyScreenElement | null
+    )?.open({ existingLobbyId: meta.gameID, resume: true });
   }
 
   private async removeServerSave(

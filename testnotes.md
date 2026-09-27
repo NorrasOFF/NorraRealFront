@@ -114,3 +114,39 @@ Remaining known gap: this fork replays records with upstream ids/intents, so som
 intents fail locally (`cannot build ...`, `Failed to spawn warship ...`). That is
 expected and does not affect the save/resume comparison, which only requires the
 local source and its resumed copies to agree.
+
+## Resume-as-lobby: the host starts a resumed save by hand
+
+A server save whose stage is `"started"` is no longer resumed on a timer when
+the first player joins. `SavesModal.selectServerSave` always reopens
+`host-lobby-modal` with `{ existingLobbyId, resume: true }`; the game waits in
+the lobby (`GameServer.isResumeLobby()`) until the host presses Start, which
+runs the usual 15 s `RESUME_START_DELAY_MS` countdown and then delivers the
+checkpoint + suffix. `toggle_game_start_timer` arms/cancels that countdown and
+is authorized after start only for a resume lobby
+(`IntentGameState.isResumeLobby`).
+
+Notes for future test edits:
+
+- Tests that restore a started save and expect a `start` frame must first drive
+  the host start, e.g.
+  `game.handleIntent({ type: "toggle_game_start_timer" }, { clientID, isLobbyCreator: true, isAdmin: false, isAdminBot: false })`
+  (see `hostStart` in `tests/server/GameServerSave.test.ts`).
+- `isResumeCountingDown()` still means "restored and not yet resumed", so it is
+  `true` both while waiting in the lobby and during the countdown.
+- A resumed save (`resume: true`) hides the host-lobby config editor and Start
+  skips `putGameConfig()`, so the saved map/config is never clobbered. This also
+  fixes the unstarted-save (`stage === "lobby"`) path, which previously re-sent
+  the form defaults on Start.
+
+## Other pre-existing suite failures (verified on the clean tip)
+
+Unrelated to save/resume, present with these changes stashed:
+
+- `tests/server/MapPlaylistOvertime.test.ts` — `always enables overtime in FFA
+lobbies` (`publicGameModifiers.isCompact` is `true`, expected `undefined`).
+- `tests/server/HostedLobbyListing.test.ts` — `never schedules or sets
+countdowns on hosted lobbies` (no `createGame` messages observed).
+
+The many `localStorage`/WebGL client failures seen in a full local `vitest run`
+are the documented environment-only failures above.

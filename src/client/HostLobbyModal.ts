@@ -115,6 +115,10 @@ export class HostLobbyModal extends BaseModal {
   @state() private showSubscriptionRequired: boolean = false;
   // Server timestamp when the listed lobby auto-starts (from lobby info).
   @state() private autoStartAt: number | null = null;
+  // Reopened from a server save: the config is fixed (its saved map and turns
+  // must keep matching), so the config editor is hidden and Start simply
+  // resumes the game. The host still gets the invite link and player list.
+  @state() private resumeMode: boolean = false;
 
   @property({ attribute: false }) eventBus: EventBus | null = null;
   // Timers for debouncing slider changes
@@ -150,6 +154,14 @@ export class HostLobbyModal extends BaseModal {
       this.publiclyListed = lobby.listed;
     }
     this.autoStartAt = lobby.autoStartAt ?? null;
+    // A resumed save's config is fixed and the editor is hidden, but the
+    // player list still needs the real mode/team count to render correctly.
+    if (this.resumeMode && lobby.gameConfig) {
+      this.gameMode = lobby.gameConfig.gameMode;
+      if (typeof lobby.gameConfig.playerTeams === "number") {
+        this.teamCount = lobby.gameConfig.playerTeams;
+      }
+    }
   };
 
   private getRandomString(): string {
@@ -211,7 +223,9 @@ export class HostLobbyModal extends BaseModal {
         <span
           class="text-white text-xl lg:text-2xl font-bold uppercase tracking-widest break-words hyphens-auto"
         >
-          ${translateText("host_modal.title")}
+          ${translateText(
+            this.resumeMode ? "host_modal.resume_title" : "host_modal.title",
+          )}
         </span>
         ${this.renderVisibilityToggle()}
       `,
@@ -236,6 +250,11 @@ export class HostLobbyModal extends BaseModal {
   // one-way (the server rejects unlisting), so the Private segment goes away
   // once the lobby is listed.
   private renderVisibilityToggle() {
+    // A resumed save is not listable: its config is frozen and it is meant to
+    // be shared with the players who were in it, not recruited publicly.
+    if (this.resumeMode) {
+      return nothing;
+    }
     const segment = (labelKey: string, isPublic: boolean) => html`
       <button
         class="px-3 py-1 text-[10px] font-bold uppercase tracking-widest rounded-full transition-all ${this
@@ -282,6 +301,20 @@ export class HostLobbyModal extends BaseModal {
     >`;
   }
 
+  // Shown on a reopened save in place of the config editor: share the link so
+  // the original players can reclaim their nations, then press Start.
+  private renderResumeNotice() {
+    return html`
+      <div
+        class="mb-8 p-4 rounded-xl border border-malibu-blue/40 bg-malibu-blue/10"
+      >
+        <p class="text-sm text-white/80 leading-relaxed">
+          ${translateText("host_modal.resume_notice")}
+        </p>
+      </div>
+    `;
+  }
+
   private handleVisibilitySelect(isPublic: boolean) {
     if (
       this.listingRequestInFlight ||
@@ -307,9 +340,9 @@ export class HostLobbyModal extends BaseModal {
         : null;
     const statusLabel =
       secondsRemaining === null
-        ? this.clients.length === 1
-          ? translateText("host_modal.waiting")
-          : translateText("game_settings.start")
+        ? this.resumeMode || this.clients.length > 1
+          ? translateText("game_settings.start")
+          : translateText("host_modal.waiting")
         : translateText("host_modal.starting_in", {
             time: renderDuration(secondsRemaining),
           });
@@ -482,8 +515,10 @@ export class HostLobbyModal extends BaseModal {
         <div
           class="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-6 mr-1 mx-auto w-full max-w-5xl"
         >
+          ${this.resumeMode ? this.renderResumeNotice() : nothing}
           <game-config-settings
             class="block"
+            style=${this.resumeMode ? "display: none" : ""}
             .sectionGapClass=${"space-y-10"}
             .settings=${{
               map: {
@@ -630,7 +665,9 @@ export class HostLobbyModal extends BaseModal {
             width="block"
             size="lg"
             .title=${statusLabel}
-            ?disable=${this.lobbyStartAt === null && this.clients.length < 2}
+            ?disable=${this.lobbyStartAt === null &&
+            !this.resumeMode &&
+            this.clients.length < 2}
             @click=${this.toggleGameStartTimer}
           ></o-button>
         </div>
@@ -676,6 +713,7 @@ export class HostLobbyModal extends BaseModal {
     // of creating another game.
     const existingLobbyId =
       typeof args?.existingLobbyId === "string" ? args.existingLobbyId : null;
+    this.resumeMode = args?.resume === true && existingLobbyId !== null;
     if (existingLobbyId !== null) {
       this.attachToExistingLobby(existingLobbyId).catch(() => {
         // Clear clipboard so the host doesn't accidentally share a dead link,
@@ -854,6 +892,7 @@ export class HostLobbyModal extends BaseModal {
     this.publiclyListed = false;
     this.showSubscriptionRequired = false;
     this.autoStartAt = null;
+    this.resumeMode = false;
   }
 
   private async handleSelectRandomMap() {
@@ -1463,7 +1502,12 @@ export class HostLobbyModal extends BaseModal {
   }
 
   private async toggleGameStartTimer() {
-    await this.putGameConfig();
+    // A resumed save owns its configuration (map, game mode, turns,
+    // checkpoint). Re-sending the form's default config would clobber the
+    // saved map, so the host only starts it; the server keeps the saved config.
+    if (!this.resumeMode) {
+      await this.putGameConfig();
+    }
     console.log(
       `Starting private game with map: ${GameMapType[this.selectedMap as keyof typeof GameMapType]} ${this.useRandomMap ? " (Randomly selected)" : ""}`,
     );

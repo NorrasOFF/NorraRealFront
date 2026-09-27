@@ -1,23 +1,17 @@
-# Handoff — save/resume: server save is not persisting on the Fly deployment
+# Handoff — resume-as-lobby: the creator now starts a resumed save by hand
 
 > Future sessions: this file is the current handoff. When you write your own,
 > **overwrite this file** (`HANDOFF.md`) rather than appending — keep only the
 > latest handoff here.
 
-Audience: the next session debugging why a saved private-lobby game does not
-appear under "Resumable lobbies". Companion notes: `testnotes.md`,
-`docs/SaveResumeLongGames.md`, `DEPLOYMENT.md` ("SAVE_DIR").
+Companion notes: `testnotes.md`, `docs/SaveResumeLongGames.md`, `DEPLOYMENT.md`
+("SAVE_DIR").
 
 ## 1. Where things are
 
 - Repo: `C:\Users\ai51940\OpenFrontIO` (private fork).
-- Working branch: `feature/save-resume-checkpoints`.
-- **Deployed branch is now `main`, and `main` == the feature tip** (the Fly.io
-  GitHub integration auto-deploys `main`; there is no deploy workflow). Latest:
-  - `7008b22bb` Report the server save outcome to the host (save_ack) (this session)
-  - `c3e96b250` Ride out gateway cold starts and give the worker a writable save dir
-  - `0c8f030b3` Make server-side save failures diagnosable
-  - `0c07e594e` Note that future sessions should overwrite the handoff
+- Working/deployed branch: `feature/save-resume-checkpoints` (the Fly.io GitHub
+  integration auto-deploys `main`; `main` is kept at the feature tip).
 - Push auth (do not print the token):
   ```powershell
   $tok = (Get-Content -Raw "H:\Documents\Hexfront token.txt").Trim()
@@ -26,120 +20,99 @@ appear under "Resumable lobbies". Companion notes: `testnotes.md`,
   ```
 - App: https://openfrontio.fly.dev (Fly app `openfrontio`, `NUM_WORKERS=1`).
 
-## 2. The bug being chased
+## 2. The problem this session fixed
 
-Private lobby, 2 players, host presses **Save checkpoint** → client shows
-"Checkpoint saved" → opening **Load** shows "Resumable lobbies" **empty**
-(later with no error banner at all; earlier once with `worker 0: HTTP 502`).
+A running save ("started" stage) appeared under **Resumable lobbies**, but
+clicking it did **not** open a lobby: the creator was dropped toward the game
+and it froze at the checkpoint; the other account could not get in at all.
 
-What is already established:
+Root cause: `SavesModal.selectServerSave` opened `join-lobby-modal` for any
+save whose stage was not `"lobby"`, and the server armed the resume countdown
+**automatically on the first join** (`beginResumeCountdown`). There was no
+host-controlled lobby for a running save.
 
-- The server-side feature **is deployed**: `GET /w0/api/saves` on the live app
-  returns `400 {"error":"Authorization header required"}`, a route that only
-  exists in the save/resume feature. `origin/main` has the on-demand
-  `scheduleSave()` in `GameServer.ts` (`acceptCheckpointWire`).
-- The client "Checkpoint saved" toast fires in
-  `ClientGameRunner` `setCheckpointCallback` **unconditionally**, before/without
-  any server acknowledgement. It is not proof the save persisted.
-- All in-repo tests pass (`MemorySaveStore` and `FilesystemSaveStore`
-  round-trip/list are covered). So this is a runtime/deployment failure, not a
-  covered-by-tests code path.
+## 3. New behavior
 
-## 3. What this session changed (pushed)
+Pressing **Resume** on a server save now always reopens the **host lobby**
+(`host-lobby-modal`, in a new `resume` mode) for the creator:
 
-**Self-diagnosing Save (commit `7008b22bb`)** — so the host does not need logs.
+- The invite link/copy button and the live roster are there, as for a normal
+  private lobby, so the original players can open the link and claim their
+  saved nations (the seat picker is unchanged).
+- The config editor is hidden (a resumed game owns its map/mode/turns; letting
+  the form re-send defaults would clobber the saved map).
+- The **host presses Start** when ready. Start arms a short resume countdown
+  (`GameServer.RESUME_START_DELAY_MS`, 15 s) and then delivers the checkpoint +
+  suffix, exactly as before. Pressing Start again cancels the countdown.
+- The game is no longer resumed by a timer on join.
 
-- New server→client `ServerSaveAckSchema` (`save_ack`, appended last in the
-  `ServerMessageSchema` union so wire indices of every other message are
-  unchanged): `{status: "persisted"|"dropped"|"failed", reason?, ticks?}`.
-- `GameServer.sendSaveAck` targets the client that pressed Save (or the host);
-  every rejection path acks with a short reason (`not_host`, `no_account`,
-  `not_started`, `public_game`, `too_large`, `unreadable`, `tick_out_of_range`,
-  `not_newer`, `too_many_chunks`, `rate_limited`, `bad_encoding`,
-  `write_failed`). `persistSave` reports `persisted`/`failed`.
-- Client: on capture, a server-backed save shows `save_game.checkpoint_pending`
-  ("Saving checkpoint…"); the `save_ack` replaces it with
-  `save_game.checkpoint_saved` or a red `save_game.checkpoint_not_saved`
-  carrying the reason. A local/non-host save still confirms immediately.
+## 4. What changed (files)
 
-**Diagnostics (commit `0c8f030b3`)** — the point of the session: make the next
-run conclusive.
+Server (`src/server/GameServer.ts`):
 
-- `GameServer.handleClientCheckpoint` / `handleClientCheckpointChunk`: log every
-  early return (not started, public, no creator account, **not the lobby
-  creator**, oversized, bad chunk count, rate limit, over byte budget).
-- `GameServer.acceptCheckpointWire`: log unreadable blob, tick out of range,
-  not-newer-than-held, and — on success — `accepted host checkpoint, persisting
-save` with `{ticks, turns, bytes}`.
-- `ClientGameRunner.uploadCheckpoint`: log the client-side skip reason (local
-  game, not the lobby host, not newer, over the transfer cap).
-- `Worker.ts`: log `resumable save store: <dir>` at startup.
+- New `isResumeLobby()` = `restored && stage === "started" && !resumeStarted`.
+- `joinClient` / `rejoinClient`: for a resume lobby, just keep the lobby roster
+  broadcasting (`startLobbyInfoBroadcast(true)`) instead of arming the
+  countdown. Late joiners to an already-resumed game are unchanged.
+- `handleIntent("toggle_game_start_timer")`: in a resume lobby, arm
+  (`beginResumeCountdown`) or cancel (`cancelResumeCountdown`, new) the countdown.
+- `beginResumeCountdown` doc updated; still private.
 
-**Hardening (commit `c3e96b250`)**
+Server (`src/server/IntentAuthorization.ts`):
 
-- `src/client/Api.ts`: retry the save endpoints (`list`, `resume`, `delete`,
-  `seats`) on `502/503/504` with backoff `[800,1600,3200,6400] ms` — a
-  cold-starting/rolling Fly machine otherwise looks exactly like "no saves".
-- `src/client/SavesModal.ts`: a failed lookup now shows the diagnostic + a
-  **Retry** button instead of "No resumable lobbies"; added `save_game.retry`.
-- `Dockerfile` `start.sh`: create `SAVE_DIR` (default `/usr/src/app/saves`) and
-  `chown -R node:node` it. The worker runs as the unprivileged `node` user but
-  both `/usr/src/app` and a mounted Fly volume are root-owned, so writes fail
-  with `EACCES` and are swallowed by `persistSave` (logged only). **Unverified
-  as the cause** — kept as required hardening.
+- `IntentGameState.isResumeLobby?` added; `toggle_game_start_timer` is allowed
+  after start only when `isResumeLobby` (a normal started game still 409s).
 
-Tests: `tests/client/GameServerApiCallers.test.ts` covers the retry (rides out a
-transient 502; surfaces a persistent one after retries).
+Client:
 
-## 4. Verification this session
+- `src/client/SavesModal.ts` — `selectServerSave` always opens
+  `host-lobby-modal` with `{ existingLobbyId, resume: true }`.
+- `src/client/HostLobbyModal.ts` — `resumeMode` state; hides the config editor
+  and the public/private toggle, shows a "Resume Game" title + notice, Start is
+  enabled with a single client, and Start skips `putGameConfig()`.
+- `resources/lang/en.json` — `host_modal.resume_title`, `host_modal.resume_notice`.
+
+Tests updated: `tests/server/GameServerSave.test.ts` (host-triggered start +
+cancel), `tests/server/IntentAuthorization.test.ts`, `tests/client/SavesModalResume.test.ts`,
+`tests/LateGameSaveResume.test.ts`, `tests/EndgameSaveResume.test.ts`.
+
+## 5. Verification this session
 
 - `npx tsc --noEmit` — clean.
 - `npm run lint` (oxlint + eslint) — clean.
-- Targeted: `tests/client/GameServerApiCallers.test.ts`,
-  `tests/client/SavesModalResume.test.ts`, `tests/EnJsonSorted.test.ts`,
-  `tests/zbin/wire.test.ts`, `tests/server/SaveStore.test.ts`,
-  `tests/server/GameServerSave.test.ts` — all passed (the last now covers both
-  `save_ack` persisted and dropped-not-host).
-- Full suite NOT re-run this session.
+- `npx vitest run tests/server/GameServerSave.test.ts tests/server/IntentAuthorization.test.ts tests/client/SavesModalResume.test.ts tests/EnJsonSorted.test.ts` — 65 passed.
+- `npx vitest run tests/server` — only two failures, both **pre-existing**
+  (verified on the clean tip): `MapPlaylistOvertime` (`isCompact`),
+  `HostedLobbyListing > never schedules or sets countdowns on hosted lobbies`.
+- Full `npx vitest run` shows the known environment-only `localStorage`
+  failures (see `testnotes.md`), not regressions.
 
-## 5. Next step (do this before changing more)
+## 6. Next step
 
-Re-test on the deployed app. As of `7008b22bb` the **in-game toast names the
-outcome**: a red "Checkpoint not saved on the server (…)" carries the reason, so
-you may not need the logs at all. If you do want them, they name the failure:
+Re-test on the deployed app with two accounts:
 
-```
-fly logs -a openfrontio --no-tail
-```
+1. Start a private game, play a few turns, press **Save checkpoint**.
+2. Load → **Resumable lobbies** → Resume: expect the **Resume Game** host lobby
+   (invite link + roster), not an immediate game.
+3. Second account opens the invite link and claims its nation; then the host
+   presses **Start** and both should enter the restored game past the
+   checkpoint.
 
-Expected, and what each means:
+If the host still reports a freeze _after_ Start (checkpoint restore in the
+core worker), that is a separate client/core issue from this change — capture
+the browser console around `start` and `restore/checkpoint`.
 
-- `resumable save store: <dir>` — confirms the path the worker will write.
-- `checkpoint upload ignored: not the lobby creator` / `no creator account` /
-  `game not started` — the host's upload was dropped; look at
-  `isLobbyCreator()`/`lobbyCreatorID` (host `clientID` vs `creatorPersistentID`).
-- `checkpoint upload ignored: too large` / `dropping checkpoint: …` — size or
-  tick/commit validation.
-- `accepted host checkpoint, persisting save` then `failed to persist game save`
-  — the write failed (EACCES/ENOSPC): the writable-save-dir fix is the answer.
-- `accepted host checkpoint` but NO `persisted`/`failed` line — `scheduleSave()`
-  was a no-op (`isPublic()` / `creatorPersistentID === undefined`).
-- Browser console `uploading checkpoint to server: …` vs `checkpoint not
-uploaded: …` tells you whether the client even sent it.
+## 7. Open items
 
-## 6. Other open items (unchanged from the previous handoff)
-
-- **End-to-end save pipeline is still not proven in-repo** (client capture →
-  encode → upload → `/api/saves` accept → store → restart → resume). The
-  `0c8f030b3` logs are the first step; a real test driving the HTTP routes +
-  `FilesystemSaveStore` would be the P0.
-- **Durability:** `fly.toml` sets no `SAVE_DIR` and declares no volume. Saves
-  land on the machine's ephemeral disk and are lost on redeploy. If the logs
-  show a successful write but the list is still empty after a deploy, mount a
-  volume and set `SAVE_DIR` (see `DEPLOYMENT.md`); the `chown` fix in the
-  Dockerfile is what makes a mounted volume writable.
-- **Cold start:** `auto_stop_machines='stop'` + `min_machines_running=0` means
-  an idle machine 502s while it starts; the client retry masks it, but keeping
-  one machine warm is the real fix if this keeps biting.
-- `docs/SaveResumeLongGames.md` §2.4 still says saves are creator-leave-only;
-  the on-demand Save-button path is newer and undocumented there.
+- **End-to-end save pipeline still not proven in-repo** (capture → encode →
+  upload → `/api/saves` → store → restart → resume) — a real HTTP-route test
+  with `FilesystemSaveStore` remains the P0.
+- **Durability:** `fly.toml` sets no `SAVE_DIR` / volume; saves land on the
+  machine's ephemeral disk (see `DEPLOYMENT.md`).
+- **Cold start:** `auto_stop_machines='stop'` + `min_machines_running=0`; the
+  client retries `502/503/504` but keeping a machine warm is the real fix.
+- For an **unstarted** save (`stage === "lobby"`) the same host-lobby screen is
+  now used, which also fixes a latent bug where Start re-sent the form's
+  default config and reset the saved map.
+- `docs/SaveResumeLongGames.md` §2.4 still describes the older
+  creator-leave-only save path; the on-demand Save button is newer.

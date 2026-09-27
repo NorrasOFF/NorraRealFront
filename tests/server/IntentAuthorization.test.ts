@@ -150,6 +150,13 @@ describe("authorizeIntent", () => {
       lobby({ hasStarted: true }),
       409,
     ],
+    [
+      "start timer on a restored save waiting in its lobby",
+      timer,
+      host,
+      lobby({ hasStarted: true, isResumeLobby: true }),
+      null,
+    ],
 
     ["pause by a player", pause, player, lobby({ hasStarted: true }), 403],
     ["pause by the host", pause, host, lobby({ hasStarted: true }), null],

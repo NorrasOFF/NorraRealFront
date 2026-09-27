@@ -984,6 +984,8 @@
     "player_whitelist_placeholder": "comma separated",
     "players": "Players",
     "remove_player": "Remove {username}",
+    "resume_notice": "This is a saved game. Share the invite link so the original players can reclaim their nations, then press Start when everyone is ready.",
+    "resume_title": "Resume Game",
     "spectator": "Spectator",
     "spectators": "Spectators",
     "start_delay": "Start delay (Seconds)",

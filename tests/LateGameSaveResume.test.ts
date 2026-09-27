@@ -348,7 +348,17 @@ describe.skipIf(process.env.LATEGAME_TEST !== "1")(
           username: "hostusr",
         });
         expect(restored.joinClient(host, HOST_CID)).toBe("joined");
-        // Let the resume countdown elapse and the start frame be sent.
+        // The host presses Start, then the resume countdown elapses and the
+        // start frame is sent.
+        restored.handleIntent(
+          { type: "toggle_game_start_timer" },
+          {
+            clientID: HOST_CID,
+            isLobbyCreator: true,
+            isAdmin: false,
+            isAdminBot: false,
+          },
+        );
         await new Promise((resolve) => setTimeout(resolve, 50));
 
         const ctx = createGameWireContext(gameStart.players);

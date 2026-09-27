@@ -738,6 +738,7 @@ export class GameServer {
       isPublic: this.isPublic(),
       isListed: this.isListed(),
       hasStarted: this.hasStarted(),
+      isResumeLobby: this.isResumeLobby(),
     });
     if (denied !== null) {
       return finish(denied);
@@ -783,6 +784,17 @@ export class GameServer {
       }
 
       case "toggle_game_start_timer": {
+        if (this.isResumeLobby()) {
+          // A restored save waits in its lobby until the host starts it. The
+          // Start button arms a short resume countdown (letting stragglers'
+          // clients finish loading); pressing it again cancels.
+          if (this.resumeCountdownTimer !== undefined) {
+            this.cancelResumeCountdown();
+          } else {
+            this.beginResumeCountdown();
+          }
+          return finish({ status: 200 });
+        }
         if (this.startsAt) {
           this.startsAt = undefined;
         } else {
@@ -1015,10 +1027,13 @@ export class GameServer {
 
     // In case a client joined the game late and missed the start message.
     if (this.stage === "started") {
-      if (this.restored && !this.resumeStarted) {
-        // A restored save holds a short start countdown so the original
-        // players get a chance to open the link and pick a nation.
-        this.beginResumeCountdown();
+      if (this.isResumeLobby()) {
+        // Resume-as-lobby: hold the restored game in its lobby until the host
+        // presses Start (see toggle_game_start_timer) instead of resuming on a
+        // timer. Keeping the lobby roster broadcasting here is what lets the
+        // host see who has arrived and everyone see each other while they
+        // claim their saved nations.
+        this.startLobbyInfoBroadcast(true);
       } else {
         this.sendStartGameMsg(client.ws, 0);
         // A restored game arms its turn loop only once someone is present, so
@@ -1095,8 +1110,10 @@ export class GameServer {
     this.startLobbyInfoBroadcast();
 
     if (this.stage === "started") {
-      if (this.restored && !this.resumeStarted) {
-        this.beginResumeCountdown();
+      if (this.isResumeLobby()) {
+        // Resume-as-lobby: hold in the lobby until the host starts (see
+        // joinClient for the rationale).
+        this.startLobbyInfoBroadcast(true);
       } else {
         this.sendStartGameMsg(client.ws, lastTurn);
         this.ensureTurnLoop();
@@ -1816,11 +1833,19 @@ export class GameServer {
     );
   }
 
-  // A restored save does not resume the instant somebody joins: it first runs a
-  // short start countdown (the same "start timer" as a new lobby) so the
-  // original players can open the link and claim their nation. Armed on the
-  // first join; idempotent while it runs, and re-armed by a later join if
-  // everybody left before it elapsed.
+  // A restored save the host has reopened but not yet started. It sits in a
+  // lobby (the host can share the invite and pick a nation) until the host
+  // presses Start, which arms the resume countdown below. A save that never
+  // started restores to stage "lobby" instead, and starts through the normal
+  // GameManager path, so it does NOT count here.
+  private isResumeLobby(): boolean {
+    return this.restored && this.stage === "started" && !this.resumeStarted;
+  }
+
+  // A restored save does not resume the instant somebody joins: the host
+  // presses Start, which runs a short countdown (the same "start timer" as a
+  // new lobby) so the original players' clients can finish loading. Armed from
+  // toggle_game_start_timer; idempotent while it runs.
   private beginResumeCountdown(): void {
     if (this.resumeStarted || this.ended) {
       return;
@@ -1836,6 +1861,16 @@ export class GameServer {
       );
     }
     this.sendPrestartMessages(true);
+  }
+
+  // The host pressed Start a second time before the countdown elapsed: call the
+  // resume off and keep the game in its lobby.
+  private cancelResumeCountdown(): void {
+    if (this.resumeCountdownTimer !== undefined) {
+      clearTimeout(this.resumeCountdownTimer);
+      this.resumeCountdownTimer = undefined;
+    }
+    this.startsAt = undefined;
   }
 
   // The countdown elapsed: hand everyone the saved history and arm the turn

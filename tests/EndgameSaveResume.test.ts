@@ -616,6 +616,17 @@ describe.skipIf(process.env.ENDGAME_TEST !== "1")(
             username: "hostusr",
           });
           expect(restored.joinClient(host, HOST_CID)).toBe("joined");
+          // The host presses Start; the resume countdown then delivers the
+          // saved history.
+          restored.handleIntent(
+            { type: "toggle_game_start_timer" },
+            {
+              clientID: HOST_CID,
+              isLobbyCreator: true,
+              isAdmin: false,
+              isAdminBot: false,
+            },
+          );
           await new Promise((resolve) => setTimeout(resolve, 50));
 
           const ctx = createGameWireContext(state.gameStart.players);
