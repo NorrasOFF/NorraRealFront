@@ -2051,12 +2051,12 @@ export class GameServer {
             lobbyCreatedAt: this.createdAt,
             myClientID: client.clientID,
             ...(includeCheckpoint ? { checkpoint: this.checkpoint } : {}),
-            ...(chunked
-              ? {
-                  chunkSize: GameServer.RESUME_CHUNK_TURNS,
-                  numTurns: total,
-                }
-              : {}),
+            // Always send the authoritative total. With a checkpoint the turns
+            // here are only the suffix, so without this the client would read
+            // `turns.length` as the total and mis-skip the base state (an empty
+            // map stuck at tick 0).
+            numTurns: total,
+            ...(chunked ? { chunkSize: GameServer.RESUME_CHUNK_TURNS } : {}),
           } satisfies ServerStartGameMessage,
           this.zbinCtx,
         ),

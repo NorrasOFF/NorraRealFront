@@ -359,6 +359,9 @@ export function joinLobby(
             if (checkpoint !== undefined) {
               lobbyConfig.resumeCheckpoint = checkpoint;
               lobbyConfig.resumeCheckpointWire = message.checkpoint;
+              console.info(
+                `resume: decoded server checkpoint at tick ${checkpoint.ticks}`,
+              );
             } else {
               console.warn("dropping unreadable server checkpoint");
             }
@@ -374,6 +377,9 @@ export function joinLobby(
         if (checkpoint !== undefined) {
           lobbyConfig.resumeCheckpoint = checkpoint;
           lobbyConfig.resumeCheckpointWire = message.checkpoint;
+          console.info(
+            `resume: decoded server checkpoint at tick ${checkpoint.ticks}`,
+          );
         } else {
           console.warn("dropping unreadable server checkpoint");
         }
@@ -1277,10 +1283,14 @@ export class ClientGameRunner {
           goToPlayer();
         }
 
-        // The authoritative number of turns this client must catch up to. When
-        // the server streams the backlog it is `numTurns`; otherwise the start
-        // message already carries the whole history (its length).
-        const startTotal = message.numTurns ?? message.turns.length;
+        // The authoritative number of turns this client must catch up to.
+        // `numTurns` is always sent now; fall back to the last turn's number
+        // for an older server.
+        const lastTurnNumber =
+          message.turns[message.turns.length - 1]?.turnNumber;
+        const startTotal =
+          message.numTurns ??
+          (lastTurnNumber !== undefined ? lastTurnNumber + 1 : 0);
 
         // B2: when the resume carries a core checkpoint the worker has already
         // restored state through `checkpoint.ticks`, so it must only execute the
@@ -1293,6 +1303,22 @@ export class ClientGameRunner {
           checkpointTicks <= startTotal
         ) {
           this.turnsSeen = checkpointTicks;
+        }
+
+        // If the server sent a suffix but this client restored no checkpoint,
+        // it would replay turns against a fresh (empty) game and stall at tick
+        // 0. The server drops checkpoints it cannot decode, so this should not
+        // happen — log loudly if it does.
+        const firstSuffix = message.turns[0]?.turnNumber;
+        if (
+          firstSuffix !== undefined &&
+          firstSuffix > this.turnsSeen &&
+          !this.isResume
+        ) {
+          console.warn(
+            `resume: server sent turns from ${firstSuffix} but no checkpoint was restored (empty map); ` +
+              `resumeCheckpoint=${this.resumeCheckpoint !== undefined}`,
+          );
         }
 
         // A resumed save replays its history here; hide that run-up and let the

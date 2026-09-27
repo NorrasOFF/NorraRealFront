@@ -8,12 +8,14 @@ import {
 import { GameType } from "../../src/core/game/Game";
 import { SavedLobbySchema } from "../../src/core/Schemas";
 import { createGameWireContext } from "../../src/core/ZbinWire";
+import { GameManager } from "../../src/server/GameManager";
 import { GamePhase, GameServer } from "../../src/server/GameServer";
 import { MemorySaveStore } from "../../src/server/SaveStore";
 import {
   cid,
   makeClient,
   makeGame,
+  mockLogger,
   mockWsOf,
   startGame,
 } from "../util/GameServerHarness";
@@ -507,6 +509,10 @@ describe("GameServer checkpoint resume", () => {
     // Only turns 5..9, not the whole 0..9 history.
     expect(start.turns[0].turnNumber).toBe(5);
     expect(start.turns.map((t) => t.turnNumber)).toEqual([5, 6, 7, 8, 9]);
+    // The authoritative total is still sent even though only the suffix is, so
+    // the client can tell how far it is catching up without mis-reading the
+    // suffix length as the total.
+    expect(start.numTurns).toBe(10);
   });
 
   it("ignores a checkpoint from a non-creator", async () => {
@@ -801,5 +807,46 @@ describe("GameServer compressed checkpoint upload", () => {
     } finally {
       GameServer.MAX_CHECKPOINT_UPLOADS_PER_MINUTE = original;
     }
+  });
+});
+
+// A live game with nobody in it must not be handed back on the next Resume:
+// it may have been started+abandoned, in which case rejoining auto-starts an
+// empty game instead of reopening the save's lobby.
+describe("GameManager.resume", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(T0);
+  });
+  afterEach(() => {
+    vi.clearAllTimers();
+    vi.useRealTimers();
+  });
+
+  function lobbySave() {
+    const lobby = makeGame({ creatorPersistentID: "host-pid" });
+    lobby.joinClient(
+      makeClient({ clientID: cid("host"), persistentID: "host-pid" }),
+    );
+    return lobby.snapshot()!;
+  }
+
+  it("is idempotent without force and rebuilds with force", () => {
+    const gm = new GameManager(
+      mockLogger(),
+      undefined,
+      "DEV",
+      new MemorySaveStore(),
+    );
+    const save = lobbySave();
+
+    const first = gm.restoreGame(save);
+    expect(gm.game(save.gameID)).toBe(first);
+    // A second resume of a live game returns the same instance.
+    expect(gm.restoreGame(save)).toBe(first);
+    // A forced resume (stale live game) discards and rebuilds it.
+    const rebuilt = gm.restoreGame(save, true);
+    expect(rebuilt).not.toBe(first);
+    expect(gm.game(save.gameID)).toBe(rebuilt);
   });
 });

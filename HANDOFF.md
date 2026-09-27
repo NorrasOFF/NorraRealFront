@@ -76,16 +76,44 @@ Tests updated: `tests/server/GameServerSave.test.ts` (host-triggered start +
 cancel), `tests/server/IntentAuthorization.test.ts`, `tests/client/SavesModalResume.test.ts`,
 `tests/LateGameSaveResume.test.ts`, `tests/EndgameSaveResume.test.ts`.
 
+## 4b. Round 2: the resumed start showed an empty map at tick 0
+
+After the lobby change, a resume still failed _inside_ the game: the checkpoint
+was not applied, the map was empty and the clock sat at 0. Causes fixed:
+
+- **The server now validates the checkpoint before serving it.** `restoreCheckpoint`
+  trusted a save that carried `checkpointTurn` without ever decoding the blob, so
+  a legacy/corrupt/other-build checkpoint was handed to the client, which could
+  not decode it, skipped the saved base turns, and stalled. `Worker`
+  `POST /api/saves/:id/resume` now `decodeCheckpointWire`s the blob; if it cannot
+  be decoded the checkpoint is dropped and the game replays the full history.
+- **The start frame always carries `numTurns`** (`GameServer.sendStartGameMsg`).
+  With a checkpoint the `turns` are only the suffix; without the authoritative
+  total the client read the suffix length as the total and set `turnsSeen`
+  wrong (or not at all), injecting thousands of empty turns ahead of the suffix.
+- **A stale live game is rebuilt, not reused.** The resume route returns a live
+  game only when it still has clients; otherwise it `restoreGame(save, true)`s
+  (new `force` flag) so an abandoned started game reopens as a lobby instead of
+  auto-starting again. `GameManager.restoreGame(save, force)`.
+- Client (`ClientGameRunner`): `startTotal` now derives from `numTurns` (falling
+  back to the last turn number), and it warns loudly if a suffix arrives without
+  a restored checkpoint (the old empty-map failure mode), plus info logs for the
+  decoded checkpoint tick.
+
 ## 5. Verification this session
 
 - `npx tsc --noEmit` — clean.
 - `npm run lint` (oxlint + eslint) — clean.
-- `npx vitest run tests/server/GameServerSave.test.ts tests/server/IntentAuthorization.test.ts tests/client/SavesModalResume.test.ts tests/EnJsonSorted.test.ts` — 65 passed.
+- `npx vitest run tests/server/GameServerSave.test.ts tests/server/IntentAuthorization.test.ts tests/client/SavesModalResume.test.ts tests/EnJsonSorted.test.ts` — 66 passed.
 - `npx vitest run tests/server` — only two failures, both **pre-existing**
   (verified on the clean tip): `MapPlaylistOvertime` (`isCompact`),
   `HostedLobbyListing > never schedules or sets countdowns on hosted lobbies`.
 - Full `npx vitest run` shows the known environment-only `localStorage`
   failures (see `testnotes.md`), not regressions.
+- The deployed `GIT_COMMIT` is `"unknown"` (see index.html), so the
+  `commitMatches` build guard is a no-op in production; a checkpoint from any
+  build is accepted. That is why the server-side decode validation above
+  matters.
 
 ## 6. Next step
 
@@ -96,11 +124,13 @@ Re-test on the deployed app with two accounts:
    (invite link + roster), not an immediate game.
 3. Second account opens the invite link and claims its nation; then the host
    presses **Start** and both should enter the restored game past the
-   checkpoint.
+   checkpoint (non-empty map, clock past 0).
 
-If the host still reports a freeze _after_ Start (checkpoint restore in the
-core worker), that is a separate client/core issue from this change — capture
-the browser console around `start` and `restore/checkpoint`.
+If it still fails, capture the browser console around `start`. The new logs name
+the failure: `resume: decoded server checkpoint at tick N` (good) vs
+`dropping unreadable server checkpoint` (the base state is missing). The server
+logs `resume: dropping unreadable checkpoint, full replay` when it rejects the
+blob; `flyctl logs -a openfrontio --no-tail` (needs `flyctl auth login`).
 
 ## 7. Open items
 

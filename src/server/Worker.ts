@@ -7,6 +7,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { WebSocket, WebSocketServer } from "ws";
 import { z } from "zod";
+import { decodeCheckpointWire } from "../core/CheckpointCodec";
 import { GameEnv } from "../core/configuration/Config";
 import { GameType } from "../core/game/Game";
 import {
@@ -466,7 +467,11 @@ export async function startWorker() {
     const id = idResult.data;
 
     const live = gm.game(id);
-    if (live !== null) {
+    const liveClients = live?.numClients() ?? 0;
+    if (live !== null && liveClients > 0) {
+      // Someone is still connected: return the running game rather than
+      // rebuilding (a second copy would fight it). A live game with nobody in
+      // it is stale — fall through and reopen the save as a fresh lobby.
       return res.json({
         ...live.gameInfo(),
         workerIndex: workerId,
@@ -484,11 +489,27 @@ export async function startWorker() {
       log.warn("resume failed: caller is not the creator", { gameID: id });
       return res.status(403).json({ error: "not_creator" });
     }
-    const game = gm.restoreGame(save);
+    // A checkpoint this build cannot decode would make the client skip the
+    // saved base state and stall on an empty map. Verify it here and fall back
+    // to a full-history replay when it is unusable (legacy version, corrupt,
+    // or a different build), so a resume always produces a playable game.
+    if (save.checkpoint !== undefined) {
+      const decoded = await decodeCheckpointWire(save.checkpoint);
+      if (decoded === undefined) {
+        log.warn("resume: dropping unreadable checkpoint, full replay", {
+          gameID: id,
+        });
+        save.checkpoint = undefined;
+        delete save.checkpointTurn;
+      }
+    }
+    const game = gm.restoreGame(save, true);
     log.info("resumed saved game", {
       gameID: id,
       stage: save.stage,
       turns: save.turns.length,
+      checkpoint: save.checkpoint !== undefined,
+      replacedLiveGame: live !== null,
     });
     res.json({
       ...game.gameInfo(),

@@ -132,11 +132,18 @@ export class GameManager {
 
   // Rebuild a private lobby/game from a persisted snapshot on this worker. No-op
   // (returns the live game) when one already exists, so a repeated resume is
-  // idempotent.
-  restoreGame(save: SavedLobby): GameServer {
+  // idempotent. `force` discards a live game first: a resumed game that was
+  // started and then abandoned (no clients) would otherwise auto-start again on
+  // the next Resume instead of reopening its lobby.
+  restoreGame(save: SavedLobby, force = false): GameServer {
     const existing = this.games.get(save.gameID);
-    if (existing !== undefined) {
+    if (existing !== undefined && !force) {
       return existing;
+    }
+    if (existing !== undefined) {
+      const stale = existing;
+      this.games.delete(save.gameID);
+      void stale.end();
     }
     const game = new GameServer(
       {

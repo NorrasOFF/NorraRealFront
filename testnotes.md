@@ -139,6 +139,26 @@ Notes for future test edits:
   fixes the unstarted-save (`stage === "lobby"`) path, which previously re-sent
   the form defaults on Start.
 
+## Empty-map resume (round 2)
+
+A resume that opened the game on an empty map with the clock at 0 was the client
+skipping the saved base turns it never restored. Guards now in place:
+
+- `sendStartGameMsg` always sets `numTurns` (the authoritative total). With a
+  checkpoint the frame's `turns` are only the suffix, so a client that read
+  `turns.length` as the total mis-set `turnsSeen` and injected empty turns.
+- `POST /api/saves/:id/resume` decodes the checkpoint (`decodeCheckpointWire`)
+  and drops it if the current build cannot read it, so the client gets a full
+  history instead of a suffix over a fresh game.
+- `GameManager.restoreGame(save, force)` and the resume route rebuild a live
+  game that has no clients, so an abandoned started game reopens as a lobby
+  rather than auto-starting an empty game.
+- `ClientGameRunner` warns
+  `resume: server sent turns from N but no checkpoint was restored`.
+
+The deployed `GIT_COMMIT` is `"unknown"`, so the `commitMatches` guard never
+rejects an old save; the server-side decode check is what protects resume.
+
 ## Other pre-existing suite failures (verified on the clean tip)
 
 Unrelated to save/resume, present with these changes stashed:
