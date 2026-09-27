@@ -71,7 +71,11 @@ export async function startWorker() {
     // undefined.
     workerId,
   });
-  const saveStore = new FilesystemSaveStore(ServerEnv.saveWorkerDir(workerId));
+  const saveDir = ServerEnv.saveWorkerDir(workerId);
+  const saveStore = new FilesystemSaveStore(saveDir);
+  // Log the resolved directory so a deployment misconfiguration (an unwritable
+  // or unset SAVE_DIR) is visible in the worker startup logs.
+  log.info(`resumable save store: ${saveDir}`);
   // Phase 6: keep the save directory under its retention/byte budget.
   startSaveRetention(saveStore);
   const gm = new GameManager(log, telemetry, buildHash, saveStore);

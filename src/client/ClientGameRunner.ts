@@ -989,10 +989,37 @@ export class ClientGameRunner {
   // The worker already encoded `wire` (and skipped it when unsendable), so this
   // side never serializes or gzips the checkpoint.
   private uploadCheckpoint(wire: string, ticks: number): void {
-    if (this.transport.isLocal || !this.isLobbyCreator()) return;
-    if (ticks <= this.lastUploadedCheckpointTick) return;
+    // Logged because the Save button confirms client-side regardless of whether
+    // this upload happens or the server accepts it; without this a skipped
+    // upload is invisible when the save list stays empty.
+    if (this.transport.isLocal) {
+      console.info("checkpoint not uploaded: this is a local game");
+      return;
+    }
+    if (!this.isLobbyCreator()) {
+      console.info(
+        "checkpoint not uploaded: this client is not the lobby host",
+      );
+      return;
+    }
+    if (ticks <= this.lastUploadedCheckpointTick) {
+      console.info("checkpoint not uploaded: not newer than the last upload", {
+        ticks,
+        lastUploaded: this.lastUploadedCheckpointTick,
+      });
+      return;
+    }
     this.lastUploadedCheckpointTick = ticks;
-    if (wire.length > MAX_CHECKPOINT_COMPRESSED_TRANSFER_BYTES) return;
+    if (wire.length > MAX_CHECKPOINT_COMPRESSED_TRANSFER_BYTES) {
+      console.warn("checkpoint not uploaded: over the transfer cap", {
+        bytes: wire.length,
+        limit: MAX_CHECKPOINT_COMPRESSED_TRANSFER_BYTES,
+      });
+      return;
+    }
+    console.info(
+      `uploading checkpoint to server: ${ticks} ticks, ${wire.length} bytes`,
+    );
     if (wire.length <= MAX_CHECKPOINT_TRANSFER_BYTES) {
       this.transport.sendCheckpoint(wire);
       return;

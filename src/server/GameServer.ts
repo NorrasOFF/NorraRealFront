@@ -1171,17 +1171,41 @@ export class GameServer {
     client: Client,
     message: ClientCheckpointMessage,
   ): void {
-    if (
-      this.stage !== "started" ||
-      this.isPublic() ||
-      this.creatorPersistentID === undefined
-    ) {
+    // Every early return is logged: a host pressing Save sees a client-side
+    // confirmation regardless, so without these the server silently discards an
+    // upload and the save list just stays empty with nothing to diagnose.
+    if (this.stage !== "started") {
+      this.log.info("checkpoint upload ignored: game not started", {
+        clientID: client.clientID,
+        stage: this.stage,
+      });
+      return;
+    }
+    if (this.isPublic()) {
+      this.log.info("checkpoint upload ignored: public game", {
+        clientID: client.clientID,
+      });
+      return;
+    }
+    if (this.creatorPersistentID === undefined) {
+      this.log.info("checkpoint upload ignored: no creator account", {
+        clientID: client.clientID,
+      });
       return;
     }
     if (client.clientID !== this.lobbyCreatorID) {
+      this.log.info("checkpoint upload ignored: not the lobby creator", {
+        clientID: client.clientID,
+        lobbyCreatorID: this.lobbyCreatorID,
+      });
       return;
     }
     if (message.checkpoint.length > MAX_CHECKPOINT_TRANSFER_BYTES) {
+      this.log.warn("checkpoint upload ignored: too large", {
+        clientID: client.clientID,
+        bytes: message.checkpoint.length,
+        limit: MAX_CHECKPOINT_TRANSFER_BYTES,
+      });
       return;
     }
     this.trackCheckpointUpload(this.acceptCheckpointWire(message.checkpoint));
@@ -1222,19 +1246,43 @@ export class GameServer {
     message: ClientCheckpointChunkMessage,
   ): void {
     if (!GameServer.CHECKPOINT_COMPRESSION) return;
-    if (
-      this.stage !== "started" ||
-      this.isPublic() ||
-      this.creatorPersistentID === undefined
-    ) {
+    if (this.stage !== "started" || this.isPublic()) {
+      this.log.info("checkpoint chunks ignored: game not resumable", {
+        clientID: client.clientID,
+        stage: this.stage,
+        isPublic: this.isPublic(),
+      });
       return;
     }
-    if (client.clientID !== this.lobbyCreatorID) return;
-    if (message.encoding !== "gzip") return;
+    if (this.creatorPersistentID === undefined) {
+      this.log.info("checkpoint chunks ignored: no creator account", {
+        clientID: client.clientID,
+      });
+      return;
+    }
+    if (client.clientID !== this.lobbyCreatorID) {
+      this.log.info("checkpoint chunks ignored: not the lobby creator", {
+        clientID: client.clientID,
+        lobbyCreatorID: this.lobbyCreatorID,
+      });
+      return;
+    }
+    if (message.encoding !== "gzip") {
+      this.log.warn("checkpoint chunks ignored: unsupported encoding", {
+        clientID: client.clientID,
+        encoding: message.encoding,
+      });
+      return;
+    }
     if (
       message.total === 0 ||
       message.total > GameServer.MAX_CHECKPOINT_UPLOAD_CHUNKS
     ) {
+      this.log.warn("checkpoint chunks ignored: bad chunk count", {
+        clientID: client.clientID,
+        total: message.total,
+        max: GameServer.MAX_CHECKPOINT_UPLOAD_CHUNKS,
+      });
       return;
     }
     if (message.seq >= message.total) return;
@@ -1255,6 +1303,10 @@ export class GameServer {
         this.checkpointUploadsThisMinute >=
         GameServer.MAX_CHECKPOINT_UPLOADS_PER_MINUTE
       ) {
+        this.log.warn("checkpoint chunks ignored: upload rate limit", {
+          clientID: client.clientID,
+          uploadsThisMinute: this.checkpointUploadsThisMinute,
+        });
         return;
       }
       this.checkpointUploadsThisMinute++;
@@ -1265,6 +1317,11 @@ export class GameServer {
         updatedAt: now,
       };
       this.checkpointUploads.set(key, upload);
+      this.log.info("receiving chunked checkpoint upload", {
+        clientID: client.clientID,
+        uploadId: message.uploadId,
+        total: message.total,
+      });
     }
     // A reused id with a different shape is a different upload; drop the old.
     if (upload.chunks.length !== message.total) {
@@ -1279,13 +1336,33 @@ export class GameServer {
     upload.updatedAt = now;
     if (upload.bytes > MAX_CHECKPOINT_COMPRESSED_TRANSFER_BYTES) {
       this.checkpointUploads.delete(key);
+      this.log.warn("checkpoint chunks dropped: over byte budget", {
+        clientID: client.clientID,
+        bytes: upload.bytes,
+        limit: MAX_CHECKPOINT_COMPRESSED_TRANSFER_BYTES,
+      });
       return;
     }
     if (upload.received < message.total) return;
     const wire = upload.chunks.join("");
     this.checkpointUploads.delete(key);
-    if (wire.length > MAX_CHECKPOINT_COMPRESSED_TRANSFER_BYTES) return;
-    if (!isCompressedCheckpoint(wire)) return;
+    if (wire.length > MAX_CHECKPOINT_COMPRESSED_TRANSFER_BYTES) {
+      this.log.warn("checkpoint chunks dropped: reassembled too large", {
+        clientID: client.clientID,
+        bytes: wire.length,
+      });
+      return;
+    }
+    if (!isCompressedCheckpoint(wire)) {
+      this.log.warn("checkpoint chunks dropped: not a gzip payload", {
+        clientID: client.clientID,
+      });
+      return;
+    }
+    this.log.info("reassembled chunked checkpoint, decoding", {
+      clientID: client.clientID,
+      bytes: wire.length,
+    });
     this.trackCheckpointUpload(this.acceptCheckpointWire(wire));
   }
 
@@ -1295,11 +1372,19 @@ export class GameServer {
   // await; a losing race simply leaves the newer checkpoint in place.
   private async acceptCheckpointWire(wire: string): Promise<void> {
     const checkpoint = await decodeCheckpointWire(wire);
-    if (
-      checkpoint === undefined ||
-      checkpoint.ticks < 0 ||
-      checkpoint.ticks > this.turns.length
-    ) {
+    if (checkpoint === undefined) {
+      this.log.warn("dropping checkpoint: unreadable blob", {
+        gameID: this.id,
+        bytes: wire.length,
+      });
+      return;
+    }
+    if (checkpoint.ticks < 0 || checkpoint.ticks > this.turns.length) {
+      this.log.warn("dropping checkpoint: tick out of range", {
+        gameID: this.id,
+        ticks: checkpoint.ticks,
+        turns: this.turns.length,
+      });
       return;
     }
     // Never regress to an older checkpoint; the host only ever moves forward.
@@ -1307,10 +1392,21 @@ export class GameServer {
       this.checkpoint !== undefined &&
       checkpoint.ticks <= this.checkpointTurn
     ) {
+      this.log.info("dropping checkpoint: not newer than the held one", {
+        gameID: this.id,
+        ticks: checkpoint.ticks,
+        held: this.checkpointTurn,
+      });
       return;
     }
     this.checkpoint = wire;
     this.checkpointTurn = checkpoint.ticks;
+    this.log.info("accepted host checkpoint, persisting save", {
+      gameID: this.id,
+      ticks: checkpoint.ticks,
+      turns: this.turns.length,
+      bytes: wire.length,
+    });
     // The Save button is an explicit "make this resumable" request, so persist
     // a SavedLobby immediately instead of waiting for the creator to leave. The
     // save appears in the host's server-save list right away and survives a
