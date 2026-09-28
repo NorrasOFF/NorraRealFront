@@ -1,4 +1,4 @@
-# Handoff — export a resumable server lobby to a portable save file
+# Handoff — fix "Import as lobby" failing for large (multi-player) saves
 
 > Future sessions: this file is the current handoff. When you write your own,
 > **overwrite this file** rather than appending — keep only the latest handoff.
@@ -19,84 +19,68 @@ Companion notes: `testnotes.md`, `docs/SaveResumeLongGames.md`, `DEPLOYMENT.md`
   ```
 - App: https://openfrontio.fly.dev (Fly app `openfrontio`, `NUM_WORKERS=1`,
   1 machine, region `ams`, **no volume**). Fly token for CLI at
-  `H:\Documents\Fly.io token.txt`.
+  `H:\Documents\Fly.io token.txt`. `GAME_ENV=dev`, so `verifyClientToken`
+  accepts a bare UUID as a Bearer token — handy for curl against the API.
 - Remote is `origin = hexfront-dev/OpenFrontIO`; `upstream` is the public repo.
 
-## 2. What this change adds
+## 2. The bug and the fix
 
-**Export a resumable server lobby** (`Load → Resumable lobbies`, each row now
-has an **Export** button). Downloads `<label>-<gameID>.json.gz`, the same
-portable format as a local export, so a server save survives a redeploy that
-wipes the (volume-less) server save directory and can be re-imported:
+Symptom: `Load → Import as lobby` on a save with more than one player showed the
+generic red toast "Failed to import that file as a resumable lobby."
 
-- **Import** (local section) → back into the local IndexedDB store.
-- **Import as lobby** (server section) → back into a resumable server lobby.
+Cause: nginx (the container's reverse proxy, `nginx.conf` → mounted at
+`/etc/nginx/conf.d/default.conf`) defaults to `client_max_body_size 1m`. A save
+file is POSTed whole to `POST /wN/api/saves/import`, so any export over 1 MB was
+rejected by nginx with **HTTP 413** before it reached the worker. A tiny
+single-player export stayed under 1 MB and worked, which is why only larger
+(multi-player) files failed. The worker itself was never the problem: its
+`express.raw` cap is `MAX_SAVE_IMPORT_BYTES = 64 MiB`
+(`src/server/SaveImport.ts`), above the client's `MAX_SAVE_FILE_BYTES`.
 
-The stored `SavedLobby` carries account `persistentID`s in its seats and must
-never reach a browser (see `SaveStore.ts` header). So the server converts it to a
-PII-free `SavedGame` and gzips it; the raw lobby JSON is never serialized to the
-client.
+Fix (commit `f925901d0`): add `client_max_body_size 70m;` to the `server` block
+of `nginx.conf`. 70 MB sits above the worker's 64 MiB cap so a maximal import is
+not clipped by the proxy.
 
-## 3. What changed (files)
+## 3. Files changed
 
-Commit `bf1e3526d` ("Export a resumable server lobby as a portable save file"):
-
-- `src/server/SaveImport.ts` — the inverse of `savedLobbyFromSavedGame`:
-  - `savedGameFromSavedLobby(lobby)` → `SavedGame`. Uses the frozen
-    `gameStartInfo` when present (already PII-free); otherwise synthesizes it
-    from `gameConfig` + `createdAt` + a stripped projection of the seats
-    (`seatToPlayer` drops `persistentID`/`publicId`/`trusted`/`spectator`).
-    `myClientID` = the creator's seat id. Keeps the checkpoint only when
-    `decodeCheckpointWire` accepts it. Parsed through `SavedGameSchema` as the
-    final strip/validate.
-  - `encodeExportedSavedGame(save)` → gzipped `Buffer` (node `zlib`, same bytes
-    shape as the client's `SaveFile.encodeSaveFile`).
-- `src/server/Worker.ts` — `GET /api/saves/:id/export`: `requireAccount` →
-  validate id → `saveStore.load` → creator check (403) → convert+gzip → respond
-  `application/gzip` with `Content-Disposition`. 500 `export_failed` on
-  conversion error.
-- `src/client/Api.ts` — `exportSavedLobby(gameID)` GET, retried via the existing
-  `fetchSaveEndpoint` gateway backoff, returns `Uint8Array`.
-- `src/client/SavesModal.ts` — `exportServerSave(meta, event)` handler +
-  **Export** button on server rows; reuses `save_game.export` /
-  `save_game.export_failed` (no new lang keys).
-- `tests/server/SaveImport.test.ts` — new `savedGameFromSavedLobby` describe:
-  round-trip, PII stripping for an unstarted save, checkpoint kept, and
-  gzip → `decodeImportedSavedGame` round-trip.
+- `nginx.conf` — new `client_max_body_size 70m;` with a comment explaining the
+  1 MB default and the 64 MiB worker cap.
+- `tests/NginxBodySize.test.ts` — new regression guard: parses every
+  `client_max_body_size` from `nginx.conf` and asserts the largest is
+  `>= MAX_SAVE_IMPORT_BYTES` (imported from `src/server/SaveImport`).
 
 ## 4. Verification
 
+- Diagnosed by POSTing a real exported save to the deployed server with a
+  dev UUID token: got `HTTP 413` and an `nginx/1.22.1` body (not a worker HTML
+  error), confirming the proxy, not the app, rejected it.
+- Confirmed the worker pipeline is sound first: decoded the real exports
+  (`~/Downloads/World_JarvastadensJarnhand-gUf5wmUf.json.gz`, 2 players, 453
+  turns; `.../Giant_World_Map_JarvastadensJarnhand-djHKVuXG.json.gz`, 12 players,
+  31 465 turns) through `decodeImportedSavedGame` →
+  `savedLobbyFromSavedGame` → `MemorySaveStore` → `makeGame({ restore })`; both
+  restored with all seats intact. Temp tests were deleted afterwards.
 - `npx tsc --noEmit` — clean.
-- `npx oxlint` + `npx eslint` on the 5 changed files — clean.
-- `npx prettier --check` on changed files — clean (husky lint-staged ran it on
-  commit anyway).
-- `npx vitest run tests/server/SaveImport.test.ts` — 13 passed.
-- `npx vitest run tests/client/SavesModalResume.test.ts tests/client/SaveFile.test.ts tests/EnJsonSorted.test.ts` — 14 passed.
-- Pushed `bf1e3526d` to `origin/feature/save-resume-checkpoints` and `origin/main`
-  (auto-deploys the app).
+- `npx oxlint` + `npx eslint` + `npx prettier --check` on the new test — clean.
+- `npx vitest run tests/NginxBodySize.test.ts tests/server/SaveImport.test.ts` —
+  14 passed.
 
 ## 5. Open items / next steps
 
-- **HTTP route is not covered by an automated test.** The route lives inline in
-  `startWorker()`, so only the conversion + gzip functions are unit-tested. A
-  real express-route test with `FilesystemSaveStore` is still the standing P0
-  (carried over from the previous handoff).
-- **End-to-end on the deployed app:** host a private/multiplayer game → Export a
-  Resumable lobby row → wipe/refresh → **Import as lobby** → expect the Resume
-  Game host lobby → Start → non-empty map past the checkpoint.
-- **Singleplayer-origin saves are a known rough edge** (analysis-only, not yet
-  changed): the export/import path accepts them, but the origin is preserved as
-  `config.gameType` in the imported lobby (never normalized to `Private`).
-  Singleplayer branches then still fire in the hosted session (pause ownership —
-  `SettingsModal.ts:121`; no spawn timer — `GameRunner.ts:113`; presence/lobbyId
-  omission — `Main.ts:1139`), which can make a hosted game drift from the
-  server. If singleplayer files should behave as normal resumable lobbies,
-  coerce `gameType` to `Private` in `savedLobbyFromSavedGame` (and strip
-  singleplayer-only cheats).
+- **Verify on the deployed app after this deploy:** `Load → Import as lobby` a
+  multi-player export (the two files in `~/Downloads` are ideal) → expect the
+  Resume Game host lobby to open, Start → non-empty map past the checkpoint.
+- **No automated coverage of the real HTTP route.** `tests/NginxBodySize.test.ts`
+  only guards the nginx directive; the express import/resume routes still have
+  no route-level test (standing P0 from earlier handoffs). A real express test
+  with `FilesystemSaveStore` would catch app-side regressions.
+- **Client "Import as lobby" errors are still opaque.** `importSavedLobby`
+  throws `save import failed: HTTP <status> <body>` and `SavesModal` only logs
+  it, then shows the generic lang string. Consider surfacing the status /
+  distinguishing 413 ("file too large for the server") in the toast.
 - **Still ephemeral:** server lobbies vanish on the next redeploy (no Fly
-  volume). The exported file is now the durable artifact for server saves too;
-  re-import after each deploy. A volume remains the real fix:
-  `fly volumes create openfront_saves -a openfrontio -s 3` + `[mounts]` +
-  `SAVE_DIR=/data/saves`.
-- Seats other than the creator's have a blank persistentID on import (the file
-  has none); they can only _claim_ via the invite link.
+  volume). Export is the durable artifact; re-import after each deploy. A volume
+  remains the real fix: `fly volumes create openfront_saves -a openfrontio -s 3`
+  - `[mounts]` + `SAVE_DIR=/data/saves`.
+- **Singleplayer-origin saves** are still a known rough edge (origin not
+  normalized to `Private` on import) — see the previous handoff history in git.
