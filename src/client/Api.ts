@@ -1266,6 +1266,26 @@ export async function deleteSavedLobby(gameID: string): Promise<void> {
   );
 }
 
+// GET /wN/api/saves/:id/export — download a resumable server lobby as a
+// portable gzipped save file (creator-only). The server converts the
+// PII-bearing SavedLobby into a SavedGame before sending any bytes.
+export async function exportSavedLobby(gameID: string): Promise<Uint8Array> {
+  const token = await getPlayToken();
+  const res = await fetchSaveEndpoint(
+    `${ClientEnv.serverHttpBase()}/${ClientEnv.workerPath(gameID)}/api/saves/${gameID}/export`,
+    {
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(
+      `save export failed: HTTP ${res.status} ${body.slice(0, 200)}`,
+    );
+  }
+  return new Uint8Array(await res.arrayBuffer());
+}
+
 // POST /wN/api/saves/import — register a locally exported save file (gzip bytes,
 // or plain JSON) as a resumable server lobby on the worker that owns `gameID`.
 // Creator-scoped. The body is sent raw so express.json (which only parses JSON)

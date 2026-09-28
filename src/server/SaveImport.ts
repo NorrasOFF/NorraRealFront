@@ -1,13 +1,18 @@
-import { gunzip as gunzipCb } from "node:zlib";
+import { promisify } from "node:util";
+import { gunzip as gunzipCb, gzip as gzipCb } from "node:zlib";
 import { decodeCheckpointWire } from "../core/CheckpointCodec";
 import {
+  SAVED_GAME_VERSION,
   SAVED_LOBBY_VERSION,
   SavedGameSchema,
   SavedLobbySchema,
+  type Player,
   type SavedGame,
   type SavedLobby,
   type SavedLobbySeat,
 } from "../core/Schemas";
+
+const gzipAsync = promisify(gzipCb);
 
 // Turn a locally exported save file (the gzipped `SavedGame` the client's
 // SaveFile export produces) into a server-hosted `SavedLobby`, so the player can
@@ -130,4 +135,73 @@ export async function savedLobbyFromSavedGame(
     gitCommit: options.gitCommit,
   };
   return SavedLobbySchema.parse(lobby);
+}
+
+// Drop the server-only seat fields (persistentID, publicId, trusted, spectator)
+// when a save that never started has no frozen gameStartInfo to read from.
+function seatToPlayer(seat: SavedLobbySeat): Player {
+  return {
+    clientID: seat.clientID,
+    username: seat.username,
+    clanTag: seat.clanTag,
+    ...(seat.cosmetics !== undefined ? { cosmetics: seat.cosmetics } : {}),
+    ...(seat.isLobbyCreator !== undefined
+      ? { isLobbyCreator: seat.isLobbyCreator }
+      : {}),
+    ...(seat.friends !== undefined ? { friends: seat.friends } : {}),
+    ...(seat.teamIndex !== undefined ? { teamIndex: seat.teamIndex } : {}),
+  };
+}
+
+/**
+ * The inverse of {@link savedLobbyFromSavedGame}: turn a server-hosted
+ * `SavedLobby` back into a portable `SavedGame` the client can download as a
+ * save file. This is the only conversion allowed to hand server state to a
+ * browser, so the PII-bearing seat fields (persistentID, publicId) are dropped:
+ * `startInfo.players` comes from the PII-free `gameStartInfo` when present, or a
+ * stripped projection of the seats when the save never started.
+ */
+export async function savedGameFromSavedLobby(
+  save: SavedLobby,
+): Promise<SavedGame> {
+  const startInfo = save.gameStartInfo ?? {
+    gameID: save.gameID,
+    lobbyCreatedAt: save.createdAt,
+    config: save.gameConfig,
+    players: save.seats.map(seatToPlayer),
+  };
+  const creator = save.seats.find(
+    (seat) => seat.persistentID === save.creatorPersistentID,
+  );
+  const myClientID = creator?.clientID ?? save.seats[0]?.clientID;
+
+  let checkpoint: string | undefined;
+  if (typeof save.checkpoint === "string") {
+    const decoded = await decodeCheckpointWire(save.checkpoint);
+    if (decoded !== undefined) {
+      checkpoint = save.checkpoint;
+    }
+  }
+
+  return SavedGameSchema.parse({
+    version: SAVED_GAME_VERSION,
+    saveId: save.gameID,
+    gameID: save.gameID,
+    label: startInfo.players[0]?.username
+      ? `${startInfo.config.gameMap} · ${startInfo.players[0].username}`
+      : startInfo.config.gameMap,
+    savedAt: save.savedAt,
+    gitCommit: save.gitCommit,
+    ...(myClientID !== undefined ? { myClientID } : {}),
+    startInfo,
+    ...(checkpoint !== undefined ? { checkpoint } : {}),
+    turns: save.turns,
+  });
+}
+
+/** Gzip a portable save file exactly as the client's SaveFile export does. */
+export async function encodeExportedSavedGame(
+  save: SavedGame,
+): Promise<Buffer> {
+  return gzipAsync(Buffer.from(JSON.stringify(save), "utf8"));
 }

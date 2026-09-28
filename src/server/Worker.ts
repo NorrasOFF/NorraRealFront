@@ -39,7 +39,9 @@ import { startPolling } from "./PollingLoop";
 import { PrivilegeRefresher } from "./PrivilegeRefresher";
 import {
   decodeImportedSavedGame,
+  encodeExportedSavedGame,
   MAX_SAVE_IMPORT_BYTES,
+  savedGameFromSavedLobby,
   savedLobbyFromSavedGame,
 } from "./SaveImport";
 import { FilesystemSaveStore, startSaveRetention } from "./SaveStore";
@@ -524,6 +526,44 @@ export async function startWorker() {
       workerPath: ServerEnv.workerPath(id),
       seats: game.claimableSeats(persistentId),
     });
+  });
+
+  // Download a saved lobby as a portable gzipped save file. Creator-only. The
+  // stored SavedLobby carries account persistentIDs (seats), so it is never
+  // serialized to the browser: it is converted to a PII-free SavedGame and
+  // gzipped in the same format the client's local export produces, so it can be
+  // re-imported (locally, or back as a lobby) after a redeploy has wiped the
+  // server's copy.
+  app.get("/api/saves/:id/export", async (req, res) => {
+    const persistentId = await requireAccount(req, res);
+    if (persistentId === null) return;
+    const idResult = ID.safeParse(req.params.id);
+    if (!idResult.success) {
+      return res.status(400).json({ error: "Invalid game id" });
+    }
+    const save = await saveStore.load(idResult.data);
+    if (save === null) {
+      return res.status(404).json({ error: "save_not_found" });
+    }
+    if (save.creatorPersistentID !== persistentId) {
+      return res.status(403).json({ error: "not_creator" });
+    }
+    let body: Buffer;
+    try {
+      const portable = await savedGameFromSavedLobby(save);
+      body = await encodeExportedSavedGame(portable);
+    } catch (error) {
+      log.warn(
+        `save export failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return res.status(500).json({ error: "export_failed" });
+    }
+    res.setHeader("Content-Type", "application/gzip");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${save.gameID}.json.gz"`,
+    );
+    res.send(body);
   });
 
   // Forget a saved game. Creator-only. The live game (if any) is left alone.

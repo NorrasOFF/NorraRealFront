@@ -15,6 +15,8 @@ import {
 import { SAVED_GAME_VERSION, type SavedGame } from "../../src/core/Schemas";
 import {
   decodeImportedSavedGame,
+  encodeExportedSavedGame,
+  savedGameFromSavedLobby,
   savedLobbyFromSavedGame,
 } from "../../src/server/SaveImport";
 import { MemorySaveStore } from "../../src/server/SaveStore";
@@ -184,6 +186,63 @@ describe("SaveImport", () => {
         "CLIENT01",
         "CLIENT02",
       ]);
+    });
+  });
+
+  describe("savedGameFromSavedLobby", () => {
+    const options = {
+      creatorPersistentID: "11111111-1111-1111-1111-111111111111",
+      gitCommit: "BUILD1",
+      now: 42,
+    };
+
+    it("round-trips a started lobby back to a portable save", async () => {
+      const original = makeSave();
+      const lobby = await savedLobbyFromSavedGame(original, options);
+      const portable = await savedGameFromSavedLobby(lobby);
+      expect(portable.version).toBe(SAVED_GAME_VERSION);
+      expect(portable.gameID).toBe(original.gameID);
+      expect(portable.startInfo).toEqual(original.startInfo);
+      expect(portable.turns).toEqual(original.turns);
+      expect(portable.myClientID).toBe("CLIENT01");
+    });
+
+    it("drops seat PII when synthesizing startInfo for an unstarted save", async () => {
+      const lobby = await savedLobbyFromSavedGame(makeSave(), options);
+      const portable = await savedGameFromSavedLobby({
+        ...lobby,
+        stage: "lobby",
+        gameStartInfo: undefined,
+      });
+      expect(portable.startInfo.players.map((p) => p.clientID)).toEqual([
+        "CLIENT01",
+        "CLIENT02",
+      ]);
+      for (const player of portable.startInfo.players) {
+        expect(player).not.toHaveProperty("persistentID");
+        expect(player).not.toHaveProperty("publicId");
+        expect(player).not.toHaveProperty("trusted");
+        expect(player).not.toHaveProperty("spectator");
+      }
+      expect(JSON.stringify(portable)).not.toContain(
+        options.creatorPersistentID,
+      );
+    });
+
+    it("keeps a decodable checkpoint", async () => {
+      const save = makeSave({
+        checkpoint: encodeCheckpoint(sampleCheckpoint(2)),
+      });
+      const lobby = await savedLobbyFromSavedGame(save, options);
+      const portable = await savedGameFromSavedLobby(lobby);
+      expect(portable.checkpoint).toBe(save.checkpoint);
+    });
+
+    it("gzip-encodes a save the import boundary accepts", async () => {
+      const lobby = await savedLobbyFromSavedGame(makeSave(), options);
+      const portable = await savedGameFromSavedLobby(lobby);
+      const bytes = await encodeExportedSavedGame(portable);
+      expect(await decodeImportedSavedGame(bytes)).toEqual(portable);
     });
   });
 });

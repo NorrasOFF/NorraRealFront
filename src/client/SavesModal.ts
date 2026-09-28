@@ -5,6 +5,7 @@ import { decodeCheckpointWire } from "../core/CheckpointCodec";
 import type { ClientID, SavedGame, SavedGameMeta } from "../core/Schemas";
 import {
   deleteSavedLobby,
+  exportSavedLobby,
   importSavedLobby,
   listSavedLobbies,
   resumeSavedLobby,
@@ -299,6 +300,26 @@ export class SavesModal extends BaseModal {
     )?.open({ existingLobbyId: meta.gameID, resume: true });
   }
 
+  // Download a server-hosted lobby as a portable save file, so it survives a
+  // redeploy that wipes the server's (volume-less) save directory. The file can
+  // be re-imported as a local save or back as a resumable lobby.
+  private async exportServerSave(
+    meta: SavedLobbySummary,
+    event: Event,
+  ): Promise<void> {
+    event.stopPropagation();
+    try {
+      const bytes = await exportSavedLobby(meta.gameID);
+      downloadSaveFile(
+        bytes,
+        saveFileName({ label: meta.label, gameID: meta.gameID }),
+      );
+    } catch (error) {
+      console.error("Failed to export server save", error);
+      this.error = translateText("save_game.export_failed");
+    }
+  }
+
   private async removeServerSave(
     meta: SavedLobbySummary,
     event: Event,
@@ -486,12 +507,20 @@ export class SavesModal extends BaseModal {
         >
           ${translateText("save_game.resume_lobby")}
         </span>
-        <button
-          class="shrink-0 px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider bg-red-500/20 text-red-300 border border-red-500/30 hover:bg-red-500/30"
-          @click=${(e: Event) => void this.removeServerSave(meta, e)}
-        >
-          ${translateText("save_game.delete")}
-        </button>
+        <div class="flex shrink-0 items-center gap-2">
+          <button
+            class="px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider bg-white/10 text-white border border-white/20 hover:bg-white/20"
+            @click=${(e: Event) => void this.exportServerSave(meta, e)}
+          >
+            ${translateText("save_game.export")}
+          </button>
+          <button
+            class="px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider bg-red-500/20 text-red-300 border border-red-500/30 hover:bg-red-500/30"
+            @click=${(e: Event) => void this.removeServerSave(meta, e)}
+          >
+            ${translateText("save_game.delete")}
+          </button>
+        </div>
       </div>
     `;
   }
