@@ -1266,6 +1266,34 @@ export async function deleteSavedLobby(gameID: string): Promise<void> {
   );
 }
 
+// POST /wN/api/saves/import — register a locally exported save file (gzip bytes,
+// or plain JSON) as a resumable server lobby on the worker that owns `gameID`.
+// Creator-scoped. The body is sent raw so express.json (which only parses JSON)
+// ignores it.
+export async function importSavedLobby(
+  gameID: string,
+  bytes: Uint8Array,
+): Promise<void> {
+  const token = await getPlayToken();
+  const res = await fetchSaveEndpoint(
+    `${ClientEnv.serverHttpBase()}/${ClientEnv.workerPath(gameID)}/api/saves/import`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/octet-stream",
+      },
+      body: bytes as unknown as BodyInit,
+    },
+  );
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(
+      `save import failed: HTTP ${res.status} ${body.slice(0, 200)}`,
+    );
+  }
+}
+
 // GET /wN/api/game/:id/seats — the saved human nations a joiner may claim.
 // Empty for a normally created game.
 export async function fetchGameSeats(gameID: string): Promise<ResumableSeat[]> {

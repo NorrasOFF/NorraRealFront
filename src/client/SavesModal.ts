@@ -5,6 +5,7 @@ import { decodeCheckpointWire } from "../core/CheckpointCodec";
 import type { ClientID, SavedGame, SavedGameMeta } from "../core/Schemas";
 import {
   deleteSavedLobby,
+  importSavedLobby,
   listSavedLobbies,
   resumeSavedLobby,
   type SavedLobbyLookupError,
@@ -62,6 +63,9 @@ export class SavesModal extends BaseModal {
 
   // Hidden picker the Import button clicks; the change handler reads the file.
   @query("#save-import-input") private importInput?: HTMLInputElement;
+  // Hidden picker for "Import as lobby" (uploads the file to the game server).
+  @query("#save-import-lobby-input")
+  private importLobbyInput?: HTMLInputElement;
 
   protected renderHeaderSlot() {
     const onBack = this.selected
@@ -198,6 +202,37 @@ export class SavesModal extends BaseModal {
     }
   }
 
+  // Import a save file and register it as a resumable server lobby (creator
+  // only), then open the Resume Game lobby so the host can Start from the
+  // saved checkpoint. Also keeps a local copy.
+  private async onImportLobbyFile(event: Event): Promise<void> {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = "";
+    if (file === undefined) {
+      return;
+    }
+    try {
+      if (file.size > MAX_SAVE_FILE_BYTES) {
+        this.error = translateText("save_game.import_failed");
+        return;
+      }
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const save = await decodeSaveFile(bytes);
+      await saveGame(save);
+      await importSavedLobby(save.gameID, bytes);
+      this.error = "";
+      await resumeSavedLobby(save.gameID);
+      this.close();
+      (
+        document.querySelector("host-lobby-modal") as LobbyScreenElement | null
+      )?.open({ existingLobbyId: save.gameID, resume: true });
+    } catch (error) {
+      console.error("Failed to import save as a lobby", error);
+      this.error = translateText("save_game.import_lobby_failed");
+    }
+  }
+
   private async resumeLocal(): Promise<void> {
     const save = this.selected;
     const clientID = this.myClientID;
@@ -295,11 +330,26 @@ export class SavesModal extends BaseModal {
         ${this.error
           ? html`<p class="text-sm text-yellow-400">${this.error}</p>`
           : nothing}
-        <h3
-          class="text-sm font-semibold uppercase tracking-wider text-white/50"
-        >
-          ${translateText("save_game.server_section")}
-        </h3>
+        <div class="flex items-center justify-between">
+          <h3
+            class="text-sm font-semibold uppercase tracking-wider text-white/50"
+          >
+            ${translateText("save_game.server_section")}
+          </h3>
+          <button
+            class="px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider bg-white/10 text-white border border-white/20 hover:bg-white/20"
+            @click=${() => this.importLobbyInput?.click()}
+          >
+            ${translateText("save_game.import_lobby")}
+          </button>
+        </div>
+        <input
+          id="save-import-lobby-input"
+          type="file"
+          class="hidden"
+          accept=".gz,.json,application/gzip,application/json"
+          @change=${(e: Event) => void this.onImportLobbyFile(e)}
+        />
         ${this.serverSaves.length === 0
           ? this.hasServerLookupErrors()
             ? this.renderServerDiagnostic()

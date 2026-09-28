@@ -15,6 +15,8 @@ import {
   ID,
   MAX_HOSTED_LOBBIES,
   ServerErrorMessage,
+  type SavedGame,
+  type SavedLobby,
 } from "../core/Schemas";
 import { generateID, replacer } from "../core/Util";
 import { CreateGameInputSchema } from "../core/WorkerSchemas";
@@ -35,6 +37,11 @@ import { MapPlaylist } from "./MapPlaylist";
 import { setNoStoreHeaders } from "./NoStoreHeaders";
 import { startPolling } from "./PollingLoop";
 import { PrivilegeRefresher } from "./PrivilegeRefresher";
+import {
+  decodeImportedSavedGame,
+  MAX_SAVE_IMPORT_BYTES,
+  savedLobbyFromSavedGame,
+} from "./SaveImport";
 import { FilesystemSaveStore, startSaveRetention } from "./SaveStore";
 import { ServerEnv } from "./ServerEnv";
 import { applyStaticAssetCacheControl } from "./StaticAssetCache";
@@ -537,6 +544,88 @@ export async function startWorker() {
     await saveStore.delete(idResult.data);
     res.json({ deleted: true });
   });
+
+  // Register a locally exported save file as a resumable private lobby on the
+  // worker that owns its gameID. Creator-scoped. The body is the raw export
+  // bytes (gzip, or plain JSON defensively); express.json ignores it because the
+  // content type is not JSON, so this route's own raw parser handles it. A JSON
+  // header check runs before the parser so an unauthenticated request is
+  // rejected without reading a potentially large body.
+  app.post(
+    "/api/saves/import",
+    (req, res, next) => {
+      if (!req.headers.authorization?.startsWith("Bearer ")) {
+        res
+          .status(400)
+          .json({ error: "Authorization header required to import a save" });
+        return;
+      }
+      next();
+    },
+    express.raw({ type: () => true, limit: MAX_SAVE_IMPORT_BYTES }),
+    async (req, res) => {
+      const persistentId = await requireAccount(req, res);
+      if (persistentId === null) return;
+
+      const body = req.body;
+      if (!Buffer.isBuffer(body) || body.length === 0) {
+        return res.status(400).json({ error: "Missing save body" });
+      }
+
+      let save: SavedGame;
+      try {
+        save = await decodeImportedSavedGame(body);
+      } catch (error) {
+        log.warn(
+          `save import rejected: ${error instanceof Error ? error.message : String(error)}`,
+        );
+        return res.status(400).json({ error: "invalid_save" });
+      }
+
+      // The id must route to this worker (the client targets the owning worker).
+      const expectedWorkerId = ServerEnv.workerIndex(save.gameID);
+      if (expectedWorkerId !== workerId) {
+        return res.status(409).json({
+          error: "wrong_worker",
+          workerIndex: expectedWorkerId,
+          workerPath: `w${expectedWorkerId}`,
+        });
+      }
+
+      // Never let an import take over a save owned by another account.
+      const existing = await saveStore.load(save.gameID);
+      if (existing !== null && existing.creatorPersistentID !== persistentId) {
+        return res.status(409).json({ error: "save_owned_by_other" });
+      }
+
+      let lobby: SavedLobby;
+      try {
+        lobby = await savedLobbyFromSavedGame(save, {
+          creatorPersistentID: persistentId,
+          gitCommit: buildHash,
+          now: Date.now(),
+        });
+      } catch (error) {
+        log.warn(
+          `save import could not build a lobby: ${error instanceof Error ? error.message : String(error)}`,
+        );
+        return res.status(400).json({ error: "invalid_save" });
+      }
+
+      await saveStore.save(lobby, 0);
+      log.info("imported save as resumable lobby", {
+        gameID: lobby.gameID,
+        stage: lobby.stage,
+        turns: lobby.turns.length,
+        checkpoint: lobby.checkpoint !== undefined,
+      });
+      res.json({
+        gameID: lobby.gameID,
+        stage: lobby.stage,
+        numTurns: lobby.turns.length,
+      });
+    },
+  );
 
   registerGamePreviewRoute({
     app,
