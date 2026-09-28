@@ -26,7 +26,11 @@ import {
 import { createGame } from "./game/GameImpl";
 import { TileRef } from "./game/GameMap";
 import { GameMapLoader } from "./game/GameMapLoader";
-import { ErrorUpdate, GameUpdateViewData } from "./game/GameUpdates";
+import {
+  ErrorUpdate,
+  GameUpdateType,
+  GameUpdateViewData,
+} from "./game/GameUpdates";
 import { createNationsForGame } from "./game/NationCreation";
 import { loadTerrainMap as loadGameMap } from "./game/TerrainMapLoader";
 import { PseudoRandom } from "./PseudoRandom";
@@ -218,9 +222,16 @@ export class GameRunner {
       }
     }
 
+    // A resume's full view sync (see GameImpl.emitFullViewSync) re-emits the
+    // spawn-phase-end update so the view can recompute names on that first
+    // tick instead of waiting for the next 30-tick boundary.
+    const fullViewSync =
+      updates[GameUpdateType.SpawnPhaseEnd] !== undefined &&
+      updates[GameUpdateType.SpawnPhaseEnd].length > 0;
     const spawnJustEnded = wasInSpawnPhase && !this.game.inSpawnPhase();
     if (
       spawnJustEnded ||
+      fullViewSync ||
       this.game.ticks() < 3 ||
       this.game.ticks() % 30 === 0
     ) {

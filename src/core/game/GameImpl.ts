@@ -94,6 +94,14 @@ export type CellString = string;
 export class GameImpl implements Game {
   private _ticks = 0;
   private startTick: number | null = null;
+  /**
+   * B2: set by `restoreFromCheckpoint`. The client's view is rebuilt from
+   * worker updates, so a resumed view skipped every turn before the checkpoint
+   * and never saw the base map, the pre-existing units, or the spawn-phase-end
+   * event. The first tick after a restore emits a full snapshot instead of the
+   * usual deltas (see `emitFullViewSync`).
+   */
+  private needsFullViewSync = false;
 
   private unInitExecs: Execution[] = [];
 
@@ -544,6 +552,10 @@ export class GameImpl implements Game {
   executeNextTick(): GameUpdates {
     this.updates = createGameUpdatesMap();
     this.tileUpdatePairs.length = 0;
+    if (this.needsFullViewSync) {
+      this.needsFullViewSync = false;
+      this.emitFullViewSync();
+    }
     this.execs.forEach((e) => {
       if (
         (!this.inSpawnPhase() || e.activeDuringSpawnPhase()) &&
@@ -607,6 +619,52 @@ export class GameImpl implements Game {
     }
     pairs.length = 0;
     return packed;
+  }
+
+  /**
+   * B2: emit a complete view snapshot on the first tick after a restore. A
+   * client that resumed from a checkpoint never executed the base turns, so
+   * its GameView holds only the suffix deltas: without this it renders an
+   * almost-empty map, in spawn phase, with no units.
+   *
+   * This only adds view updates (tiles, units, player snapshots, spawn-phase
+   * end); it never mutates simulation state or changes the state hash.
+   */
+  private emitFullViewSync(): void {
+    const map = this._map;
+    const total = map.width() * map.height();
+    // Owned/flagged tiles only: every other tile is already in the state the
+    // client loaded from the map file (owner 0, no flags).
+    for (let ref = 0; ref < total; ref++) {
+      if (map.tileState(ref) !== 0) {
+        this.recordTileUpdate(ref);
+      }
+    }
+
+    // The spawn-phase-end update fired before the checkpoint, so re-emit it
+    // once or the resumed view stays in spawn phase forever (clock stuck at
+    // zero, no build menu, spawn overlay still shown).
+    if (this.startTick !== null) {
+      this.addUpdate({
+        type: GameUpdateType.SpawnPhaseEnd,
+        startTick: this.startTick,
+      });
+    }
+
+    // Units are otherwise only sent when they change; re-emit the live ones so
+    // cities, ports, factories and ships reappear in the resumed view.
+    for (const unit of this.units()) {
+      if (unit.isActive()) {
+        this.addUpdate((unit as UnitImpl).toUpdate());
+      }
+    }
+
+    // The per-tick player diff is full when `lastSentUpdate` is unset. A
+    // restored player may still carry one from the fresh game it replaced, so
+    // clear it to force a full snapshot (name, color, team, allies, ...).
+    for (const player of this._players.values()) {
+      player.lastSentUpdate = undefined;
+    }
   }
 
   drainPackedPlayerUpdates(): Float64Array | null {
@@ -1585,6 +1643,8 @@ export class GameImpl implements Game {
     this._ticks = cp.ticks;
     this.startTick = cp.startTick;
     this._isPaused = cp.isPaused;
+    // Hand the resumed client a full view snapshot on the next tick.
+    this.needsFullViewSync = true;
     // `nextPlayerID` is re-stamped after the roster is rebuilt below: creating
     // the checkpoint-only players advances it.
     this._nextUnitID = cp.nextUnitID;

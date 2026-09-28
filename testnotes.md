@@ -168,5 +168,25 @@ lobbies` (`publicGameModifiers.isCompact` is `true`, expected `undefined`).
 - `tests/server/HostedLobbyListing.test.ts` — `never schedules or sets
 countdowns on hosted lobbies` (no `createGame` messages observed).
 
+## Resume full view sync (B2 view half)
+
+A resumed save that skips the pre-checkpoint turns left the client view in
+spawn phase with an almost-empty map: the view is rebuilt from worker updates,
+so it never saw the base territory, the pre-existing units, or the one-shot
+`SpawnPhaseEnd` update (all emitted before the checkpoint).
+
+`GameImpl.restoreFromCheckpoint` now sets `needsFullViewSync`; the first
+`executeNextTick` after a restore calls `emitFullViewSync`, which records every
+owned/flagged tile, re-emits `SpawnPhaseEnd`, re-emits each live unit's update,
+and clears `PlayerImpl.lastSentUpdate` so the tick's player diff is a full
+snapshot. `GameRunner` also forces name placements on that tick. This only adds
+view updates — simulation state and hashes are unchanged.
+
+Guards: `tests/core/ResumeFullViewSync.test.ts` (core side: first post-restore
+tick has a `SpawnPhaseEnd`, >10 tile updates and >0 unit updates) and
+`tests/client/view/ResumeViewSync.test.ts` (client side: one synthetic
+full-sync update leaves spawn phase and rebuilds territory + a city). The
+client test stubs `localStorage`, so it also passes under Node 26.
+
 The many `localStorage`/WebGL client failures seen in a full local `vitest run`
 are the documented environment-only failures above.
