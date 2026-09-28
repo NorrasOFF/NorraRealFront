@@ -1,10 +1,10 @@
-# Handoff — resume view was stuck in spawn phase (empty map, no build menu)
+# Handoff — resume/import reused a running game instead of opening a lobby
 
 > Future sessions: this file is the current handoff. When you write your own,
 > **overwrite this file** rather than appending — keep only the latest handoff.
 
-Companion notes: `testnotes.md`, `docs/SaveResumeLongGames.md`, `DEPLOYMENT.md`
-("SAVE_DIR").
+Companion notes: `testnotes.md` (bug detail + pre-existing failures),
+`docs/SaveResumeLongGames.md`, `DEPLOYMENT.md` ("SAVE_DIR").
 
 ## 1. Where things are
 
@@ -24,70 +24,63 @@ Companion notes: `testnotes.md`, `docs/SaveResumeLongGames.md`, `DEPLOYMENT.md`
 
 ## 2. The bug and the fix
 
-Symptom (multiplayer private-lobby resume): after loading, the game clock and
-some UI stayed at the pre-start state, the player saw only their spawn tile, no
-build menu, no actions, but bots/nations kept playing; only border-ish pixels of
-nations showed.
+Symptom: export a resumable lobby, delete it, re-import it. The first time it
+opens a lobby. Later, after playing a few turns, a re-import dropped the host
+straight into the running game with no lobby. Reproduced when the same save was
+still open on another device.
 
-Cause: the client `GameView` is rebuilt purely from worker `GameUpdateViewData`.
-With a B2 checkpoint the client skips every turn before `checkpoint.ticks`, so
-it never received (a) the base map ownership (`packedTileUpdates` are deltas),
-(b) the pre-existing units (units are only sent when they change), or (c) the
-one-shot `SpawnPhaseEnd` update. `GameView.startTick` stayed `null`, so
-`inSpawnPhase()` was permanently `true`: clock 0, no build menu, spawn overlay,
-empty territory.
+Cause: `POST /api/saves/:id/resume` returned an already-live game whenever any
+client was still connected (`liveClients > 0`). For a game still waiting in its
+lobby that is correct and idempotent, but once the game has resumed, returning
+it makes the joining client take a `start` frame and skip the lobby.
 
-Fix (commit in this session): `GameImpl` emits a full view snapshot on the first
-tick after `restoreFromCheckpoint`:
+Fix (this session):
 
-- `restoreFromCheckpoint` sets `needsFullViewSync`.
-- `executeNextTick` calls `emitFullViewSync` once: records every owned/flagged
-  tile, re-emits `SpawnPhaseEnd`, re-emits each live unit's `toUpdate()`, and
-  clears `PlayerImpl.lastSentUpdate` so the player diff is a full snapshot.
-- `GameRunner` forces name placements on that tick (detected by a non-empty
-  `SpawnPhaseEnd` update).
-- View-only: simulation state and hashes are unchanged, so determinism and
-  save/resume hash comparisons are unaffected.
-
-This supersedes the need for the separate `feature/b1-render-snapshot` branch's
-render preview for _correctness_ (that branch is still an optional instant-paint
-optimisation and is NOT merged here).
+- `GameServer.isWaitingInLobby()` (`restored && !resumeStarted`);
+  `isResumeCountingDown()` now delegates to it.
+- The resume route reuses a live instance only when `isWaitingInLobby()`; a game
+  that has already resumed is rebuilt from the save (`gm.restoreGame(save, true)`),
+  so reopening a save always lands in a lobby.
+- The creator/ownership check moved before the live-game fast path (a
+  non-creator can no longer read another account's live game via `resume`).
+- `?force=1` makes resume always rebuild. The file-import path passes it
+  (`resumeSavedLobby(id, { force: true })`) so the imported file wins even if an
+  older live copy is still waiting in its lobby.
 
 ## 3. Files changed
 
-- `src/core/game/GameImpl.ts` — `needsFullViewSync` flag, `emitFullViewSync()`,
-  set the flag in `restoreFromCheckpoint`.
-- `src/core/GameRunner.ts` — force name placements on the sync tick.
-- `tests/core/ResumeFullViewSync.test.ts` — core regression (new).
-- `tests/client/view/ResumeViewSync.test.ts` — client GameView regression (new,
-  stubs `localStorage` so it runs under Node 26).
-- `testnotes.md` — notes.
+- `src/server/GameServer.ts` — `isWaitingInLobby()`; `isResumeCountingDown()`
+  delegates.
+- `src/server/Worker.ts` — load save + ownership check first; `force=1`; reuse
+  only a waiting lobby; rebuild otherwise; route doc updated.
+- `src/client/Api.ts` — `resumeSavedLobby(gameID, { force })` appends `?force=1`.
+- `src/client/SavesModal.ts` — import path resumes with `{ force: true }`.
+- `tests/server/GameServerSave.test.ts` — `isWaitingInLobby` before/after start.
+- `tests/client/GameServerApiCallers.test.ts` — resume URL with/without force.
+- `tests/client/SavesModalResume.test.ts` — import calls resume with force.
+- `testnotes.md` — bug detail + new pre-existing failure note.
 
 ## 4. Verification
 
 - `npx tsc --noEmit` — clean.
-- `npx vitest run tests/core` — 419 passed, 1 failed
-  (`SAMLauncherExecution` dynamic-range; pre-existing, see `testnotes.md`).
-- `npx vitest run tests/core/ResumeFullViewSync.test.ts
-tests/client/view/ResumeViewSync.test.ts tests/PackedPlayerUpdates.test.ts
-tests/server/GameServerSave.test.ts tests/NginxBodySize.test.ts` — passed.
-- `npx prettier --check` + `npx oxlint` + `npx eslint` on changed files — clean.
-- Pre-fix, the new core test failed with `SpawnPhaseEnd.length` 0 and 0 tile
-  pairs; post-fix it passes (1 spawn-end, 72 tile pairs, city unit update).
+- `npx prettier --check`, `npx oxlint`, `npx eslint` on changed files — clean.
+- Targeted: `npx vitest run tests/server/GameServerSave.test.ts
+tests/client/SavesModalResume.test.ts tests/client/GameServerApiCallers.test.ts`
+  — 41 passed.
+- Broader: `tests/server` — 653 passed, 3 failed, all pre-existing:
+  `GameServerWire.test.ts` (golden snapshot predates `numTurns`; fails on the
+  clean tip), `HostedLobbyListing.test.ts`, `MapPlaylistOvertime.test.ts` (both
+  documented in `testnotes.md`).
 
 ## 5. Open items / next steps
 
-- **Verify on the deployed app:** save a multiplayer private lobby, reopen it as
-  a resume lobby, Start → expect a full map, live clock, build menu, structures.
-- **Moving-unit animation:** the sync re-emits unit positions but not
-  `packedMotionPlans`, so restored ships/trains may sit still until their next
-  motion-plan event. Extend `emitFullViewSync` if this matters.
-- **No-suffix resume:** if `startTotal === checkpointTicks` (no suffix), the
-  worker emits no tick, so the sync waits for the first live turn. Rare; the
-  game is live within ~100 ms anyway.
-- **Render preview (B1):** `feature/b1-render-snapshot` (commit `b1febb650`)
-  would let a resume paint instantly instead of after the catch-up drain. Wiring
-  it for _server_ saves would also require uploading/storing the preview with
-  the checkpoint (chunked). Not required for correctness now.
+- **Verify on the deployed app:** open the same save on two devices, import it
+  on one — expect a lobby and the other device to be disconnected, then join
+  normally.
+- **No automated route test:** the `?force=1` parsing and load-then-check order
+  live inline in `Worker.startWorker`; only the predicate and client URL are
+  unit-tested. Extracting the route handler would close that gap.
+- **Other pre-existing failures** listed in `testnotes.md` (SAM dynamic-range,
+  `localStorage` environment failures, `GameServerWire` golden) are unrelated.
 - **Still ephemeral server lobbies** (no Fly volume): export/re-import after
   each deploy; `fly volumes create` remains the real fix.

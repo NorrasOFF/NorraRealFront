@@ -6,12 +6,16 @@ const api = vi.hoisted(() => ({
   listSavedLobbies: vi.fn(),
   resumeSavedLobby: vi.fn(),
   deleteSavedLobby: vi.fn(),
+  importSavedLobby: vi.fn(),
+  exportSavedLobby: vi.fn(),
 }));
 
 vi.mock("../../src/client/Api", () => ({
   listSavedLobbies: api.listSavedLobbies,
   resumeSavedLobby: api.resumeSavedLobby,
   deleteSavedLobby: api.deleteSavedLobby,
+  importSavedLobby: api.importSavedLobby,
+  exportSavedLobby: api.exportSavedLobby,
 }));
 
 const store = vi.hoisted(() => ({
@@ -22,6 +26,16 @@ const store = vi.hoisted(() => ({
 }));
 
 vi.mock("../../src/client/SaveStore", () => store);
+
+const saveFile = vi.hoisted(() => ({
+  decodeSaveFile: vi.fn(),
+  downloadSaveFile: vi.fn(),
+  encodeSaveFile: vi.fn(),
+  saveFileName: vi.fn(() => "save.json.gz"),
+  MAX_SAVE_FILE_BYTES: 64 * 1024 * 1024,
+}));
+
+vi.mock("../../src/client/SaveFile", () => saveFile);
 
 import { ClientEnv } from "../../src/client/ClientEnv";
 import { SavesModal } from "../../src/client/SavesModal";
@@ -128,5 +142,42 @@ describe("SavesModal server-save reopen", () => {
     expect(host.open).not.toHaveBeenCalled();
     expect(join.open).not.toHaveBeenCalled();
     expect((modal as any).error).not.toBe("");
+  });
+
+  it("imports a file as a lobby and forces a rebuild from it", async () => {
+    const host = stubLobby("host-lobby-modal");
+    const imported = {
+      gameID: "GAME0001",
+      saveId: "GAME0001",
+      label: "World · host",
+      savedAt: 2,
+      gitCommit: "DEV",
+      myClientID: "CLIENT01",
+      startInfo: { gameID: "GAME0001", lobbyCreatedAt: 1, config: {} },
+      turns: [],
+    };
+    saveFile.decodeSaveFile.mockResolvedValue(imported);
+    const modal = new SavesModal();
+    const file = {
+      size: 8,
+      arrayBuffer: async () => new Uint8Array([1, 2, 3, 4]).buffer,
+    } as unknown as File;
+
+    await (modal as any).onImportLobbyFile({
+      target: { files: [file], value: "" },
+    });
+
+    expect(api.importSavedLobby).toHaveBeenCalledWith(
+      "GAME0001",
+      expect.any(Uint8Array),
+    );
+    // The imported file must win over any live copy of the same game.
+    expect(api.resumeSavedLobby).toHaveBeenCalledWith("GAME0001", {
+      force: true,
+    });
+    expect(host.open).toHaveBeenCalledWith({
+      existingLobbyId: "GAME0001",
+      resume: true,
+    });
   });
 });

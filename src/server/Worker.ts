@@ -463,9 +463,11 @@ export async function startWorker() {
     });
   });
 
-  // Resume a saved private lobby/game: rebuild it on this worker (the shard
-  // that owns its id). Creator-only, and idempotent — an already-live game is
-  // returned rather than rebuilt.
+  // Resume a saved private lobby/game: reopen it as a lobby on this worker (the
+  // shard that owns its id). Creator-only. A live game still waiting in its
+  // lobby is returned as-is (idempotent); one that has already resumed is
+  // rebuilt from the save so the caller lands in a lobby, not the running game.
+  // `?force=1` (file import) always rebuilds.
   app.post("/api/saves/:id/resume", async (req, res) => {
     const persistentId = await requireAccount(req, res);
     if (persistentId === null) return;
@@ -475,28 +477,35 @@ export async function startWorker() {
     }
     const id = idResult.data;
 
+    const save = await saveStore.load(id);
+    if (save === null) {
+      log.warn("resume failed: save not found", { gameID: id });
+      return res.status(404).json({ error: "save_not_found" });
+    }
+    // Ownership is checked before anything is returned, including the live-game
+    // fast path below, so a non-creator can never read another account's game.
+    if (save.creatorPersistentID !== persistentId) {
+      log.warn("resume failed: caller is not the creator", { gameID: id });
+      return res.status(403).json({ error: "not_creator" });
+    }
+
+    // `force=1` (the file-import path) always rebuilds from the just-imported
+    // save, even if a live copy is already waiting in its lobby.
+    const force = req.query.force === "1";
     const live = gm.game(id);
-    const liveClients = live?.numClients() ?? 0;
-    if (live !== null && liveClients > 0) {
-      // Someone is still connected: return the running game rather than
-      // rebuilding (a second copy would fight it). A live game with nobody in
-      // it is stale — fall through and reopen the save as a fresh lobby.
+    if (live !== null && !force && live.isWaitingInLobby()) {
+      // Still waiting in its lobby (never resumed): hand the live instance
+      // back so a repeated resume is idempotent and early joiners keep their
+      // claimed seats. A game that has already resumed is rebuilt below —
+      // reopening a save must reopen a lobby, not drop the caller into the
+      // running game (which is what happened when another device was still in
+      // the same save).
       return res.json({
         ...live.gameInfo(),
         workerIndex: workerId,
         workerPath: ServerEnv.workerPath(id),
         seats: live.claimableSeats(persistentId),
       });
-    }
-
-    const save = await saveStore.load(id);
-    if (save === null) {
-      log.warn("resume failed: save not found", { gameID: id });
-      return res.status(404).json({ error: "save_not_found" });
-    }
-    if (save.creatorPersistentID !== persistentId) {
-      log.warn("resume failed: caller is not the creator", { gameID: id });
-      return res.status(403).json({ error: "not_creator" });
     }
     // A checkpoint this build cannot decode would make the client skip the
     // saved base state and stall on an empty map. Verify it here and fall back

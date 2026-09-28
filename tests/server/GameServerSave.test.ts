@@ -183,6 +183,29 @@ describe("GameServer restore", () => {
     });
   });
 
+  // The resume route reuses a live game only while it is still in its lobby;
+  // once it has resumed it must be rebuilt so a save reopens a lobby. This
+  // predicate is that decision point.
+  it("reports whether a restored game is still waiting in its lobby", () => {
+    const snap = startedSnapshot();
+    const restored = makeGame({ restore: snap });
+    expect(restored.isWaitingInLobby()).toBe(true);
+    expect(restored.isResumeCountingDown()).toBe(true);
+
+    const joiner = makeClient({
+      clientID: cid("new"),
+      persistentID: "new-pid",
+    });
+    expect(restored.joinClient(joiner, cid("p2"))).toBe("joined");
+    expect(restored.isWaitingInLobby()).toBe(true);
+
+    // Once the host starts it, the game is running and no longer reusable.
+    hostStart(restored);
+    vi.advanceTimersByTime(GameServer.RESUME_START_DELAY_MS + 10);
+    expect(restored.isWaitingInLobby()).toBe(false);
+    expect(restored.isResumeCountingDown()).toBe(false);
+  });
+
   it("serves a late joiner the running game once the host has started it", () => {
     const snap = startedSnapshot();
     const restored = makeGame({ restore: snap });

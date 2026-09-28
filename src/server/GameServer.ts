@@ -1893,9 +1893,18 @@ export class GameServer {
     this.ensureTurnLoop();
   }
 
+  // A restored game that is still in (or on its way into) its lobby: it has
+  // not started playing yet. A resume may safely reuse this live instance —
+  // joiners land in a lobby and early claimants keep their seats. A game that
+  // has already resumed must NOT be reused: reopening its save is a request
+  // for a lobby, not to be dropped straight into the running game.
+  public isWaitingInLobby(): boolean {
+    return this.restored && !this.resumeStarted;
+  }
+
   // True while a restored save is still waiting out its start countdown.
   public isResumeCountingDown(): boolean {
-    return this.restored && !this.resumeStarted;
+    return this.isWaitingInLobby();
   }
 
   // Connected clients who will actually play. Spectators are excluded

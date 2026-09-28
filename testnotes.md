@@ -167,6 +167,10 @@ Unrelated to save/resume, present with these changes stashed:
 lobbies` (`publicGameModifiers.isCompact` is `true`, expected `undefined`).
 - `tests/server/HostedLobbyListing.test.ts` — `never schedules or sets
 countdowns on hosted lobbies` (no `createGame` messages observed).
+- `tests/server/GameServerWire.test.ts` — `matches the golden transcript for a
+scripted game`. The golden snapshot predates `sendStartGameMsg` always
+  sending `numTurns` (commit `9d6f30109`), so every `start` frame now has an
+  extra `numTurns` key. Fails on the clean tip too (verified by stashing).
 
 ## Resume full view sync (B2 view half)
 
@@ -190,3 +194,30 @@ client test stubs `localStorage`, so it also passes under Node 26.
 
 The many `localStorage`/WebGL client failures seen in a full local `vitest run`
 are the documented environment-only failures above.
+
+## Resume reuses a lobby, never a running game
+
+`POST /api/saves/:id/resume` used to return an already-live game whenever any
+client was still connected (`liveClients > 0`). That is correct while the game
+is still waiting in its lobby, but once it has resumed, returning it makes the
+joining client receive a `start` frame and drop straight into the running game.
+Reproduction: be in the same save on a second device while the first imports or
+resumes it, then join — no lobby, straight into the game.
+
+Fixes:
+
+- `GameServer.isWaitingInLobby()` = `restored && !resumeStarted` (=
+  `isResumeCountingDown()`, which now delegates to it). The resume route reuses
+  a live instance only when this is true.
+- A live game that has already resumed is rebuilt from the save
+  (`gm.restoreGame(save, true)`), so reopening a save always lands in a lobby.
+- The ownership check now runs before the live-game fast path, so a
+  non-creator can no longer read another account's live game via `resume`.
+- `?force=1` makes the resume always rebuild. The file-import path
+  (`SavesModal.onImportLobbyFile` → `resumeSavedLobby(id, { force: true })`)
+  passes it so the just-imported file wins even if an older live copy of the
+  same game is still waiting in its lobby.
+
+Tests: `tests/server/GameServerSave.test.ts` (`isWaitingInLobby` before/after
+start), `tests/client/GameServerApiCallers.test.ts` (the `?force=1` URL), and
+`tests/client/SavesModalResume.test.ts` (import calls resume with `force`).

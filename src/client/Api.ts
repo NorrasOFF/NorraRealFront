@@ -1234,14 +1234,19 @@ export async function listSavedLobbies(): Promise<SavedLobbiesResult> {
   };
 }
 
-// POST /wN/api/saves/:id/resume — rebuilds the saved private game on its owning
-// worker (creator-only) and returns the claimable seats. Idempotent.
+// POST /wN/api/saves/:id/resume — reopens the saved private game as a lobby on
+// its owning worker (creator-only) and returns the claimable seats. Idempotent
+// while the live game is still waiting in its lobby. `force` rebuilds the game
+// from the save even if a live copy exists, so a freshly imported file always
+// wins.
 export async function resumeSavedLobby(
   gameID: string,
+  options: { force?: boolean } = {},
 ): Promise<ResumableSeat[]> {
   const token = await getPlayToken();
+  const query = options.force === true ? "?force=1" : "";
   const res = await fetchSaveEndpoint(
-    `${ClientEnv.serverHttpBase()}/${ClientEnv.workerPath(gameID)}/api/saves/${gameID}/resume`,
+    `${ClientEnv.serverHttpBase()}/${ClientEnv.workerPath(gameID)}/api/saves/${gameID}/resume${query}`,
     {
       method: "POST",
       headers: { Authorization: `Bearer ${token}` },

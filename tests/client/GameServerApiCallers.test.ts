@@ -7,7 +7,11 @@ vi.mock("../../src/client/Auth", async (importOriginal) => ({
   isSessionActive: vi.fn(() => false),
 }));
 
-import { createLobby, listSavedLobbies } from "../../src/client/Api";
+import {
+  createLobby,
+  listSavedLobbies,
+  resumeSavedLobby,
+} from "../../src/client/Api";
 import { ClientEnv } from "../../src/client/ClientEnv";
 import { JoinLobbyModal } from "../../src/client/JoinLobbyModal";
 import { MatchmakingModal } from "../../src/client/Matchmaking";
@@ -71,6 +75,22 @@ describe("createLobby", () => {
     expect(init.method).toBe("POST");
     expect((init.headers as Record<string, string>).Authorization).toBe(
       "Bearer play-token",
+    );
+  });
+});
+
+describe("resumeSavedLobby", () => {
+  it("reopens the save on its worker without forcing by default", async () => {
+    await resumeSavedLobby("game-1");
+    expect(lastUrl()).toBe(
+      `https://${SERVER_HOST}/${ClientEnv.workerPath("game-1")}/api/saves/game-1/resume`,
+    );
+  });
+
+  it("asks the server to rebuild from the file when forcing an import", async () => {
+    await resumeSavedLobby("game-1", { force: true });
+    expect(lastUrl()).toBe(
+      `https://${SERVER_HOST}/${ClientEnv.workerPath("game-1")}/api/saves/game-1/resume?force=1`,
     );
   });
 });

@@ -223,7 +223,9 @@ export class SavesModal extends BaseModal {
       await saveGame(save);
       await importSavedLobby(save.gameID, bytes);
       this.error = "";
-      await resumeSavedLobby(save.gameID);
+      // Force the rebuild so the just-imported file wins even when a live copy
+      // of the same game is already waiting in its lobby elsewhere.
+      await resumeSavedLobby(save.gameID, { force: true });
       this.close();
       (
         document.querySelector("host-lobby-modal") as LobbyScreenElement | null
