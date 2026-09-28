@@ -1,8 +1,7 @@
-# Handoff — resume-as-lobby: the creator now starts a resumed save by hand
+# Handoff — local save export/import (gzip)
 
 > Future sessions: this file is the current handoff. When you write your own,
-> **overwrite this file** (`HANDOFF.md`) rather than appending — keep only the
-> latest handoff here.
+> **overwrite this file** rather than appending — keep only the latest handoff.
 
 Companion notes: `testnotes.md`, `docs/SaveResumeLongGames.md`, `DEPLOYMENT.md`
 ("SAVE_DIR").
@@ -10,7 +9,7 @@ Companion notes: `testnotes.md`, `docs/SaveResumeLongGames.md`, `DEPLOYMENT.md`
 ## 1. Where things are
 
 - Repo: `C:\Users\ai51940\OpenFrontIO` (private fork).
-- Working/deployed branch: `feature/save-resume-checkpoints` (the Fly.io GitHub
+- Working/deployed branch: `feature/save-resume-checkpoints` (Fly.io GitHub
   integration auto-deploys `main`; `main` is kept at the feature tip).
 - Push auth (do not print the token):
   ```powershell
@@ -18,131 +17,78 @@ Companion notes: `testnotes.md`, `docs/SaveResumeLongGames.md`, `DEPLOYMENT.md`
   $b64 = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("x-access-token:$tok"))
   git -c http.extraheader="Authorization: Basic $b64" push origin feature/save-resume-checkpoints:main feature/save-resume-checkpoints
   ```
-- App: https://openfrontio.fly.dev (Fly app `openfrontio`, `NUM_WORKERS=1`).
+- App: https://openfrontio.fly.dev (Fly app `openfrontio`, `NUM_WORKERS=1`,
+  1 machine, region `ams`, **no volume**).
 
-## 2. The problem this session fixed
+## 2. Why this session exists
 
-A running save ("started" stage) appeared under **Resumable lobbies**, but
-clicking it did **not** open a lobby: the creator was dropped toward the game
-and it froze at the checkpoint; the other account could not get in at all.
+The user's private-lobby save vanished ~30 min after making it. Root cause is
+**not** the retention policy — it is that `fly.toml` has no `[mounts]` /
+`SAVE_DIR`, so server saves land on the machine's ephemeral rootfs and are wiped
+on every restart/redeploy (and every push to `main` auto-deploys). See
+`DEPLOYMENT.md:41,45-47`, `HANDOFF.md` history, `src/server/SaveStore.ts:55-60`.
 
-Root cause: `SavesModal.selectServerSave` opened `join-lobby-modal` for any
-save whose stage was not `"lobby"`, and the server armed the resume countdown
-**automatically on the first join** (`beginResumeCountdown`). There was no
-host-controlled lobby for a running save.
+Two independent save systems:
+
+- **Local (browser IndexedDB)** — `src/client/SaveManager.ts` autosaves every
+  25 turns + on page-hide; `src/client/SaveStore.ts` stores it. Listed under
+  **“Saved games”**; resumed entirely client-side (`SavesModal.resumeLocal`).
+  Survives server wipes. Caps: 30 saves / 64 MiB each / 512 MiB sum.
+- **Server (“Resumable lobbies”)** — lets other players rejoin a link; ephemeral
+  without a volume. Retention defaults (if a volume is ever added): 20/creator,
+  30 days, 2 GiB dir (pruned on start + hourly).
+
+The user asked to keep saves **locally** rather than pay for a Fly volume, and
+chose **export/import files**.
 
 ## 3. New behavior
 
-Pressing **Resume** on a server save now always reopens the **host lobby**
-(`host-lobby-modal`, in a new `resume` mode) for the creator:
+In **Load → Saved games**:
 
-- The invite link/copy button and the live roster are there, as for a normal
-  private lobby, so the original players can open the link and claim their
-  saved nations (the seat picker is unchanged).
-- The config editor is hidden (a resumed game owns its map/mode/turns; letting
-  the form re-send defaults would clobber the saved map).
-- The **host presses Start** when ready. Start arms a short resume countdown
-  (`GameServer.RESUME_START_DELAY_MS`, 15 s) and then delivers the checkpoint +
-  suffix, exactly as before. Pressing Start again cancels the countdown.
-- The game is no longer resumed by a timer on join.
+- Each local save row has an **Export** button → downloads
+  `<sanitized label>-<gameID>.json.gz` (gzipped `SavedGame` JSON) to the
+  player's machine. Survives “Delete save”, browser eviction, and redeploys; the
+  game never touches it (only the OS/user does).
+- An **Import** button at the section header opens a file picker; the file is
+  gunzipped, Zod-validated (`SavedGameSchema`), and written into the local store.
+  Plain `.json` saves are also accepted (defensive), and a re-import of the same
+  save overwrites by `saveId`.
 
 ## 4. What changed (files)
 
-Server (`src/server/GameServer.ts`):
-
-- New `isResumeLobby()` = `restored && stage === "started" && !resumeStarted`.
-- `joinClient` / `rejoinClient`: for a resume lobby, just keep the lobby roster
-  broadcasting (`startLobbyInfoBroadcast(true)`) instead of arming the
-  countdown. Late joiners to an already-resumed game are unchanged.
-- `handleIntent("toggle_game_start_timer")`: in a resume lobby, arm
-  (`beginResumeCountdown`) or cancel (`cancelResumeCountdown`, new) the countdown.
-- `beginResumeCountdown` doc updated; still private.
-
-Server (`src/server/IntentAuthorization.ts`):
-
-- `IntentGameState.isResumeLobby?` added; `toggle_game_start_timer` is allowed
-  after start only when `isResumeLobby` (a normal started game still 409s).
-
-Client:
-
-- `src/client/SavesModal.ts` — `selectServerSave` always opens
-  `host-lobby-modal` with `{ existingLobbyId, resume: true }`.
-- `src/client/HostLobbyModal.ts` — `resumeMode` state; hides the config editor
-  and the public/private toggle, shows a "Resume Game" title + notice, Start is
-  enabled with a single client, and Start skips `putGameConfig()`.
-- `resources/lang/en.json` — `host_modal.resume_title`, `host_modal.resume_notice`.
-
-Tests updated: `tests/server/GameServerSave.test.ts` (host-triggered start +
-cancel), `tests/server/IntentAuthorization.test.ts`, `tests/client/SavesModalResume.test.ts`,
-`tests/LateGameSaveResume.test.ts`, `tests/EndgameSaveResume.test.ts`.
-
-## 4b. Round 2: the resumed start showed an empty map at tick 0
-
-After the lobby change, a resume still failed _inside_ the game: the checkpoint
-was not applied, the map was empty and the clock sat at 0. Causes fixed:
-
-- **The server now validates the checkpoint before serving it.** `restoreCheckpoint`
-  trusted a save that carried `checkpointTurn` without ever decoding the blob, so
-  a legacy/corrupt/other-build checkpoint was handed to the client, which could
-  not decode it, skipped the saved base turns, and stalled. `Worker`
-  `POST /api/saves/:id/resume` now `decodeCheckpointWire`s the blob; if it cannot
-  be decoded the checkpoint is dropped and the game replays the full history.
-- **The start frame always carries `numTurns`** (`GameServer.sendStartGameMsg`).
-  With a checkpoint the `turns` are only the suffix; without the authoritative
-  total the client read the suffix length as the total and set `turnsSeen`
-  wrong (or not at all), injecting thousands of empty turns ahead of the suffix.
-- **A stale live game is rebuilt, not reused.** The resume route returns a live
-  game only when it still has clients; otherwise it `restoreGame(save, true)`s
-  (new `force` flag) so an abandoned started game reopens as a lobby instead of
-  auto-starting again. `GameManager.restoreGame(save, force)`.
-- Client (`ClientGameRunner`): `startTotal` now derives from `numTurns` (falling
-  back to the last turn number), and it warns loudly if a suffix arrives without
-  a restored checkpoint (the old empty-map failure mode), plus info logs for the
-  decoded checkpoint tick.
+- `src/client/SaveFile.ts` (new) — `encodeSaveFile` (gzip via
+  `CompressionStream`), `decodeSaveFile` (gzip or plain, size-bounded to defeat
+  a gzip bomb), `saveFileName` (sanitize/truncate label), `downloadSaveFile`.
+  Caps: `MAX_SAVE_FILE_BYTES` 64 MiB (input), `MAX_SAVE_FILE_UNCOMPRESSED_BYTES`
+  256 MiB (decompressed).
+- `src/client/SavesModal.ts` — Export/Import UI, `exportSave`, `onImportFile`,
+  hidden `#save-import-input`.
+- `resources/lang/en.json` — `save_game.export`, `export_failed`, `import`,
+  `import_failed` (kept alphabetically sorted).
+- `tests/client/SaveFile.test.ts` (new) — filename sanitizing, gzip round-trip,
+  plain-JSON fallback, rejects garbage/foreign JSON/wrong version, size bound,
+  import-into-store.
+- `tests/client/SavesModalResume.test.ts` — mock now stubs `saveGame`.
 
 ## 5. Verification this session
 
 - `npx tsc --noEmit` — clean.
-- `npm run lint` (oxlint + eslint) — clean.
-- `npx vitest run tests/server/GameServerSave.test.ts tests/server/IntentAuthorization.test.ts tests/client/SavesModalResume.test.ts tests/EnJsonSorted.test.ts` — 66 passed.
-- `npx vitest run tests/server` — only two failures, both **pre-existing**
-  (verified on the clean tip): `MapPlaylistOvertime` (`isCompact`),
-  `HostedLobbyListing > never schedules or sets countdowns on hosted lobbies`.
-- Full `npx vitest run` shows the known environment-only `localStorage`
-  failures (see `testnotes.md`), not regressions.
-- The deployed `GIT_COMMIT` is `"unknown"` (see index.html), so the
-  `commitMatches` build guard is a no-op in production; a checkpoint from any
-  build is accepted. That is why the server-side decode validation above
-  matters.
+- `npm run lint` — clean.
+- `npx prettier --check` on changed files — clean.
+- `npx vitest run tests/client/SaveFile.test.ts tests/client/SavesModalResume.test.ts tests/EnJsonSorted.test.ts tests/SaveStore.test.ts tests/SaveManager.test.ts`
+  — all pass (45 tests).
+- Known env-only `localStorage` failures and the pre-existing SAM/MapPlaylist/
+  HostedLobby failures are unchanged (see `testnotes.md`).
 
-## 6. Next step
+## 6. Next steps / open items
 
-Re-test on the deployed app with two accounts:
-
-1. Start a private game, play a few turns, press **Save checkpoint**.
-2. Load → **Resumable lobbies** → Resume: expect the **Resume Game** host lobby
-   (invite link + roster), not an immediate game.
-3. Second account opens the invite link and claims its nation; then the host
-   presses **Start** and both should enter the restored game past the
-   checkpoint (non-empty map, clock past 0).
-
-If it still fails, capture the browser console around `start`. The new logs name
-the failure: `resume: decoded server checkpoint at tick N` (good) vs
-`dropping unreadable server checkpoint` (the base state is missing). The server
-logs `resume: dropping unreadable checkpoint, full replay` when it rejects the
-blob; `flyctl logs -a openfrontio --no-tail` (needs `flyctl auth login`).
-
-## 7. Open items
-
-- **End-to-end save pipeline still not proven in-repo** (capture → encode →
-  upload → `/api/saves` → store → restart → resume) — a real HTTP-route test
-  with `FilesystemSaveStore` remains the P0.
-- **Durability:** `fly.toml` sets no `SAVE_DIR` / volume; saves land on the
-  machine's ephemeral disk (see `DEPLOYMENT.md`).
-- **Cold start:** `auto_stop_machines='stop'` + `min_machines_running=0`; the
-  client retries `502/503/504` but keeping a machine warm is the real fix.
-- For an **unstarted** save (`stage === "lobby"`) the same host-lobby screen is
-  now used, which also fixes a latent bug where Start re-sent the form's
-  default config and reset the saved map.
-- `docs/SaveResumeLongGames.md` §2.4 still describes the older
-  creator-leave-only save path; the on-demand Save button is newer.
+- **End-to-end on the deployed app:** play a private game, open Load, Export,
+  confirm the `.json.gz` downloads; delete the in-game save; Import the file;
+  Resume and confirm the map/clock restore.
+- **Server “Resumable lobbies” are still ephemeral.** If the user later wants
+  other players to rejoin after a redeploy, create a Fly volume
+  (`fly volumes create openfront_saves -a openfrontio -s 3`) and add
+  `[mounts]` + `SAVE_DIR=/data/saves` to `fly.toml`. Not done (user declined the
+  paid volume).
+- Optional follow-ups: a “pin” flag so a chosen local save is never auto-evicted
+  by the 30/512 MiB caps; an “export as plain JSON” toggle.

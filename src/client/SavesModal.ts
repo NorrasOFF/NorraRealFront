@@ -1,5 +1,5 @@
 import { html, nothing, TemplateResult } from "lit";
-import { customElement, state } from "lit/decorators.js";
+import { customElement, query, state } from "lit/decorators.js";
 import type { GameCheckpoint } from "../core/Checkpoint";
 import { decodeCheckpointWire } from "../core/CheckpointCodec";
 import type { ClientID, SavedGame, SavedGameMeta } from "../core/Schemas";
@@ -12,7 +12,14 @@ import {
 } from "./Api";
 import { ClientEnv } from "./ClientEnv";
 import type { JoinLobbyEvent } from "./Main";
-import { deleteSave, listSaves, loadSave } from "./SaveStore";
+import {
+  decodeSaveFile,
+  downloadSaveFile,
+  encodeSaveFile,
+  MAX_SAVE_FILE_BYTES,
+  saveFileName,
+} from "./SaveFile";
+import { deleteSave, listSaves, loadSave, saveGame } from "./SaveStore";
 import { translateText } from "./Utils";
 import { BaseModal } from "./components/BaseModal";
 import "./components/baseComponents/Button";
@@ -52,6 +59,9 @@ export class SavesModal extends BaseModal {
   } | null = null;
   @state() private myClientID: ClientID | null = null;
   @state() private error = "";
+
+  // Hidden picker the Import button clicks; the change handler reads the file.
+  @query("#save-import-input") private importInput?: HTMLInputElement;
 
   protected renderHeaderSlot() {
     const onBack = this.selected
@@ -143,6 +153,48 @@ export class SavesModal extends BaseModal {
       await this.refresh();
     } catch (error) {
       console.error("Failed to delete save", error);
+    }
+  }
+
+  // Download a local save as a gzipped file, so it is kept on the player's own
+  // disk independently of the browser store or the game server.
+  private async exportSave(meta: SavedGameMeta, event: Event): Promise<void> {
+    event.stopPropagation();
+    try {
+      const save = await loadSave(meta.saveId);
+      if (save === undefined) {
+        this.error = translateText("save_game.missing");
+        return;
+      }
+      downloadSaveFile(await encodeSaveFile(save), saveFileName(save));
+    } catch (error) {
+      console.error("Failed to export save", error);
+      this.error = translateText("save_game.export_failed");
+    }
+  }
+
+  // Restore a previously exported save file into the local store.
+  private async onImportFile(event: Event): Promise<void> {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0];
+    // Clear immediately so picking the same file twice still fires `change`.
+    input.value = "";
+    if (file === undefined) {
+      return;
+    }
+    try {
+      if (file.size > MAX_SAVE_FILE_BYTES) {
+        this.error = translateText("save_game.import_failed");
+        return;
+      }
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const save = await decodeSaveFile(bytes);
+      await saveGame(save);
+      this.error = "";
+      await this.refresh();
+    } catch (error) {
+      console.error("Failed to import save", error);
+      this.error = translateText("save_game.import_failed");
     }
   }
 
@@ -255,11 +307,26 @@ export class SavesModal extends BaseModal {
                 ${translateText("save_game.server_empty")}
               </p>`
           : this.serverSaves.map((meta) => this.renderServerRow(meta))}
-        <h3
-          class="text-sm font-semibold uppercase tracking-wider text-white/50 mt-2"
-        >
-          ${translateText("save_game.title")}
-        </h3>
+        <div class="flex items-center justify-between mt-2">
+          <h3
+            class="text-sm font-semibold uppercase tracking-wider text-white/50"
+          >
+            ${translateText("save_game.title")}
+          </h3>
+          <button
+            class="px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider bg-white/10 text-white border border-white/20 hover:bg-white/20"
+            @click=${() => this.importInput?.click()}
+          >
+            ${translateText("save_game.import")}
+          </button>
+        </div>
+        <input
+          id="save-import-input"
+          type="file"
+          class="hidden"
+          accept=".gz,.json,application/gzip,application/json"
+          @change=${(e: Event) => void this.onImportFile(e)}
+        />
         ${this.saves.length === 0
           ? html`<p class="text-white/40 text-sm">
               ${translateText("save_game.empty")}
@@ -331,12 +398,20 @@ export class SavesModal extends BaseModal {
             ${new Date(meta.savedAt).toLocaleString()}
           </span>
         </div>
-        <button
-          class="shrink-0 px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider bg-red-500/20 text-red-300 border border-red-500/30 hover:bg-red-500/30"
-          @click=${(e: Event) => void this.removeSave(meta, e)}
-        >
-          ${translateText("save_game.delete")}
-        </button>
+        <div class="flex shrink-0 items-center gap-2">
+          <button
+            class="px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider bg-white/10 text-white border border-white/20 hover:bg-white/20"
+            @click=${(e: Event) => void this.exportSave(meta, e)}
+          >
+            ${translateText("save_game.export")}
+          </button>
+          <button
+            class="px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider bg-red-500/20 text-red-300 border border-red-500/30 hover:bg-red-500/30"
+            @click=${(e: Event) => void this.removeSave(meta, e)}
+          >
+            ${translateText("save_game.delete")}
+          </button>
+        </div>
       </div>
     `;
   }

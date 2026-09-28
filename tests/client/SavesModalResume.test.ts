@@ -18,6 +18,7 @@ const store = vi.hoisted(() => ({
   listSaves: vi.fn(async () => []),
   loadSave: vi.fn(),
   deleteSave: vi.fn(),
+  saveGame: vi.fn(),
 }));
 
 vi.mock("../../src/client/SaveStore", () => store);
