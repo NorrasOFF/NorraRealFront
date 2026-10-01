@@ -1888,6 +1888,10 @@
     "tollhouse": "Tollhouse",
     "warship": "Warship"
   },
+  "unit_display": {
+    "buildings": "Buildings · Caps Lock off",
+    "units_caps_lock": "Units · Caps Lock on"
+  },
   "user_setting": {
     "alert_frame_desc": "Toggle the alert frame. When enabled, the frame will be displayed when you are betrayed or attacked over land.",
     "alert_frame_label": "Alert Frame",
@@ -1934,6 +1938,13 @@
     "build_port_desc": "Build a Port under your cursor.",
     "build_sam_launcher": "Build SAM Launcher",
     "build_sam_launcher_desc": "Build a SAM Launcher under your cursor.",
+    "build_tollhouse": "Build Tollhouse",
+    "build_tollhouse_desc": "Build a Tollhouse under your cursor.",
+    "build_units_caps_lock_hint": "Number keys select buildings while Caps Lock is off, and units in the second toolbar row while Caps Lock is on.",
+    "build_missile_carrier": "Build Missile Carrier",
+    "build_missile_carrier_desc": "Build a Missile Carrier under your cursor.",
+    "build_aac_carrier": "Build Anti Air Missile Carrier",
+    "build_aac_carrier_desc": "Build an Anti Air Missile Carrier under your cursor.",
     "build_warship": "Build Warship",
     "build_warship_desc": "Build a Warship under your cursor.",
     "camera_movement": "Camera Movement",

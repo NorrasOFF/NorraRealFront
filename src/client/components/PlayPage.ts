@@ -5,8 +5,6 @@ import "./CosmeticBackground";
 import "./NavAccountMenu";
 import "./NavUtilityIcons";
 import "./NewsBox";
-import "./SteamWishlist";
-import "./StreamingNow";
 
 @customElement("play-page")
 export class PlayPage extends LitElement {
@@ -110,20 +108,8 @@ export class PlayPage extends LitElement {
             </div>
           </div>
 
-          <!-- Right column: Streaming Now (desktop only), stretched to the left column's
-               full height so the top strip has no dead space. -->
-          <streaming-now
-            class="hidden lg:flex lg:h-full lg:flex-col w-full min-w-0"
-          ></streaming-now>
+          <game-mode-selector></game-mode-selector>
         </div>
-
-        <game-mode-selector></game-mode-selector>
-
-        <!-- Desktop gets the compact footer button instead. -->
-        <steam-wishlist
-          campaign="home_mobile"
-          class="block px-2 pb-4 lg:hidden"
-        ></steam-wishlist>
       </div>
     `;
   }

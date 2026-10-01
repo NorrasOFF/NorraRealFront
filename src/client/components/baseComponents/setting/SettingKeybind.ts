@@ -109,7 +109,8 @@ export class SettingKeybind extends LitElement {
       e.code === "AltLeft" ||
       e.code === "AltRight" ||
       e.code === "MetaLeft" ||
-      e.code === "MetaRight"
+      e.code === "MetaRight" ||
+      e.code === "CapsLock"
     ) {
       return;
     }
@@ -117,8 +118,15 @@ export class SettingKeybind extends LitElement {
     // Prevent default only for keys we're actually capturing
     e.preventDefault();
 
-    const code = e.shiftKey ? `Shift+${e.code}` : e.code;
-    const displayKey = e.shiftKey ? `Shift+${e.key.toUpperCase()}` : e.key;
+    const modifiers = [
+      ...(e.getModifierState("CapsLock") ? ["CapsLock"] : []),
+      ...(e.shiftKey ? ["Shift"] : []),
+    ];
+    const code = [...modifiers, e.code].join("+");
+    const displayModifiers = modifiers.map((modifier) =>
+      modifier === "CapsLock" ? "Caps" : modifier,
+    );
+    const displayKey = [...displayModifiers, e.key.toUpperCase()].join("+");
     const prevValue = this.value;
 
     // Temporarily set the value to the new code for validation in parent

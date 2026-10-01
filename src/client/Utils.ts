@@ -380,6 +380,10 @@ export function formatKeyForDisplay(value: string): string {
     return "Shift+" + formatKeyForDisplay(value.slice(6));
   }
 
+  if (value.startsWith("CapsLock+")) {
+    return "Caps+" + formatKeyForDisplay(value.slice(9));
+  }
+
   // Handle space character or "Space" key
   if (value === " " || value === "Space") return "Space";
 

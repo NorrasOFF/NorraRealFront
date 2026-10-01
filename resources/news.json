@@ -1,30 +1,9 @@
 [
   {
-    "id": "firefox-performance-issues-2026",
-    "title": "Firefox Performance Issues",
-    "descriptionTranslationKey": "news_box.firefox_warning",
-    "url": null,
-    "type": "warning"
-  },
-  {
-    "id": "clan-tournament-spring-2026",
-    "title": "Upcoming: Spring Clan Tournament",
-    "description": "2v2 clan battles — Sign up on Discord before April 12",
-    "url": "https://discord.gg/openfront",
-    "type": "tournament"
-  },
-  {
-    "id": "clan-tournaments-2026",
-    "title": "Clan Tournaments",
-    "description": "Join a clan and compete in weekly tournaments on Discord!",
-    "url": "https://discord.gg/openfront",
-    "type": "tournament"
-  },
-  {
-    "id": "tutorial-2026",
-    "title": "New Player Tutorial",
-    "description": "Learn the basics of OpenFront in this video guide",
-    "url": "https://www.youtube.com/watch?v=EN2oOog3pSs",
-    "type": "tutorial"
+    "id": "mötestid",
+    "title": "Välkommen till OpenFront-föreningens officiella server!",
+    "descriptionTranslationKey": "Möten måndagar kl. 15:40-16:40 i A22. Det finns fika! :)",
+    "url": "https://norrasoff.github.io/",
+    "type": "Möten måndagar i A22"
   }
 ]
