@@ -1,1 +1,1 @@
-auto-deploy verification 2026-10-01T18:07:46Z
+auto-deploy verification (post-switch) 2026-10-01T18:23:16Z
