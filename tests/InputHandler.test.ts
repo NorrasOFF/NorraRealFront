@@ -2,6 +2,7 @@ import {
   AutoUpgradeEvent,
   ConfirmGhostStructureEvent,
   ContextMenuEvent,
+  DoBoatAttackEvent,
   InputHandler,
   UnitSelectionEvent,
   WarshipSelectionBoxCancelEvent,
@@ -12,7 +13,11 @@ import { UIState } from "../src/client/UIState";
 import { GameView, PlayerView, UnitView } from "../src/client/view";
 import { EventBus } from "../src/core/EventBus";
 import { UnitType } from "../src/core/game/Game";
-import { KEYBINDS_KEY, UserSettings } from "../src/core/game/UserSettings";
+import {
+  getDefaultKeybinds,
+  KEYBINDS_KEY,
+  UserSettings,
+} from "../src/core/game/UserSettings";
 
 class MockPointerEvent {
   button: number;
@@ -46,6 +51,7 @@ describe("InputHandler AutoUpgrade", () => {
   let eventBus: EventBus;
   let mockCanvas: HTMLCanvasElement;
   let testSettings: UserSettings;
+  let uiState: UIState;
 
   beforeEach(() => {
     testSettings = new UserSettings();
@@ -61,14 +67,15 @@ describe("InputHandler AutoUpgrade", () => {
 
     eventBus = new EventBus();
 
+    uiState = {
+      attackRatio: 20,
+      ghostStructure: null,
+      rocketDirectionUp: true,
+      upgradeMultiplier: 1,
+    };
     inputHandler = new InputHandler(
       mockGameView,
-      {
-        attackRatio: 20,
-        ghostStructure: null,
-        rocketDirectionUp: true,
-        upgradeMultiplier: 1,
-      },
+      uiState,
       mockCanvas,
       eventBus,
     );
@@ -76,6 +83,120 @@ describe("InputHandler AutoUpgrade", () => {
 
   afterEach(() => {
     inputHandler.destroy();
+  });
+
+  describe("Bulk upgrade amount selection", () => {
+    test("scrolling over an active build ghost changes the selected amount", () => {
+      uiState.ghostStructure = UnitType.City;
+      uiState.upgradeMultiplier = 5;
+
+      inputHandler["onScroll"]({
+        deltaY: -100,
+        ctrlKey: false,
+        x: 100,
+        y: 100,
+      } as WheelEvent);
+      expect(uiState.upgradeMultiplier).toBe(10);
+
+      inputHandler["onScroll"]({
+        deltaY: 100,
+        ctrlKey: false,
+        x: 100,
+        y: 100,
+      } as WheelEvent);
+      expect(uiState.upgradeMultiplier).toBe(5);
+    });
+
+    test("scroll selection stays within the available amount range", () => {
+      uiState.ghostStructure = UnitType.City;
+      uiState.upgradeMultiplier = 1;
+
+      inputHandler["onScroll"]({
+        deltaY: 100,
+        ctrlKey: false,
+        x: 100,
+        y: 100,
+      } as WheelEvent);
+      expect(uiState.upgradeMultiplier).toBe(1);
+
+      uiState.upgradeMultiplier = 50;
+      inputHandler["onScroll"]({
+        deltaY: -100,
+        ctrlKey: false,
+        x: 100,
+        y: 100,
+      } as WheelEvent);
+      expect(uiState.upgradeMultiplier).toBe(50);
+    });
+
+    test("pressing the active build hotkey selects five upgrades", () => {
+      inputHandler["setGhostStructure"](UnitType.City);
+      inputHandler["setGhostStructure"](UnitType.City);
+      expect(uiState.upgradeMultiplier).toBe(5);
+
+      uiState.upgradeMultiplier = 10;
+      inputHandler["setGhostStructure"](UnitType.City);
+      expect(uiState.upgradeMultiplier).toBe(5);
+    });
+  });
+
+  describe("Caps Lock build hotkey layers", () => {
+    beforeEach(() => {
+      inputHandler["keybinds"] = getDefaultKeybinds(false);
+    });
+
+    test("number keys select buildings while Caps Lock is off", () => {
+      expect(inputHandler["resolveBuildKeybind"]("Digit1", false, false)).toBe(
+        UnitType.City,
+      );
+      expect(inputHandler["resolveBuildKeybind"]("Digit3", false, false)).toBe(
+        UnitType.Port,
+      );
+      expect(inputHandler["resolveBuildKeybind"]("Digit7", false, false)).toBe(
+        UnitType.Tollhouse,
+      );
+    });
+
+    test("the same number keys select the second-row units with Caps Lock on", () => {
+      expect(inputHandler["resolveBuildKeybind"]("Digit1", false, true)).toBe(
+        UnitType.Warship,
+      );
+      expect(inputHandler["resolveBuildKeybind"]("Digit2", false, true)).toBe(
+        UnitType.MissileShip,
+      );
+      expect(inputHandler["resolveBuildKeybind"]("Digit3", false, true)).toBe(
+        UnitType.MissileDefenseShip,
+      );
+      expect(inputHandler["resolveBuildKeybind"]("Digit4", false, true)).toBe(
+        UnitType.AtomBomb,
+      );
+      expect(inputHandler["resolveBuildKeybind"]("Digit5", false, true)).toBe(
+        UnitType.HydrogenBomb,
+      );
+      expect(inputHandler["resolveBuildKeybind"]("Digit6", false, true)).toBe(
+        UnitType.MIRV,
+      );
+    });
+
+    test("unit shortcuts do not activate while Caps Lock is off", () => {
+      expect(
+        inputHandler["resolveBuildKeybind"]("Digit1", false, false),
+      ).not.toBe(UnitType.Warship);
+      expect(
+        inputHandler["resolveBuildKeybind"]("Digit6", false, false),
+      ).not.toBe(UnitType.MIRV);
+    });
+
+    test("Caps Lock does not disable regular non-build hotkeys", () => {
+      inputHandler.initialize();
+      const event = new KeyboardEvent("keyup", { code: "KeyB", key: "b" });
+      Object.defineProperty(event, "getModifierState", {
+        value: (modifier: string) => modifier === "CapsLock",
+      });
+      const mockEmit = vi.spyOn(eventBus, "emit");
+      window.dispatchEvent(event);
+      expect(mockEmit).toHaveBeenCalledWith(expect.any(DoBoatAttackEvent));
+    });
   });
 
   describe("Middle Mouse Button Handling", () => {
@@ -691,10 +812,27 @@ describe("InputHandler AutoUpgrade", () => {
       expect(inputHandler["uiState"].ghostStructure).toBe(UnitType.MissileSilo);
     });
 
-    test("Numpad0 sets ghost structure to MIRV when buildMIRV is Digit0", () => {
-      window.dispatchEvent(
-        new KeyboardEvent("keyup", { code: "Numpad0", key: "0" }),
-      );
+    test("Caps Lock + Digit1 selects Warship instead of City", () => {
+      const event = new KeyboardEvent("keyup", {
+        code: "Digit1",
+        key: "1",
+      });
+      Object.defineProperty(event, "getModifierState", {
+        value: (modifier: string) => modifier === "CapsLock",
+      });
+      window.dispatchEvent(event);
+      expect(inputHandler["uiState"].ghostStructure).toBe(UnitType.Warship);
+    });
+
+    test("Caps Lock + Numpad6 sets the second-row MIRV shortcut", () => {
+      const event = new KeyboardEvent("keyup", {
+        code: "Numpad6",
+        key: "6",
+      });
+      Object.defineProperty(event, "getModifierState", {
+        value: (modifier: string) => modifier === "CapsLock",
+      });
+      window.dispatchEvent(event);
       expect(inputHandler["uiState"].ghostStructure).toBe(UnitType.MIRV);
     });
 

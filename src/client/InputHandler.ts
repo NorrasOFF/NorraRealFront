@@ -1,5 +1,10 @@
 import { EventBus, GameEvent } from "../core/EventBus";
-import { PlayerBuildableUnitType, UnitType } from "../core/game/Game";
+import {
+  MAX_UPGRADE_AMOUNT,
+  PlayerBuildableUnitType,
+  STRUCTURE_BULK_STEPS,
+  UnitType,
+} from "../core/game/Game";
 import { UserSettings } from "../core/game/UserSettings";
 import { Platform } from "./Platform";
 import { UIState } from "./UIState";
@@ -436,9 +441,12 @@ export class InputHandler {
       "buildDefensePost",
       "buildMissileSilo",
       "buildSamLauncher",
+      "buildTollhouse",
       "buildAtomBomb",
       "buildHydrogenBomb",
       "buildWarship",
+      "BuildMissileCarrier",
+      "BuildAACarrier",
       "buildMIRV",
     ];
     buildKeybinds = buildKeybinds.map((i: string): string => {
@@ -456,6 +464,16 @@ export class InputHandler {
         "Numpad7",
         "Numpad8",
         "Numpad9",
+        "CapsLock+Numpad0",
+        "CapsLock+Numpad1",
+        "CapsLock+Numpad2",
+        "CapsLock+Numpad3",
+        "CapsLock+Numpad4",
+        "CapsLock+Numpad5",
+        "CapsLock+Numpad6",
+        "CapsLock+Numpad7",
+        "CapsLock+Numpad8",
+        "CapsLock+Numpad9",
         "Digit0",
         "Digit1",
         "Digit2",
@@ -480,15 +498,24 @@ export class InputHandler {
       this.addKeybindAndEvent(
         i,
         (e: KeyboardEvent) => {
-          const matchedBuild = this.resolveBuildKeybind(e.code, e.shiftKey);
+          const matchedBuild = this.resolveBuildKeybind(
+            e.code,
+            e.shiftKey,
+            e.getModifierState("CapsLock"),
+          );
 
           if (matchedBuild !== null) {
             this.setGhostStructure(matchedBuild);
           }
         },
         () => this.canUseBuildKeybinds(),
+        (e: KeyboardEvent) => this.keybindMatchesBuildEvent(e, i),
         (e: KeyboardEvent) =>
-          this.resolveBuildKeybind(e.code, e.shiftKey) !== null,
+          this.resolveBuildKeybind(
+            e.code,
+            e.shiftKey,
+            e.getModifierState("CapsLock"),
+          ) !== null,
       );
     }
     // Listen for warship selection to change cursor
@@ -1031,6 +1058,22 @@ export class InputHandler {
       // keeps sending after a gesture ends (especially after browser zoom changes
       // devicePixelRatio, which can cause these to accumulate into runaway zoom).
       if (Math.abs(event.deltaY) < 2) return;
+      if (this.uiState.ghostStructure !== null) {
+        const amounts = [1, ...STRUCTURE_BULK_STEPS, MAX_UPGRADE_AMOUNT];
+        const currentIndex = amounts.indexOf(this.uiState.upgradeMultiplier);
+        const index =
+          currentIndex === -1
+            ? 0
+            : Math.max(
+                0,
+                Math.min(
+                  amounts.length - 1,
+                  currentIndex + (event.deltaY < 0 ? 1 : -1),
+                ),
+              );
+        this.uiState.upgradeMultiplier = amounts[index];
+        return;
+      }
       this.eventBus.emit(new ZoomEvent(event.x, event.y, event.deltaY));
     }
   }
@@ -1202,8 +1245,7 @@ export class InputHandler {
       this.uiState.ghostStructure === ghostStructure &&
       ghostStructure !== null
     ) {
-      this.uiState.upgradeMultiplier =
-        this.uiState.upgradeMultiplier === 1 ? 5 : 1;
+      this.uiState.upgradeMultiplier = 5;
     } else {
       this.uiState.upgradeMultiplier = 1;
       this.uiState.ghostStructure = ghostStructure;
@@ -1211,27 +1253,88 @@ export class InputHandler {
   }
 
   /**
-   * Parses a keybind value that may include a "Shift+" prefix.
-   * e.g. "Shift+KeyB" → { shift: true, code: "KeyB" }
-   *      "KeyB"       → { shift: false, code: "KeyB" }
+   * Parses keybind modifier prefixes.
+   * e.g. "CapsLock+Digit1" → { capsLock: true, code: "Digit1" }
+   *      "Shift+KeyB"      → { shift: true, code: "KeyB" }
    */
-  private parseKeybind(value: string): { shift: boolean; code: string } {
-    if (value?.startsWith("Shift+")) {
-      return { shift: true, code: value.slice(6) };
+  private parseKeybind(value: string): {
+    shift: boolean;
+    capsLock: boolean;
+    code: string;
+  } {
+    let code = value ?? "";
+    let shift = false;
+    let capsLock = false;
+    let foundModifier = true;
+    while (foundModifier) {
+      foundModifier = false;
+      if (code.startsWith("Shift+")) {
+        shift = true;
+        code = code.slice(6);
+        foundModifier = true;
+      } else if (code.startsWith("CapsLock+")) {
+        capsLock = true;
+        code = code.slice(9);
+        foundModifier = true;
+      }
     }
-    return { shift: false, code: value };
+    return { shift, capsLock, code };
   }
 
   /**
    * Returns true if the keyboard event matches the given keybind value,
-   * including optional Shift+ prefix support.
+   * including optional Shift+ and CapsLock+ prefixes. An explicit CapsLock+
+   * prefix requires Caps Lock to be active; other bindings ignore its state.
    */
   private keybindMatchesEvent(
-    e: KeyboardEvent | { shiftKey: boolean; code: string },
+    e: {
+      shiftKey: boolean;
+      code: string;
+      getModifierState?: (keyArg: string) => boolean;
+    },
     keybindValue: string,
   ): boolean {
     const parsed = this.parseKeybind(keybindValue);
-    return e.code === parsed.code && e.shiftKey === parsed.shift;
+    return (
+      e.code === parsed.code &&
+      e.shiftKey === parsed.shift &&
+      (!parsed.capsLock || (e.getModifierState?.("CapsLock") ?? false))
+    );
+  }
+
+  private keybindMatchesBuildEvent(
+    e: {
+      shiftKey: boolean;
+      code: string;
+      getModifierState?: (keyArg: string) => boolean;
+    },
+    keybindValue: string,
+  ): boolean {
+    return (
+      this.keybindMatchesExactBuildEvent(e, keybindValue) ||
+      this.buildKeybindMatchesDigit(
+        e.code,
+        e.shiftKey,
+        e.getModifierState?.("CapsLock") ?? false,
+        keybindValue,
+      )
+    );
+  }
+
+  private keybindMatchesExactBuildEvent(
+    e: {
+      shiftKey: boolean;
+      code: string;
+      getModifierState?: (keyArg: string) => boolean;
+    },
+    keybindValue: string,
+  ): boolean {
+    const parsed = this.parseKeybind(keybindValue);
+    return (
+      e.code === parsed.code &&
+      e.shiftKey === parsed.shift &&
+      (e.getModifierState?.("CapsLock") ?? false) === parsed.capsLock
+    );
   }
 
   /**
@@ -1259,10 +1362,11 @@ export class InputHandler {
   private buildKeybindMatchesDigit(
     code: string,
     shiftKey: boolean,
+    capsLock: boolean,
     keybindValue: string,
   ): boolean {
     const parsed = this.parseKeybind(keybindValue);
-    if (shiftKey !== parsed.shift) return false;
+    if (shiftKey !== parsed.shift || capsLock !== parsed.capsLock) return false;
     const digit = this.digitFromKeyCode(code);
     const bindDigit = this.digitFromKeyCode(parsed.code);
     return digit !== null && bindDigit !== null && digit === bindDigit;
@@ -1293,6 +1397,7 @@ export class InputHandler {
   private resolveBuildKeybind(
     code: string,
     shiftKey: boolean,
+    capsLock: boolean,
   ): PlayerBuildableUnitType | null {
     const buildKeybinds: ReadonlyArray<{
       key: string;
@@ -1304,17 +1409,32 @@ export class InputHandler {
       { key: "buildDefensePost", type: UnitType.DefensePost },
       { key: "buildMissileSilo", type: UnitType.MissileSilo },
       { key: "buildSamLauncher", type: UnitType.SAMLauncher },
+      { key: "buildTollhouse", type: UnitType.Tollhouse },
       { key: "buildAtomBomb", type: UnitType.AtomBomb },
       { key: "buildHydrogenBomb", type: UnitType.HydrogenBomb },
       { key: "buildWarship", type: UnitType.Warship },
+      { key: "BuildMissileCarrier", type: UnitType.MissileShip },
+      { key: "BuildAACarrier", type: UnitType.MissileDefenseShip },
       { key: "buildMIRV", type: UnitType.MIRV },
     ];
     for (const { key, type } of buildKeybinds) {
-      if (this.keybindMatchesEvent({ code, shiftKey }, this.keybinds[key]))
+      if (
+        this.keybindMatchesExactBuildEvent(
+          { code, shiftKey, getModifierState: () => capsLock },
+          this.keybinds[key],
+        )
+      )
         return type;
     }
     for (const { key, type } of buildKeybinds) {
-      if (this.buildKeybindMatchesDigit(code, shiftKey, this.keybinds[key]))
+      if (
+        this.buildKeybindMatchesDigit(
+          code,
+          shiftKey,
+          capsLock,
+          this.keybinds[key],
+        )
+      )
         return type;
     }
     return null;
