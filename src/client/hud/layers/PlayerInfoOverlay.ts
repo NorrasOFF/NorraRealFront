@@ -48,6 +48,7 @@ const goldCoinIcon = assetUrl("images/GoldCoinIcon.svg");
 const missileSiloIcon = assetUrl("images/MissileSiloIconWhite.svg");
 const portIcon = assetUrl("images/PortIcon.svg");
 const samLauncherIcon = assetUrl("images/SamLauncherIconWhite.svg");
+const defensePostIcon = assetUrl("images/ShieldIconWhite.svg");
 const soldierIcon = assetUrl("images/SoldierIcon.svg");
 
 function euclideanDistWorld(
@@ -527,6 +528,11 @@ export class PlayerInfoOverlay extends LitElement implements Controller {
             ${this.displayUnitCount(player, UnitType.Port, portIcon)}
             ${this.displayUnitCount(
               player,
+              UnitType.DefensePost,
+              defensePostIcon,
+            )}
+            ${this.displayUnitCount(
+              player,
               UnitType.MissileSilo,
               missileSiloIcon,
             )}
@@ -536,6 +542,16 @@ export class PlayerInfoOverlay extends LitElement implements Controller {
               samLauncherIcon,
             )}
             ${this.displayUnitCount(player, UnitType.Warship, warshipIcon)}
+            ${this.displayUnitCount(
+              player,
+              UnitType.MissileShip,
+              missileSiloIcon,
+            )}
+            ${this.displayUnitCount(
+              player,
+              UnitType.MissileDefenseShip,
+              samLauncherIcon,
+            )}
             ${this.displayUnitCount(player, UnitType.Tollhouse, cityIcon)}
           </div>
           ${this.renderTollRate(player)}
@@ -691,7 +707,7 @@ export class PlayerInfoOverlay extends LitElement implements Controller {
         @contextmenu=${(e: MouseEvent) => e.preventDefault()}
       >
         <div
-          class="bg-gray-800/92 backdrop-blur-sm shadow-xs min-[1200px]:rounded-lg sm:rounded-b-lg shadow-lg text-white text-lg lg:text-base w-full sm:w-[500px] overflow-hidden ${containerClasses}"
+          class="bg-gray-800/92 backdrop-blur-sm shadow-xs min-[1200px]:rounded-lg sm:rounded-b-lg shadow-lg text-white text-lg lg:text-base w-full sm:w-[520px] lg:w-[700px] overflow-hidden ${containerClasses}"
         >
           ${this.player !== null ? this.renderPlayerInfo(this.player) : ""}
           ${this.unit !== null ? this.renderUnitInfo(this.unit) : ""}
