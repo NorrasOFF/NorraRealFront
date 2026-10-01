@@ -1,94 +1,75 @@
-# Handoff — resume/import reused a running game instead of opening a lobby
+# Handoff — ctrl+drag conquest avoidance is now a region toggle
 
-> Future sessions: this file holds the current handoff, and the notes below are
-> what a handoff should contain.
->
-> Write a handoff **only when the session leaves clear developmental
-> continuations** past its own work — open items, follow-ups, unfinished or
-> partially verified work. If the session's work is self-contained and complete,
-> do **not** write a handoff and do **not** overwrite this file.
->
-> When a handoff is warranted, **overwrite this file** rather than appending —
-> keep only the latest handoff.
+> Future sessions: this file holds the current handoff. Overwrite it rather than
+> appending; keep only the latest handoff. Write one only when the session
+> leaves clear developmental continuations. This session's work is complete and
+> self-contained — the notes below are kept because it was requested explicitly.
 
-Companion notes: `testnotes.md` (bug detail + pre-existing failures),
-`docs/SaveResumeLongGames.md`, `DEPLOYMENT.md` ("SAVE_DIR").
+Companion notes: `testnotes.md` (bug/feature detail + pre-existing failures),
+`docs/SaveResumeLongGames.md`, `DEPLOYMENT.md`.
 
 ## 1. Where things are
 
 - Repo: `C:\Users\ai51940\OpenFrontIO` (private fork).
-- Working/deployed branch: `feature/save-resume-checkpoints`; `origin/main` is
-  kept at the feature tip (Fly.io GitHub integration auto-deploys `main`).
-- Push auth (do not print the token):
+- Working branch: `feature/save-resume-checkpoints`. The deployed/authoritative
+  branch is `main` on **`NorrasOFF/OpenFrontIO`** (default branch), which was
+  fast-forwarded to this session's commit.
+- `main` tip after this session: `e772e342b` — the local `origin`
+  (`hexfront-dev/OpenFrontIO`) is stale; push to NorrasOFF with the token in
+  `H:\Documents\norrasoff-token.txt` (do not print the token):
   ```powershell
-  $tok = (Get-Content -Raw "H:\Documents\Hexfront token.txt").Trim()
+  $tok = (Get-Content -Raw "H:\Documents\norrasoff-token.txt").Trim()
   $b64 = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("x-access-token:$tok"))
-  git -c http.extraheader="Authorization: Basic $b64" push origin feature/save-resume-checkpoints:main feature/save-resume-checkpoints
+  git -C "C:\Users\ai51940\OpenFrontIO" -c http.extraheader="Authorization: Basic $b64" `
+    push https://github.com/NorrasOFF/OpenFrontIO.git HEAD:main
   ```
-- App: https://openfrontio.fly.dev (Fly app `openfrontio`, region `ams`, no
-  volume — server lobbies are ephemeral; export is durable). `GAME_ENV=dev`, so
-  `verifyClientToken` accepts a bare UUID as a Bearer token for curl.
-- Remote `origin = hexfront-dev/OpenFrontIO`; `upstream` is the public repo.
 
-## 2. The bug and the fix
+## 2. What changed
 
-Symptom: export a resumable lobby, delete it, re-import it. The first time it
-opens a lobby. Later, after playing a few turns, a re-import dropped the host
-straight into the running game with no lobby. Reproduced when the same save was
-still open on another device.
+The ctrl+drag that excludes frontline tiles from conquest used to toggle every
+frontier tile in the rectangle independently, leaving a patchwork wherever the
+selection overlapped already-excluded tiles. It now snaps the whole selection to
+one uniform state ("region toggle"):
 
-Cause: `POST /api/saves/:id/resume` returned an already-live game whenever any
-client was still connected (`liveClients > 0`). For a game still waiting in its
-lobby that is correct and idempotent, but once the game has resumed, returning
-it makes the joining client take a `start` frame and skip the lobby.
+- If fewer than half of the selected frontier tiles are already avoided (a tie
+  included), every selected tile is frozen.
+- If a majority are already avoided, every selected tile is re-enabled.
 
-Fix (this session):
-
-- `GameServer.isWaitingInLobby()` (`restored && !resumeStarted`);
-  `isResumeCountingDown()` now delegates to it.
-- The resume route reuses a live instance only when `isWaitingInLobby()`; a game
-  that has already resumed is rebuilt from the save (`gm.restoreGame(save, true)`),
-  so reopening a save always lands in a lobby.
-- The creator/ownership check moved before the live-game fast path (a
-  non-creator can no longer read another account's live game via `resume`).
-- `?force=1` makes resume always rebuild. The file-import path passes it
-  (`resumeSavedLobby(id, { force: true })`) so the imported file wins even if an
-  older live copy is still waiting in its lobby.
+Consequences: a fresh zone freezes completely and a fully-excluded zone
+unfreezes completely, so the gesture stays usable for creating the first marks
+while still normalizing mixed selections.
 
 ## 3. Files changed
 
-- `src/server/GameServer.ts` — `isWaitingInLobby()`; `isResumeCountingDown()`
-  delegates.
-- `src/server/Worker.ts` — load save + ownership check first; `force=1`; reuse
-  only a waiting lobby; rebuild otherwise; route doc updated.
-- `src/client/Api.ts` — `resumeSavedLobby(gameID, { force })` appends `?force=1`.
-- `src/client/SavesModal.ts` — import path resumes with `{ force: true }`.
-- `tests/server/GameServerSave.test.ts` — `isWaitingInLobby` before/after start.
-- `tests/client/GameServerApiCallers.test.ts` — resume URL with/without force.
-- `tests/client/SavesModalResume.test.ts` — import calls resume with force.
-- `testnotes.md` — bug detail + new pre-existing failure note.
+- `src/client/controllers/AvoidConquestController.ts` — new exported pure helper
+  `planAvoidConquest(tiles, isAvoided)` returns `{ freeze, toggled }`; the
+  `onBoxComplete` handler applies it and only sends the tiles whose state
+  actually changes in the `avoid_conquest` intent (the core
+  `AvoidConquestExecution` still toggles each tile it receives, so sending the
+  delta lands on the uniform state). Class/helper doc comments updated.
+- `tests/client/controllers/AvoidConquestController.test.ts` — new. Unit tests
+  for `planAvoidConquest` (fresh, fully avoided, minority, majority, tie, empty)
+  plus controller integration tests over a real `ocean_and_land` game via
+  stubbed `GameView`/event bus/renderer: fresh drag freezes all, a second drag
+  unfreezes all, and a majority-already-avoided selection unfreezes all.
+- `testnotes.md` — added a short "Ctrl+drag conquest avoidance is a region
+  toggle" section describing the semantics.
 
 ## 4. Verification
 
 - `npx tsc --noEmit` — clean.
 - `npx prettier --check`, `npx oxlint`, `npx eslint` on changed files — clean.
-- Targeted: `npx vitest run tests/server/GameServerSave.test.ts
-tests/client/SavesModalResume.test.ts tests/client/GameServerApiCallers.test.ts`
-  — 41 passed.
-- Broader: `tests/server` — 653 passed, 3 failed, all pre-existing:
-  `GameServerWire.test.ts` (golden snapshot predates `numTurns`; fails on the
-  clean tip), `HostedLobbyListing.test.ts`, `MapPlaylistOvertime.test.ts` (both
-  documented in `testnotes.md`).
+- `npx vitest run tests/client/controllers/AvoidConquestController.test.ts
+tests/AvoidConquest.test.ts` — 12 passed.
+- Pushed `14c2505e7..e772e342b` to `NorrasOFF/OpenFrontIO` `main` and confirmed
+  the remote tip via the GitHub API.
 
 ## 5. Open items / next steps
 
-- **Verify on the deployed app:** open the same save on two devices, import it
-  on one — expect a lobby and the other device to be disconnected, then join
-  normally.
-- **No automated route test:** the `?force=1` parsing and load-then-check order
-  live inline in `Worker.startWorker`; only the predicate and client URL are
-  unit-tested. Extracting the route handler would close that gap.
-- **Other pre-existing failures** listed in `testnotes.md` (SAM dynamic-range,
-  `localStorage` environment failures, `GameServerWire` golden) are unrelated.
-- **Still ephemeral server lobbies** (no Fly volume): export/re-import after
-  each deploy; `fly volumes create` remains the real fix.
+- No automated test drives the real pointer gesture end to end; the decision
+  logic is unit-tested and the controller is exercised with stubs. The gesture
+  wiring in `src/client/InputHandler.ts` is unchanged.
+- The many `localStorage`/WebGL client failures in a full local `vitest run` are
+  environment-only (see `testnotes.md`), unrelated to this change.
+- Broader `src/client` behavior (marker rendering after the toggle) is covered
+  only indirectly by `renderAvoided`; a rendering test was not added.
