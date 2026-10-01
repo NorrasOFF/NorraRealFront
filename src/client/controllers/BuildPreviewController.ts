@@ -499,16 +499,17 @@ export class BuildPreviewController implements Controller {
     }
 
     const isNuke = u.type === UnitType.AtomBomb;
-    const multiplier =
-      u.canUpgrade !== false || isNuke
-        ? (this.uiState.upgradeMultiplier ?? 1)
-        : 1;
-    const cost = bulkCost(u, multiplier);
+    const supportsBulkAmount = u.canUpgrade !== false || isNuke;
+    const multiplier = supportsBulkAmount
+      ? (this.uiState.upgradeMultiplier ?? 1)
+      : undefined;
+    const amount = multiplier ?? 1;
+    const cost = bulkCost(u, amount);
     // Drives the red cost label: gold short of the bulk total, or (for
     // bombs) fewer loaded silo tubes than the selected amount.
     let canAfford = myPlayer.gold() >= cost;
     if (isNuke) {
-      canAfford &&= myPlayer.readyMissileCount() >= multiplier;
+      canAfford &&= myPlayer.readyMissileCount() >= amount;
     }
     return {
       ghostType: u.type,
@@ -519,7 +520,7 @@ export class BuildPreviewController implements Controller {
       canBuild: u.canBuild !== false,
       canUpgrade: u.canUpgrade !== false,
       cost: Number(cost),
-      multiplier: multiplier,
+      multiplier,
       showCost: this.userSettings.cursorCostLabel(),
       canAfford,
       ghostRailPaths: u.ghostRailPaths,

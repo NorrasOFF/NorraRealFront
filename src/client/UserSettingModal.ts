@@ -432,6 +432,9 @@ export class UserSettingModal extends BaseModal {
       >
         ${translateText("user_setting.build_controls")}
       </h2>
+      <p class="text-white/50 text-sm mb-4">
+        ${translateText("user_setting.build_units_caps_lock_hint")}
+      </p>
 
       <setting-keybind
         action="buildCity"
@@ -494,12 +497,42 @@ export class UserSettingModal extends BaseModal {
       ></setting-keybind>
 
       <setting-keybind
+        action="buildTollhouse"
+        label=${translateText("user_setting.build_tollhouse")}
+        description=${translateText("user_setting.build_tollhouse_desc")}
+        defaultKey=${this.defaultKeybinds.buildTollhouse}
+        .value=${this.getKeyValue("buildTollhouse")}
+        .display=${this.getKeyChar("buildTollhouse")}
+        @change=${this.handleKeybindChange}
+      ></setting-keybind>
+
+      <setting-keybind
         action="buildWarship"
         label=${translateText("user_setting.build_warship")}
         description=${translateText("user_setting.build_warship_desc")}
         defaultKey=${this.defaultKeybinds.buildWarship}
         .value=${this.getKeyValue("buildWarship")}
         .display=${this.getKeyChar("buildWarship")}
+        @change=${this.handleKeybindChange}
+      ></setting-keybind>
+
+      <setting-keybind
+        action="BuildMissileCarrier"
+        label=${translateText("user_setting.build_missile_carrier")}
+        description=${translateText("user_setting.build_missile_carrier_desc")}
+        defaultKey=${this.defaultKeybinds.BuildMissileCarrier}
+        .value=${this.getKeyValue("BuildMissileCarrier")}
+        .display=${this.getKeyChar("BuildMissileCarrier")}
+        @change=${this.handleKeybindChange}
+      ></setting-keybind>
+
+      <setting-keybind
+        action="BuildAACarrier"
+        label=${translateText("user_setting.build_aac_carrier")}
+        description=${translateText("user_setting.build_aac_carrier_desc")}
+        defaultKey=${this.defaultKeybinds.BuildAACarrier}
+        .value=${this.getKeyValue("BuildAACarrier")}
+        .display=${this.getKeyChar("BuildAACarrier")}
         @change=${this.handleKeybindChange}
       ></setting-keybind>
 
