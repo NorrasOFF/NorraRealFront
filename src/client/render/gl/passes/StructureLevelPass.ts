@@ -15,19 +15,13 @@
 import type { RendererConfig, UnitState } from "../../types";
 import {
   STRUCTURE_TYPES,
-  UT_CITY,
-  UT_DEFENSE_POST,
-  UT_FACTORY,
   UT_MISSILE_DEFENSE_SHIP,
   UT_MISSILE_SHIP,
-  UT_MISSILE_SILO,
-  UT_PORT,
-  UT_SAM_LAUNCHER,
-  UT_TOLLHOUSE,
 } from "../../types";
 import { DynamicInstanceBuffer } from "../DynamicBuffer";
 import type { RenderSettings } from "../RenderSettings";
 import { createProgram } from "../utils/GlUtils";
+import { STRUCTURE_ORDER } from "./StructurePass";
 import type { GlyphTables } from "./name-pass/AtlasData";
 import { buildGlyphTables, parseAtlasData } from "./name-pass/AtlasData";
 import { buildGlyphMetricsTex } from "./name-pass/DataTextures";
@@ -45,17 +39,6 @@ const msdfAtlasUrl = assetUrl("atlases/msdf-atlas.png");
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
-
-/** Atlas column order — must match StructurePass. */
-const STRUCTURE_ORDER = [
-  UT_CITY,
-  UT_PORT,
-  UT_FACTORY,
-  UT_DEFENSE_POST,
-  UT_SAM_LAUNCHER,
-  UT_MISSILE_SILO,
-  UT_TOLLHOUSE,
-] as const;
 
 /** Max characters per level label (handles up to "99"). */
 const MAX_LEVEL_CHARS = 4;
@@ -166,13 +149,10 @@ export class StructureLevelPass {
     this.settings = settings;
     this.mapW = header.mapWidth;
 
-    // Build unitType string → atlas column mapping
-    for (let i = 0; i < header.unitTypes.length; i++) {
-      const col = STRUCTURE_ORDER.indexOf(
-        header.unitTypes[i] as (typeof STRUCTURE_ORDER)[number],
-      );
-      if (col >= 0) this.typeToAtlasCol.set(header.unitTypes[i], col);
-    }
+    // Build unitType string → atlas column mapping from STRUCTURE_ORDER itself,
+    // not header.unitTypes: ALL_UNIT_TYPES omits some structure types (e.g. the
+    // Tollhouse), so deriving from it would silently drop their level labels.
+    STRUCTURE_ORDER.forEach((type, col) => this.typeToAtlasCol.set(type, col));
     // Mobile ships also show level numbers; use columns past the structures.
     // (Only used for the highlight mask here, so the exact index just needs to
     // not collide with a structure column.)

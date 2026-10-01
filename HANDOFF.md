@@ -20,8 +20,9 @@ Companion notes: `ship.md` (Tollhouse art/UI map, now updated),
   git -C "C:\Users\ai51940\OpenFrontIO" -c http.extraheader="Authorization: Basic $b64" `
     push https://github.com/NorrasOFF/OpenFrontIO.git HEAD:main
   ```
-- Before this session `main` and local `HEAD` were both `9768ca05f`; local is
-  still uncommitted-with-changes until the push step below.
+- Before this session `main` and local `HEAD` were both `9768ca05f`. This
+  session added the icon commit plus a follow-up fix commit; both are pushed to
+  NorrasOFF `main` (the tip is the follow-up fix).
 
 ## 2. What changed
 
@@ -37,6 +38,15 @@ and in every HUD location that shows a Tollhouse.
   the tile was drawn with GDI+ in a throwaway PowerShell script — see §5.
 - **Map shape**: `structure.frag.glsl` `shapeSDF` now maps atlas index 6 to a
   circle (it previously fell through to the missile-silo triangle).
+- **Map visibility fix**: the two structure passes built their type→column map
+  by intersecting `header.unitTypes` with `STRUCTURE_ORDER`. `ALL_UNIT_TYPES`
+  omits `"Tollhouse"`, so removing the old City-alias made the Tollhouse render
+  as nothing. Both passes now derive the map from `STRUCTURE_ORDER` directly,
+  and `STRUCTURE_ORDER`/`ATLAS_COLS` are exported once from `StructurePass.ts`
+  and reused by `StructureLevelPass.ts` (previously a duplicated array that
+  could drift). New `tests/StructureAtlas.test.ts` guards the contract: every
+  `STRUCTURE_TYPES` member appears once in `STRUCTURE_ORDER`, and
+  `icon-atlas.png` is exactly `ATLAS_COLS × 64` wide.
 - **HUD glyph**: new `resources/images/TollhouseIconWhite.svg` (white on
   transparent, mask-based, same geometry as the atlas tile).
 - **HUD wiring**: `HotbarIcons.ts` exports `tollhouseIcon`; `BuildMenu.ts`,
@@ -51,11 +61,15 @@ No wire/schema/core change: the unit type already travels on
 - `resources/atlases/icon-atlas.png` — appended the coin-stack column (7×64).
 - `resources/images/TollhouseIconWhite.svg` — new HUD/help glyph.
 - `src/client/render/gl/passes/StructurePass.ts` — `UT_TOLLHOUSE` added to
-  `STRUCTURE_ORDER`; City alias block deleted.
-- `src/client/render/gl/passes/StructureLevelPass.ts` — same array change;
-  alias block deleted; mobile-ship level columns moved to
+  `STRUCTURE_ORDER`; City alias block deleted; `STRUCTURE_ORDER` and
+  `ATLAS_COLS` exported; type→column map now built from `STRUCTURE_ORDER`.
+- `src/client/render/gl/passes/StructureLevelPass.ts` — imports the shared
+  `STRUCTURE_ORDER` (local duplicate removed); alias block deleted; map built
+  from `STRUCTURE_ORDER`; mobile-ship level columns moved to
   `STRUCTURE_ORDER.length`(+1) (index is highlight-mask-only, so just needs to
   not collide).
+- `tests/StructureAtlas.test.ts` — new regression test for the atlas column
+  contract.
 - `src/client/render/gl/shaders/structure/structure.frag.glsl` — `shapeSDF`
   circle branch for index 6; comment updated.
 - `src/client/render/gl/render-settings.json` — `structure.shapes.Tollhouse`
@@ -75,11 +89,12 @@ No wire/schema/core change: the unit type already travels on
   clean. (Prettier has no parser for `.svg`; the SVG was validated as
   well-formed XML instead.)
 - Atlas integrity: first 6 columns are pixel-identical to the pre-change PNG.
-- `npx vitest run tests/CosmeticPreviewRenderer.test.ts tests/PlayerStats.test.ts
-tests/StatsColumns.test.ts tests/GraphicsOverrides.test.ts tests/FxSettings.test.ts
-tests/Colors.test.ts` — renderer/settings tests pass; `PlayerStats` and
-  `StatsColumns` fail only on the documented missing-`localStorage`
-  environment issue (see `testnotes.md`), not on this change.
+- `npx vitest run tests/StructureAtlas.test.ts
+tests/CosmeticPreviewRenderer.test.ts tests/GraphicsOverrides.test.ts
+tests/FxSettings.test.ts tests/Colors.test.ts` — 76 passed.
+- `npx vitest run tests/PlayerStats.test.ts tests/StatsColumns.test.ts` — these
+  fail only on the documented missing-`localStorage` environment issue (see
+  `testnotes.md`), not on this change.
 
 ## 5. Open items / next steps
 
