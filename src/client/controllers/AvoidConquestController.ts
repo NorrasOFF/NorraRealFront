@@ -13,13 +13,52 @@ import { SendAvoidConquestIntentEvent } from "../Transport";
 import { GameView } from "../view";
 
 /**
+ * The uniform end state for a ctrl+drag selection ("region toggle") and the
+ * tiles that must be toggled to reach it.
+ */
+export interface AvoidConquestPlan {
+  /** The state every selected tile should end in. */
+  readonly freeze: boolean;
+  /** Tiles whose current state differs, and so must be toggled. */
+  readonly toggled: TileRef[];
+}
+
+/**
+ * Decide the uniform state for a ctrl+drag selection.
+ *
+ * The whole selection ends in the state the majority of its tiles would be
+ * toggled to: if fewer than half (a tie included) are already avoided, every
+ * selected tile is frozen; if a majority are already avoided, every selected
+ * tile is re-enabled. This makes a fresh zone freeze completely and an
+ * already-excluded zone unfreeze completely, instead of leaving a patchwork
+ * where the rectangle overlapped mixed states.
+ */
+export function planAvoidConquest(
+  tiles: readonly TileRef[],
+  isAvoided: (tile: TileRef) => boolean,
+): AvoidConquestPlan {
+  let avoided = 0;
+  for (const tile of tiles) {
+    if (isAvoided(tile)) avoided++;
+  }
+  const freeze = avoided * 2 <= tiles.length;
+  const toggled: TileRef[] = [];
+  for (const tile of tiles) {
+    if (isAvoided(tile) !== freeze) toggled.push(tile);
+  }
+  return { freeze, toggled };
+}
+
+/**
  * AvoidConquestController — handles the ctrl+drag gesture that excludes a
  * region of the frontline from the player's conquest attempts.
  *
- * The player drags a rectangle; every frontier tile that falls inside it is
- * toggled (excluded tiles are re-enabled, new tiles are excluded). Excluded
- * tiles are skipped by every attack's conquest loop in the core, and they stay
- * excluded across attacks until toggled off again.
+ * The player drags a rectangle; the whole selection snaps to one uniform state
+ * based on the majority of the frontier tiles inside it (see
+ * {@link planAvoidConquest}). If most are active, all are excluded; if most
+ * are already excluded, all are re-enabled. Excluded tiles are skipped by every
+ * attack's conquest loop in the core, and they stay excluded across attacks
+ * until toggled off again.
  *
  * Avoidance state is tracked here optimistically (only the local player can
  * modify their own exclusions), and the same toggles are relayed to the core
@@ -112,19 +151,16 @@ export class AvoidConquestController implements Controller {
       y2: Math.max(start.y, end.y),
     };
 
-    const toggled: TileRef[] = [];
-    for (const tile of this.frontierTilesInRect(
-      rect.x1,
-      rect.y1,
-      rect.x2,
-      rect.y2,
-    )) {
-      if (this.avoided.has(tile)) {
-        this.avoided.delete(tile);
-      } else {
+    const tiles = this.frontierTilesInRect(rect.x1, rect.y1, rect.x2, rect.y2);
+    const { freeze, toggled } = planAvoidConquest(tiles, (tile) =>
+      this.avoided.has(tile),
+    );
+    for (const tile of toggled) {
+      if (freeze) {
         this.avoided.add(tile);
+      } else {
+        this.avoided.delete(tile);
       }
-      toggled.push(tile);
     }
 
     if (toggled.length > 0) {
