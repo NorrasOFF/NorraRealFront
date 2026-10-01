@@ -1,12 +1,17 @@
 # Tollhouse: changing its sprite and HUD UI
 
-The Tollhouse currently borrows the **City** sprite and icon everywhere. This
-note lists every place that decides how a building is drawn so the placeholder
-can be swapped for dedicated art later.
+Dedicated Tollhouse art (a stack of coins with one to the side) now lives on
+the map, in the build menu, and in the HUD. This note documents every place
+that decides how the building is drawn so the art can be swapped again later.
 
 The unit type is `UnitType.Tollhouse` (`src/core/game/Game.ts`), whose string
 value is `"Tollhouse"`. The renderer keys everything off that string, so keep
 the renderer's `UT_TOLLHOUSE` constant in sync.
+
+The map sprite is the **last (7th) column** of `resources/atlases/icon-atlas.png`
+(448×64, 64 px cells); the HUD glyph is
+`resources/images/TollhouseIconWhite.svg`. Both are white-on-transparent so the
+renderer can tint the map sprite with the owner's color.
 
 ## 1. Map sprite (what you see on the map)
 
@@ -14,53 +19,42 @@ Structures are drawn by `StructurePass` from a fixed-column sprite atlas
 (`resources/atlases/icon-atlas.png`). The column is chosen by `STRUCTURE_ORDER`
 in **both** passes, which must stay identical:
 
-- `src/client/render/gl/passes/StructurePass.ts` — `STRUCTURE_ORDER` + the
-  `cityCol` alias block in the constructor.
-- `src/client/render/gl/passes/StructureLevelPass.ts` — same `STRUCTURE_ORDER`
-  - the `cityCol` alias block (draws the level number above the building).
+- `src/client/render/gl/passes/StructurePass.ts` — `STRUCTURE_ORDER`
+- `src/client/render/gl/passes/StructureLevelPass.ts` — the same
+  `STRUCTURE_ORDER` (draws the level number above the building)
 
-Because the Tollhouse has no atlas column yet, both constructors alias it to
-the City column at runtime:
+`UT_TOLLHOUSE` is the 7th entry (index 6) in both arrays, matching its atlas
+column. `UT_TOLLHOUSE` lives in `src/client/render/types/UnitType.ts` and is
+re-exported from `src/client/render/types/index.ts`. It is also listed in
+`STRUCTURE_TYPES` so the level pass treats it like any other structure. Its
+frame shape is a circle, chosen in `structure.frag.glsl` `shapeSDF` by
+`vAtlasIdx` (index 6), and its frame size/fill live under `structure.shapes.
+Tollhouse` in `render-settings.json`.
 
-```ts
-const cityCol = this.typeToAtlasCol.get(UT_CITY);
-if (cityCol !== undefined) {
-  this.typeToAtlasCol.set(UT_TOLLHOUSE, cityCol);
-}
-```
+### To give the Tollhouse new map art
 
-`UT_TOLLHOUSE` lives in `src/client/render/types/UnitType.ts` and is re-exported
-from `src/client/render/types/index.ts`. It is also listed in `STRUCTURE_TYPES`
-so the level pass treats it like any other structure.
-
-### To give the Tollhouse its own map art
-
-1. Add a new sprite for the Tollhouse to the icon atlas generation (the header
-   of `StructurePass.ts` names `generate-sprite-atlases.mjs`; regenerate
-   `resources/atlases/icon-atlas.png` with the extra column).
-2. Insert `UT_TOLLHOUSE` into `STRUCTURE_ORDER` in **both** `StructurePass.ts`
-   and `StructureLevelPass.ts`, at the position matching the new atlas column.
-   The array index is the atlas column, so order matters.
-3. Delete the two `cityCol` alias blocks (their `UT_CITY`/`UT_TOLLHOUSE`
-   imports can then be trimmed if unused).
-4. No wire/schema change is needed — the unit type already travels on
+1. Add/redraw the sprite as the 7th column of `resources/atlases/icon-atlas.png`
+   (64 px cell, white on transparent; the atlas must stay `7 × 64` wide).
+2. Keep `UT_TOLLHOUSE` as the 7th entry (index 6) of `STRUCTURE_ORDER` in
+   **both** `StructurePass.ts` and `StructureLevelPass.ts`. The array index is
+   the atlas column, so order matters.
+3. No wire/schema change is needed — the unit type already travels on
    `UnitUpdate.unitType`.
 
 ## 2. Build-menu HUD icon
 
 `src/client/hud/layers/BuildMenu.ts`:
 
-- `const cityIcon = assetUrl("images/CityIconWhite.svg");` is reused for the
-  Tollhouse entry at the bottom of `buildTable`. Swap `icon: cityIcon` for a
-  new `tollhouseIcon` and add its `assetUrl(...)` import. The asset should live
-  under `resources/images/`.
+- The Tollhouse entry at the bottom of `buildTable` uses
+  `icon: tollhouseIcon` (`assetUrl("images/TollhouseIconWhite.svg")`). The same
+  asset is exported from `HotbarIcons.ts` for the HUD.
 
 ## 3. Player info overlay (unit count chip + toll slider)
 
 `src/client/hud/layers/PlayerInfoOverlay.ts`:
 
-- `displayUnitCount(player, UnitType.Tollhouse, cityIcon)` — the small count
-  chip next to City/Factory/Port. Pass a dedicated icon instead of `cityIcon`.
+- `displayUnitCount(player, UnitType.Tollhouse, tollhouseIcon)` — the small
+  count chip next to City/Factory/Port.
 - `renderTollRate(player)` — the 0–100% toll slider shown when clicking another
   nation. It reads `myPlayer.tollRateForSmallID(...)` and emits
   `SendSetTollRateIntentEvent` (`src/client/Transport.ts` →
@@ -103,8 +97,9 @@ would normally be added there too:
   (see `src/core/StatsSchemas.ts`).
 - `src/client/hud/layers/lib/StatsColumns.ts` — leaderboard column registry.
 - `src/client/hud/layers/UnitDisplay.ts` — the persistent hotbar counter
-  (already lists the Tollhouse with the City icon).
-- `src/client/HelpModal.ts` — help/units reference panel.
+  (lists the Tollhouse with `tollhouseIcon`).
+- `src/client/HelpModal.ts` — help/units reference panel (currently has no
+  Tollhouse row, so no icon there yet).
 - `src/client/components/GameConfigSettings.ts` — already lists the Tollhouse
   for the "disabled units" toggle (label only, no icon).
 - `src/client/controllers/BuildPreviewController.ts` — the placement ghost's

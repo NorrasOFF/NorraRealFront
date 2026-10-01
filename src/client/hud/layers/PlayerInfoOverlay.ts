@@ -49,6 +49,7 @@ const missileSiloIcon = assetUrl("images/MissileSiloIconWhite.svg");
 const portIcon = assetUrl("images/PortIcon.svg");
 const samLauncherIcon = assetUrl("images/SamLauncherIconWhite.svg");
 const defensePostIcon = assetUrl("images/ShieldIconWhite.svg");
+const tollhouseIcon = assetUrl("images/TollhouseIconWhite.svg");
 const soldierIcon = assetUrl("images/SoldierIcon.svg");
 
 function euclideanDistWorld(
@@ -552,7 +553,7 @@ export class PlayerInfoOverlay extends LitElement implements Controller {
               UnitType.MissileDefenseShip,
               samLauncherIcon,
             )}
-            ${this.displayUnitCount(player, UnitType.Tollhouse, cityIcon)}
+            ${this.displayUnitCount(player, UnitType.Tollhouse, tollhouseIcon)}
           </div>
           ${this.renderTollRate(player)}
         </div>

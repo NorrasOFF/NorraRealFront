@@ -54,6 +54,7 @@ const STRUCTURE_ORDER = [
   UT_DEFENSE_POST,
   UT_SAM_LAUNCHER,
   UT_MISSILE_SILO,
+  UT_TOLLHOUSE,
 ] as const;
 
 /** Max characters per level label (handles up to "99"). */
@@ -173,13 +174,13 @@ export class StructureLevelPass {
       if (col >= 0) this.typeToAtlasCol.set(header.unitTypes[i], col);
     }
     // Mobile ships also show level numbers; use columns past the structures.
-    this.typeToAtlasCol.set(UT_MISSILE_SHIP, 6);
-    this.typeToAtlasCol.set(UT_MISSILE_DEFENSE_SHIP, 7);
-    // Tollhouse borrows the City sprite column (see StructurePass / ship.md).
-    const cityCol = this.typeToAtlasCol.get(UT_CITY);
-    if (cityCol !== undefined) {
-      this.typeToAtlasCol.set(UT_TOLLHOUSE, cityCol);
-    }
+    // (Only used for the highlight mask here, so the exact index just needs to
+    // not collide with a structure column.)
+    this.typeToAtlasCol.set(UT_MISSILE_SHIP, STRUCTURE_ORDER.length);
+    this.typeToAtlasCol.set(
+      UT_MISSILE_DEFENSE_SHIP,
+      STRUCTURE_ORDER.length + 1,
+    );
 
     this.kernTable = new Int8Array(CHAR_RANGE * CHAR_RANGE); // digits don't kern
 

@@ -54,6 +54,7 @@ const STRUCTURE_ORDER = [
   UT_DEFENSE_POST,
   UT_SAM_LAUNCHER,
   UT_MISSILE_SILO,
+  UT_TOLLHOUSE,
 ] as const;
 
 const ATLAS_COLS = STRUCTURE_ORDER.length;
@@ -149,14 +150,6 @@ export class StructurePass {
       if (col >= 0) {
         this.typeToAtlasCol.set(header.unitTypes[i], col);
       }
-    }
-
-    // Tollhouse has no atlas art yet: reuse the City sprite column. Replace
-    // with a dedicated column here (and in UNIT_ORDER/STRUCTURE_ORDER) when
-    // real art lands — see ship.md.
-    const cityCol = this.typeToAtlasCol.get(UT_CITY);
-    if (cityCol !== undefined) {
-      this.typeToAtlasCol.set(UT_TOLLHOUSE, cityCol);
     }
 
     // Compile shaders

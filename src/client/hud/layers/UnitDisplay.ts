@@ -25,6 +25,7 @@ import {
   missileSiloIcon,
   portIcon,
   samLauncherIcon,
+  tollhouseIcon,
   warshipIcon,
 } from "../HotbarIcons";
 
@@ -148,7 +149,7 @@ export class UnitDisplay extends LitElement implements Controller {
             this.keybinds["buildFactory"]?.key ?? "2",
           )}
           ${this.renderUnitItem(
-            cityIcon,
+            tollhouseIcon,
             this._tollhouses,
             UnitType.Tollhouse,
             "tollhouse",

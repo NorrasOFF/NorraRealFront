@@ -37,6 +37,7 @@ const atomBombIcon = assetUrl("images/NukeIconWhite.svg");
 const portIcon = assetUrl("images/PortIcon.svg");
 const samlauncherIcon = assetUrl("images/SamLauncherIconWhite.svg");
 const shieldIcon = assetUrl("images/ShieldIconWhite.svg");
+const tollhouseIcon = assetUrl("images/TollhouseIconWhite.svg");
 
 export interface BuildItemDisplay {
   unitType: PlayerBuildableUnitType;
@@ -133,10 +134,8 @@ export const buildTable: BuildItemDisplay[][] = [
       countable: true,
     },
     {
-      // Placeholder art: uses the City sprite until a dedicated one exists.
-      // See ship.md for how to swap the sprite + HUD icon.
       unitType: UnitType.Tollhouse,
-      icon: cityIcon,
+      icon: tollhouseIcon,
       description: "build_menu.desc.tollhouse",
       key: "unit_type.tollhouse",
       countable: true,
