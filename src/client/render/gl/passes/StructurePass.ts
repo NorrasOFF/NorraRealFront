@@ -47,16 +47,17 @@ const iconAtlasUrl = assetUrl("atlases/icon-atlas.png");
  * Structure types in atlas column order.
  * Index = atlas column index.
  */
-const STRUCTURE_ORDER = [
+export const STRUCTURE_ORDER = [
   UT_CITY,
   UT_PORT,
   UT_FACTORY,
   UT_DEFENSE_POST,
   UT_SAM_LAUNCHER,
   UT_MISSILE_SILO,
+  UT_TOLLHOUSE,
 ] as const;
 
-const ATLAS_COLS = STRUCTURE_ORDER.length;
+export const ATLAS_COLS = STRUCTURE_ORDER.length;
 
 // ---------------------------------------------------------------------------
 // Instance data layout
@@ -141,23 +142,10 @@ export class StructurePass {
     this.paletteTex = paletteTex;
     this.effectTex = effectTex;
 
-    // Build unitType string → atlas column mapping
-    for (let i = 0; i < header.unitTypes.length; i++) {
-      const col = STRUCTURE_ORDER.indexOf(
-        header.unitTypes[i] as (typeof STRUCTURE_ORDER)[number],
-      );
-      if (col >= 0) {
-        this.typeToAtlasCol.set(header.unitTypes[i], col);
-      }
-    }
-
-    // Tollhouse has no atlas art yet: reuse the City sprite column. Replace
-    // with a dedicated column here (and in UNIT_ORDER/STRUCTURE_ORDER) when
-    // real art lands — see ship.md.
-    const cityCol = this.typeToAtlasCol.get(UT_CITY);
-    if (cityCol !== undefined) {
-      this.typeToAtlasCol.set(UT_TOLLHOUSE, cityCol);
-    }
+    // Build unitType string → atlas column mapping from STRUCTURE_ORDER itself,
+    // not header.unitTypes: ALL_UNIT_TYPES omits some structure types (e.g. the
+    // Tollhouse), so deriving from it would silently drop their sprites.
+    STRUCTURE_ORDER.forEach((type, col) => this.typeToAtlasCol.set(type, col));
 
     // Compile shaders
     this.program = createProgram(

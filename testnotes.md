@@ -221,3 +221,20 @@ Fixes:
 Tests: `tests/server/GameServerSave.test.ts` (`isWaitingInLobby` before/after
 start), `tests/client/GameServerApiCallers.test.ts` (the `?force=1` URL), and
 `tests/client/SavesModalResume.test.ts` (import calls resume with `force`).
+
+## Ctrl+drag conquest avoidance is a region toggle
+
+The ctrl+drag that excludes frontline tiles from conquest no longer toggles each
+tile independently. `AvoidConquestController.onBoxComplete` now snaps the whole
+selection to one uniform state via the exported `planAvoidConquest` helper:
+
+- If fewer than half (a tie included) of the selected frontier tiles are already
+  avoided, every selected tile is frozen.
+- If a majority are already avoided, every selected tile is re-enabled.
+
+A fresh zone therefore freezes completely and a fully-excluded zone unfreezes
+completely, instead of leaving a patchwork where the rectangle overlapped mixed
+states. Only tiles whose state actually changes are sent in the `avoid_conquest`
+intent, so the core's per-tile toggle (`AvoidConquestExecution`) still lands on
+the desired uniform state. Tests:
+`tests/client/controllers/AvoidConquestController.test.ts`.
