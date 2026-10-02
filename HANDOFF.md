@@ -1,112 +1,96 @@
-# Handoff — dedicated Tollhouse icon (coins) everywhere
+# Handoff — restored PR #4 "Ändrat HUD och main menu" to main
 
 > Future sessions: this file holds the current handoff. Overwrite it rather than
 > appending; keep only the latest handoff.
 
-Companion notes: `ship.md` (Tollhouse art/UI map, now updated),
-`testnotes.md` (bug/feature detail + pre-existing failures).
+Companion notes: `testnotes.md` (bug/feature detail + pre-existing failures).
 
 ## 1. Where things are
 
-- Repo: `C:\Users\ai51940\OpenFrontIO` (private fork).
-- Working branch: `feature/save-resume-checkpoints`. The deployed/authoritative
-  branch is `main` on **`NorrasOFF/OpenFrontIO`** (default branch), fast-forwarded
-  to this session's commit. The local `origin` (`hexfront-dev/OpenFrontIO`) is
-  stale — ignore it and push to NorrasOFF with the token in
-  `H:\Documents\norrasoff-token.txt` (do not print the token):
+- Repo: `C:\Users\ai51940\OpenFrontIO`.
+- Token: `H:\Documents\Hexfront token.txt` (a space, no hyphen — not
+  `Hexfront-token.txt`). It authenticates as user **`hexfront-dev`**.
+- The user is **mid-transfer** of `hexfront-dev/OpenFrontIO` into the
+  **`NorrasOFF`** org. As of this session `NorrasOFF/OpenFrontIO` returns **404**
+  with both the Hexfront and `norrasoff-token.txt` tokens (both resolve to the
+  same `hexfront-dev` user). The only reachable repo is
+  **`hexfront-dev/OpenFrontIO`** (default `main`), so that is where the restore
+  was pushed. Re-check the org repo once the transfer completes.
+- `origin` = `https://github.com/hexfront-dev/OpenFrontIO.git`
+  (prompts to ignore `origin` from the previous session are stale — `origin`
+  is currently the only live remote).
+- Push command (do not print the token):
   ```powershell
-  $tok = (Get-Content -Raw "H:\Documents\norrasoff-token.txt").Trim()
+  $tok = (Get-Content -Raw "H:\Documents\Hexfront token.txt").Trim()
   $b64 = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("x-access-token:$tok"))
   git -C "C:\Users\ai51940\OpenFrontIO" -c http.extraheader="Authorization: Basic $b64" `
-    push https://github.com/NorrasOFF/OpenFrontIO.git HEAD:main
+    push origin HEAD:main
   ```
-- Before this session `main` and local `HEAD` were both `9768ca05f`. This
-  session added the icon commit plus a follow-up fix commit; both are pushed to
-  NorrasOFF `main` (the tip is the follow-up fix).
 
-## 2. What changed
+## 2. What changed this session
 
-The Tollhouse used the **City** sprite/icon as a placeholder. It now has
-dedicated art — a stack of three coins with one coin to the side — on the map
-and in every HUD location that shows a Tollhouse.
+The user accidentally deleted the commit on the experimental branch
+`Elias-sandlåda` and asked for its content to be restored to `main`. The commit
+survived only as **closed/unmerged PR #4** in `hexfront-dev/OpenFrontIO`
+(`refs/pull/4/head`), so it was recovered and applied.
 
-- **Map sprite**: `resources/atlases/icon-atlas.png` grew from 6 to 7 columns
-  (`384×64` → `448×64`, 64 px cells, white-on-transparent). The new last
-  column is the coin stack. The original six columns were preserved
-  byte-identically (raw `LockBits` row copy, verified 0 pixel diffs). There is
-  no committed atlas generator (`generate-sprite-atlases.mjs` is absent), so
-  the tile was drawn with GDI+ in a throwaway PowerShell script — see §5.
-- **Map shape**: `structure.frag.glsl` `shapeSDF` now maps atlas index 6 to a
-  circle (it previously fell through to the missile-silo triangle).
-- **Map visibility fix**: the two structure passes built their type→column map
-  by intersecting `header.unitTypes` with `STRUCTURE_ORDER`. `ALL_UNIT_TYPES`
-  omits `"Tollhouse"`, so removing the old City-alias made the Tollhouse render
-  as nothing. Both passes now derive the map from `STRUCTURE_ORDER` directly,
-  and `STRUCTURE_ORDER`/`ATLAS_COLS` are exported once from `StructurePass.ts`
-  and reused by `StructureLevelPass.ts` (previously a duplicated array that
-  could drift). New `tests/StructureAtlas.test.ts` guards the contract: every
-  `STRUCTURE_TYPES` member appears once in `STRUCTURE_ORDER`, and
-  `icon-atlas.png` is exactly `ATLAS_COLS × 64` wide.
-- **HUD glyph**: new `resources/images/TollhouseIconWhite.svg` (white on
-  transparent, mask-based, same geometry as the atlas tile).
-- **HUD wiring**: `HotbarIcons.ts` exports `tollhouseIcon`; `BuildMenu.ts`,
-  `UnitDisplay.ts` (hotbar counter) and `PlayerInfoOverlay.ts` (unit-count chip)
-  use it instead of `cityIcon`.
+- Fetched `refs/pull/4/head` → `origin/pr-4` = `df2d2f2cc` ("Ändrat HUD och main
+  menu", author Monstersnigel, parent `2b4c660`, 1 commit, 17 files,
+  +485/−1694). Parent is an ancestor of `main` (`057de7e01`).
+- Cherry-picked onto `origin/main` on branch `restore/pr4-hud`; pushed
+  fast-forward. **`origin/main` is now `f0bff67ed`** (unchanged content of the
+  PR, re-committed with the same author/message).
+- One conflict, `src/client/hud/layers/UnitDisplay.ts`: `main` had since given
+  the Tollhouse a dedicated `tollhouseIcon` (import + icon swap), while the PR
+  (written before that) used `cityIcon` and reordered the toolbar. Resolved by
+  taking the PR's **two-row toolbar with labels** and keeping `main`'s
+  `tollhouseIcon` + its import. No other conflicts.
 
-No wire/schema/core change: the unit type already travels on
-`UnitUpdate.unitType`.
+The PR itself is a private-fork HUD/main-menu overhaul:
 
-## 3. Files changed
+- **Two-row hotbar** (`UnitDisplay.ts`): "Buildings" row and "Units · Caps Lock
+  on" row, each with a label; Tollhouse in the buildings row.
+- **Caps Lock build layer** (`InputHandler.ts`, `UserSettings.ts`,
+  `SettingKeybind.ts`, `Utils.ts`): build hotkeys gain a `CapsLock+` modifier;
+  number keys pick buildings with Caps Lock off and warships/missile
+  ships/bombs with Caps Lock on. `getDefaultKeybinds` now: `buildTollhouse =
+Digit7`, `buildWarship = CapsLock+Digit1`, `BuildMissileCarrier =
+CapsLock+Digit2`, `BuildAACarrier = CapsLock+Digit3`, bombs/MIRV at
+  `CapsLock+Digit4..6`.
+- **Scroll-to-pick bulk amount** while a build ghost is active
+  (`InputHandler.onScroll` → `uiState.upgradeMultiplier` over
+  `[1, ...STRUCTURE_BULK_STEPS, MAX_UPGRADE_AMOUNT]`); `BuildPreviewController`
+  passes `multiplier` through as `undefined` when bulk is unsupported; the
+  renderer shows the amount badge whenever `multiplier !== undefined`.
+- **Main-menu cleanup**: `Footer.ts`/`PlayPage.ts` drop the Steam wishlist and
+  "Streaming Now"; `resources/news.json` replaced with a Swedish NorrasOFF
+  meeting notice; `resources/version.txt` → `2.00.00`; `resources/ads.txt`
+  emptied (0 bytes, not deleted); `resources/changelog.md` trimmed.
+- New `unit_display.*` and `user_setting.build_*` keys in
+  `resources/lang/en.json` (no duplicate keys).
 
-- `resources/atlases/icon-atlas.png` — appended the coin-stack column (7×64).
-- `resources/images/TollhouseIconWhite.svg` — new HUD/help glyph.
-- `src/client/render/gl/passes/StructurePass.ts` — `UT_TOLLHOUSE` added to
-  `STRUCTURE_ORDER`; City alias block deleted; `STRUCTURE_ORDER` and
-  `ATLAS_COLS` exported; type→column map now built from `STRUCTURE_ORDER`.
-- `src/client/render/gl/passes/StructureLevelPass.ts` — imports the shared
-  `STRUCTURE_ORDER` (local duplicate removed); alias block deleted; map built
-  from `STRUCTURE_ORDER`; mobile-ship level columns moved to
-  `STRUCTURE_ORDER.length`(+1) (index is highlight-mask-only, so just needs to
-  not collide).
-- `tests/StructureAtlas.test.ts` — new regression test for the atlas column
-  contract.
-- `src/client/render/gl/shaders/structure/structure.frag.glsl` — `shapeSDF`
-  circle branch for index 6; comment updated.
-- `src/client/render/gl/render-settings.json` — `structure.shapes.Tollhouse`
-  (`scale: 1`, `iconFill: 0.85`, mirroring City).
-- `src/client/hud/HotbarIcons.ts` — `tollhouseIcon` export.
-- `src/client/hud/layers/BuildMenu.ts` — build-menu entry uses `tollhouseIcon`.
-- `src/client/hud/layers/UnitDisplay.ts` — hotbar counter uses `tollhouseIcon`.
-- `src/client/hud/layers/PlayerInfoOverlay.ts` — count chip uses
-  `tollhouseIcon`.
-- `ship.md` — rewritten from "placeholder" to "dedicated art"; documents the
-  7th-column/index-6 contract and the HUD asset.
-
-## 4. Verification
+## 3. Verification
 
 - `npx tsc --noEmit` — clean.
-- `npx prettier --write` / `npx oxlint` / `npx eslint` on changed TS/JSON —
-  clean. (Prettier has no parser for `.svg`; the SVG was validated as
-  well-formed XML instead.)
-- Atlas integrity: first 6 columns are pixel-identical to the pre-change PNG.
-- `npx vitest run tests/StructureAtlas.test.ts
-tests/CosmeticPreviewRenderer.test.ts tests/GraphicsOverrides.test.ts
-tests/FxSettings.test.ts tests/Colors.test.ts` — 76 passed.
-- `npx vitest run tests/PlayerStats.test.ts tests/StatsColumns.test.ts` — these
-  fail only on the documented missing-`localStorage` environment issue (see
-  `testnotes.md`), not on this change.
+- Pre-commit hook (oxlint + eslint --fix + prettier) ran clean on all 17 files.
+- `npx vitest run tests/UserSettings.test.ts` — 41/41.
+- `npx vitest run tests/InputHandler.test.ts` with
+  `NODE_OPTIONS=--localstorage-file=<tmp>` — **65/66**. The one failure,
+  `Shift keydown discards active ghostStructure`, is **pre-existing**: it fails
+  identically on `origin/main` at `src/client/InputHandler.ts:798`, whose
+  comment states ghost is deliberately _not_ cleared on shift keydown.
+- Without `--localstorage-file`, the whole file fails on the documented
+  Node `localStorage` environment issue (`testnotes.md`), not on this change.
 
-## 5. Open items / next steps
+## 4. Open items / next steps
 
-- The atlas generator is not in the repo. If the sprite needs to change, the
-  throwaway script logic is: draw a 64×64 `Format32bppArgb` tile (stack:
-  ellipse top/bottom + body rect + transparent grooves + face ring; side coin:
-  same at lower-right), then byte-append it as column 7 with `LockBits`. The
-  SVG mirrors the same geometry in a 64×64 `mask`.
-- `HelpModal.ts` has no Tollhouse row, so no icon there; add a row + a
-  `help_modal.build_tollhouse_desc` key (alphabetically sorted in `en.json`)
-  if the help table should list it.
-- No WebGL screenshot test exists; the map sprite was verified by rendering the
-  atlas and inspecting the tile, not in a live browser session.
-- The many `localStorage`/WebGL client failures in a full local `vitest run` are
-  environment-only (see `testnotes.md`).
+- **After the transfer completes**, confirm `NorrasOFF/OpenFrontIO` exists and
+  its `main` contains `f0bff67ed`; if the org repo is the intended home for
+  future pushes, re-point `origin` and update the token to use here.
+- Fix or delete the stale `Shift keydown discards active ghostStructure` test
+  (pre-existing). The other documented `localStorage`/WebGL failures in a full
+  local `vitest run` are environment-only (`testnotes.md`).
+- The PR's `resources/news.json` uses a non-key literal in
+  `descriptionTranslationKey` and a non-ASCII `id` (`mötestid`); harmless now
+  but not schema-shaped if news parsing is ever tightened.
+- `restore/pr4-hud` local branch can be deleted; the work is on `main`.
