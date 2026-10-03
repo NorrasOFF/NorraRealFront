@@ -34,7 +34,11 @@ export default [
             "eslint.config.js",
             "scripts/sync-assets.mjs",
             "tests/matchmaking/*.mjs",
+            "e2e/*.mjs",
           ],
+          // allowDefaultProject only handles the first N matches (default 8).
+          // The list above already exceeds that.
+          maximumDefaultProjectFileMatchCount_THIS_WILL_SLOW_DOWN_LINTING: 16,
         },
         tsconfigRootDir: import.meta.dirname,
       },
