@@ -31,7 +31,7 @@ import {
   gameState,
   openRadialMenu,
   spawn,
-  waitForGameReady,
+  startSoloGame,
   waitForSpawnPhaseEnd,
   waitForTick,
 } from "../.claude/skills/run-openfront/game.mjs";
@@ -42,6 +42,10 @@ const REPO_ROOT = path.resolve(
 );
 const ARTIFACTS = path.join(REPO_ROOT, "e2e", "artifacts");
 const DEV_LOG = path.join(ARTIFACTS, "dev-server.log");
+
+// Set once we intentionally tear the dev server down, so its non-zero exit
+// (from the kill) is not reported as a crash.
+let stopping = false;
 
 function parseArgs() {
   const argv = process.argv.slice(2);
@@ -87,7 +91,9 @@ async function ensureServer() {
   console.log(`[e2e] starting dev server (npm run start:client)…`);
   fs.mkdirSync(ARTIFACTS, { recursive: true });
   const out = fs.openSync(DEV_LOG, "w");
-  const child = spawnProcess("npm", ["run", "start:client"], {
+  // Single-string command with shell:true (passing an args array alongside
+  // shell:true triggers Node's DEP0190 on Windows).
+  const child = spawnProcess("npm run start:client", {
     cwd: REPO_ROOT,
     shell: true,
     windowsHide: true,
@@ -95,7 +101,7 @@ async function ensureServer() {
     stdio: ["ignore", out, out],
   });
   child.on("exit", (code) => {
-    if (code !== 0 && code !== null) {
+    if (!stopping && code !== 0 && code !== null) {
       console.log(`[e2e] dev server exited with code ${code}`);
     }
   });
@@ -112,6 +118,7 @@ async function ensureServer() {
 
 function stopServer(child) {
   if (!child || child.killed) return;
+  stopping = true;
   if (process.platform === "win32") {
     // npm spawns vite as a child; kill the whole tree.
     spawnProcess("taskkill", ["/pid", String(child.pid), "/T", "/F"], {
@@ -121,27 +128,6 @@ function stopServer(child) {
   } else {
     child.kill("SIGTERM");
   }
-}
-
-// Fork-specific replacement for the skill's startSoloGame: this fork labels the
-// button with `game_settings.start` ("START GAME"), while the skill clicks a
-// stale `single_modal.start` key. Match by visible text so label/key churn does
-// not break the runner. Option fields are set as Lit element properties.
-async function startSoloGame(page, opts = {}) {
-  if (Object.keys(opts).length > 0) {
-    await page.evaluate((o) => {
-      const modal = document.querySelector("single-player-modal");
-      if (o.bots !== undefined) modal.bots = o.bots;
-      if (o.map !== undefined) modal.selectedMap = o.map;
-    }, opts);
-    await page.waitForTimeout(300);
-  }
-  await page
-    .locator("single-player-modal o-button button:visible")
-    .filter({ hasText: /start/i })
-    .first()
-    .click();
-  await waitForGameReady(page);
 }
 
 async function main() {
