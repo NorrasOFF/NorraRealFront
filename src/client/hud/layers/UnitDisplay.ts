@@ -1,5 +1,5 @@
 import { html, LitElement } from "lit";
-import { customElement } from "lit/decorators.js";
+import { customElement, state } from "lit/decorators.js";
 import { EventBus } from "../../../core/EventBus";
 import {
   BuildableUnit,
@@ -48,9 +48,39 @@ export class UnitDisplay extends LitElement implements Controller {
   private _tollhouses = 0;
   private allDisabled = false;
   private _hoveredUnit: PlayerBuildableUnitType | null = null;
+  @state()
+  private _capsLockActive = false;
+
+  private updateCapsLockState = (event: KeyboardEvent) => {
+    const modifierState = event.getModifierState("CapsLock");
+    if (event.code === "CapsLock") {
+      if (event.type !== "keydown" || event.repeat) return;
+      this._capsLockActive =
+        modifierState === this._capsLockActive
+          ? !this._capsLockActive
+          : modifierState;
+      return;
+    }
+    const active = modifierState;
+    if (this._capsLockActive !== active) {
+      this._capsLockActive = active;
+    }
+  };
 
   createRenderRoot() {
     return this;
+  }
+
+  connectedCallback() {
+    super.connectedCallback();
+    window.addEventListener("keydown", this.updateCapsLockState, true);
+    window.addEventListener("keyup", this.updateCapsLockState, true);
+  }
+
+  disconnectedCallback() {
+    window.removeEventListener("keydown", this.updateCapsLockState, true);
+    window.removeEventListener("keyup", this.updateCapsLockState, true);
+    super.disconnectedCallback();
   }
 
   init() {
@@ -132,108 +162,126 @@ export class UnitDisplay extends LitElement implements Controller {
     }
 
     return html`
-      <div class="border-t border-white/10 p-1 w-full">
-        <div class="flex flex-col items-center gap-1 w-full">
-          <div class="text-[9px] uppercase tracking-wider text-white/50">
-            ${translateText("unit_display.buildings")}
+      <div class="border-t border-white/10 p-1 w-fit max-w-full">
+        <div class="flex flex-col items-start gap-1 w-fit max-w-full">
+          <div
+            class="flex items-center gap-1 rounded-sm ${this._capsLockActive
+              ? ""
+              : "bg-white/5 ring-1 ring-white/20"}"
+          >
+            <span
+              class="w-12 shrink-0 text-[8px] uppercase tracking-wide text-cyan-200/90"
+              >${this._capsLockActive
+                ? ""
+                : translateText("unit_display.buildings")}</span
+            >
+            <div class="flex items-center gap-0.5">
+              ${this.renderUnitItem(
+                cityIcon,
+                this._cities,
+                UnitType.City,
+                "city",
+                this.keybinds["buildCity"]?.key ?? "1",
+              )}
+              ${this.renderUnitItem(
+                factoryIcon,
+                this._factories,
+                UnitType.Factory,
+                "factory",
+                this.keybinds["buildFactory"]?.key ?? "2",
+              )}
+              ${this.renderUnitItem(
+                portIcon,
+                this._port,
+                UnitType.Port,
+                "port",
+                this.keybinds["buildPort"]?.key ?? "3",
+              )}
+              ${this.renderUnitItem(
+                defensePostIcon,
+                this._defensePost,
+                UnitType.DefensePost,
+                "defense_post",
+                this.keybinds["buildDefensePost"]?.key ?? "4",
+              )}
+              ${this.renderUnitItem(
+                missileSiloIcon,
+                this._missileSilo,
+                UnitType.MissileSilo,
+                "missile_silo",
+                this.keybinds["buildMissileSilo"]?.key ?? "5",
+              )}
+              ${this.renderUnitItem(
+                samLauncherIcon,
+                this._samLauncher,
+                UnitType.SAMLauncher,
+                "sam_launcher",
+                this.keybinds["buildSamLauncher"]?.key ?? "6",
+              )}
+              ${this.renderUnitItem(
+                tollhouseIcon,
+                this._tollhouses,
+                UnitType.Tollhouse,
+                "tollhouse",
+                this.keybinds["buildTollhouse"]?.key ?? "7",
+              )}
+            </div>
           </div>
-          <div class="flex justify-center gap-0.5 w-full">
-            ${this.renderUnitItem(
-              cityIcon,
-              this._cities,
-              UnitType.City,
-              "city",
-              this.keybinds["buildCity"]?.key ?? "1",
-            )}
-            ${this.renderUnitItem(
-              factoryIcon,
-              this._factories,
-              UnitType.Factory,
-              "factory",
-              this.keybinds["buildFactory"]?.key ?? "2",
-            )}
-            ${this.renderUnitItem(
-              portIcon,
-              this._port,
-              UnitType.Port,
-              "port",
-              this.keybinds["buildPort"]?.key ?? "3",
-            )}
-            ${this.renderUnitItem(
-              defensePostIcon,
-              this._defensePost,
-              UnitType.DefensePost,
-              "defense_post",
-              this.keybinds["buildDefensePost"]?.key ?? "4",
-            )}
-            ${this.renderUnitItem(
-              missileSiloIcon,
-              this._missileSilo,
-              UnitType.MissileSilo,
-              "missile_silo",
-              this.keybinds["buildMissileSilo"]?.key ?? "5",
-            )}
-            ${this.renderUnitItem(
-              samLauncherIcon,
-              this._samLauncher,
-              UnitType.SAMLauncher,
-              "sam_launcher",
-              this.keybinds["buildSamLauncher"]?.key ?? "6",
-            )}
-            ${this.renderUnitItem(
-              tollhouseIcon,
-              this._tollhouses,
-              UnitType.Tollhouse,
-              "tollhouse",
-              this.keybinds["buildTollhouse"]?.key ?? "7",
-            )}
-          </div>
-          <div class="text-[9px] uppercase tracking-wider text-white/50">
-            ${translateText("unit_display.units_caps_lock")}
-          </div>
-          <div class="flex justify-center gap-0.5 w-full">
-            ${this.renderUnitItem(
-              warshipIcon,
-              this._warships,
-              UnitType.Warship,
-              "warship",
-              this.keybinds["buildWarship"]?.key ?? "CapsLock+1",
-            )}
-            ${this.renderUnitItem(
-              missileSiloIcon,
-              this._missileShips,
-              UnitType.MissileShip,
-              "missile_ship",
-              this.keybinds["BuildMissileCarrier"]?.key ?? "CapsLock+2",
-            )}
-            ${this.renderUnitItem(
-              samLauncherIcon,
-              this._missileDefenseShips,
-              UnitType.MissileDefenseShip,
-              "missile_defense_ship",
-              this.keybinds["BuildAACarrier"]?.key ?? "CapsLock+3",
-            )}
-            ${this.renderUnitItem(
-              atomBombIcon,
-              null,
-              UnitType.AtomBomb,
-              "atom_bomb",
-              this.keybinds["buildAtomBomb"]?.key ?? "CapsLock+4",
-            )}
-            ${this.renderUnitItem(
-              hydrogenBombIcon,
-              null,
-              UnitType.HydrogenBomb,
-              "hydrogen_bomb",
-              this.keybinds["buildHydrogenBomb"]?.key ?? "CapsLock+5",
-            )}
-            ${this.renderUnitItem(
-              mirvIcon,
-              null,
-              UnitType.MIRV,
-              "mirv",
-              this.keybinds["buildMIRV"]?.key ?? "CapsLock+6",
-            )}
+          <div
+            class="flex items-center gap-1 rounded-sm ${this._capsLockActive
+              ? "bg-white/5 ring-1 ring-white/20"
+              : ""}"
+          >
+            <span
+              class="w-12 shrink-0 text-[8px] uppercase tracking-wide text-cyan-200/90"
+              >${this._capsLockActive
+                ? translateText("unit_display.units_active")
+                : ""}</span
+            >
+            <div class="flex items-center gap-0.5">
+              ${this.renderUnitItem(
+                warshipIcon,
+                this._warships,
+                UnitType.Warship,
+                "warship",
+                this.keybinds["buildWarship"]?.key ?? "CapsLock+1",
+              )}
+              ${this.renderUnitItem(
+                missileSiloIcon,
+                this._missileShips,
+                UnitType.MissileShip,
+                "missile_ship",
+                this.keybinds["BuildMissileCarrier"]?.key ?? "CapsLock+2",
+              )}
+              ${this.renderUnitItem(
+                samLauncherIcon,
+                this._missileDefenseShips,
+                UnitType.MissileDefenseShip,
+                "missile_defense_ship",
+                this.keybinds["BuildAACarrier"]?.key ?? "CapsLock+3",
+              )}
+              ${this.renderUnitItem(
+                atomBombIcon,
+                null,
+                UnitType.AtomBomb,
+                "atom_bomb",
+                this.keybinds["buildAtomBomb"]?.key ?? "CapsLock+4",
+              )}
+              ${this.renderUnitItem(
+                hydrogenBombIcon,
+                null,
+                UnitType.HydrogenBomb,
+                "hydrogen_bomb",
+                this.keybinds["buildHydrogenBomb"]?.key ?? "CapsLock+5",
+              )}
+              ${this.renderUnitItem(
+                mirvIcon,
+                null,
+                UnitType.MIRV,
+                "mirv",
+                this.keybinds["buildMIRV"]?.key ?? "CapsLock+6",
+              )}
+            </div>
           </div>
         </div>
       </div>
@@ -253,7 +301,7 @@ export class UnitDisplay extends LitElement implements Controller {
     const selected = this.uiState.ghostStructure === unitType;
     const hovered = this._hoveredUnit === unitType;
     const displayHotkey = hotkey
-      .replace("CapsLock+", "CAPS+")
+      .replace(/^CapsLock\+/i, "")
       .replace("Digit", "")
       .replace("Key", "")
       .toUpperCase();

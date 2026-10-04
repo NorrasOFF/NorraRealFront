@@ -671,7 +671,11 @@ export class PlayerInfoOverlay extends LitElement implements Controller {
 
     return html`
       <div class="p-2">
-        <div class="font-bold mb-1 ${isAlly ? "text-green-500" : "text-white"}">
+        <div
+          class="font-bold mb-1 wrap-anywhere ${isAlly
+            ? "text-green-500"
+            : "text-white"}"
+        >
           ${unit.owner().displayName()}
         </div>
         <div class="mt-1">
@@ -696,6 +700,11 @@ export class PlayerInfoOverlay extends LitElement implements Controller {
       return html``;
     }
 
+    const unitOnly = this.unit !== null && this.player === null;
+    const panelSize = unitOnly
+      ? "w-fit max-w-[calc(100vw_-_1rem)] sm:max-w-[520px] lg:max-w-[700px]"
+      : "w-full sm:w-[520px] lg:w-[700px]";
+
     const containerClasses = this._isInfoVisible
       ? "opacity-100 visible"
       : "opacity-0 invisible pointer-events-none";
@@ -708,7 +717,7 @@ export class PlayerInfoOverlay extends LitElement implements Controller {
         @contextmenu=${(e: MouseEvent) => e.preventDefault()}
       >
         <div
-          class="bg-gray-800/92 backdrop-blur-sm shadow-xs min-[1200px]:rounded-lg sm:rounded-b-lg shadow-lg text-white text-lg lg:text-base w-full sm:w-[520px] lg:w-[700px] overflow-hidden ${containerClasses}"
+          class="bg-gray-800/92 backdrop-blur-sm shadow-xs min-[1200px]:rounded-lg sm:rounded-b-lg shadow-lg text-white text-lg lg:text-base ${panelSize} overflow-hidden ${containerClasses}"
         >
           ${this.player !== null ? this.renderPlayerInfo(this.player) : ""}
           ${this.unit !== null ? this.renderUnitInfo(this.unit) : ""}

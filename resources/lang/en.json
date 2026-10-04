@@ -1889,8 +1889,8 @@
     "warship": "Warship"
   },
   "unit_display": {
-    "buildings": "Buildings · Caps Lock off",
-    "units_caps_lock": "Units · Caps Lock on"
+    "buildings": "Buildings",
+    "units_active": "Units"
   },
   "user_setting": {
     "alert_frame_desc": "Toggle the alert frame. When enabled, the frame will be displayed when you are betrayed or attacked over land.",

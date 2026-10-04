@@ -261,6 +261,17 @@ interface KeybindEntry {
   conditions: Array<(e: KeyboardEvent) => boolean>;
 }
 
+const BUILD_KEY_ROW_PAIRS: ReadonlyArray<
+  readonly [PlayerBuildableUnitType, PlayerBuildableUnitType]
+> = [
+  [UnitType.City, UnitType.Warship],
+  [UnitType.Factory, UnitType.MissileShip],
+  [UnitType.Port, UnitType.MissileDefenseShip],
+  [UnitType.DefensePost, UnitType.AtomBomb],
+  [UnitType.MissileSilo, UnitType.HydrogenBomb],
+  [UnitType.SAMLauncher, UnitType.MIRV],
+];
+
 /**
  * WebKit's non-standard `GestureEvent`, fired for trackpad pinch in Safari.
  * Other browsers synthesize a ctrl+wheel event instead, handled in onScroll.
@@ -320,6 +331,7 @@ export class InputHandler {
   private activeKeys = new Set<string>();
   private keybinds: Record<string, string> = {};
   private keybindAndEvent: Array<[string, KeybindEntry]> = [];
+  private capsLockActive = false;
   private coordinateGridEnabled = false;
 
   private readonly PAN_SPEED = 5;
@@ -674,6 +686,20 @@ export class InputHandler {
 
     window.addEventListener("keydown", (e) => {
       const isTextInput = this.isTextInputTarget(e.target);
+      if (e.code === "CapsLock") {
+        if (!e.repeat) {
+          const modifierState = e.getModifierState("CapsLock");
+          this.capsLockActive =
+            modifierState === this.capsLockActive
+              ? !this.capsLockActive
+              : modifierState;
+          if (!isTextInput && this.canUseBuildKeybinds()) {
+            this.cycleBuildSelection(this.capsLockActive);
+          }
+        }
+      } else {
+        this.capsLockActive = e.getModifierState("CapsLock");
+      }
       if (isTextInput && e.code !== "Escape") {
         return;
       }
@@ -1249,6 +1275,22 @@ export class InputHandler {
     } else {
       this.uiState.upgradeMultiplier = 1;
       this.uiState.ghostStructure = ghostStructure;
+    }
+  }
+
+  private cycleBuildSelection(capsLockActive: boolean): void {
+    const selected = this.uiState.ghostStructure;
+    if (selected === null) return;
+
+    for (const [building, unit] of BUILD_KEY_ROW_PAIRS) {
+      if (capsLockActive && selected === building) {
+        this.setGhostStructure(unit);
+        return;
+      }
+      if (!capsLockActive && selected === unit) {
+        this.setGhostStructure(building);
+        return;
+      }
     }
   }
 

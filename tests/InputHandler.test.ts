@@ -178,6 +178,32 @@ describe("InputHandler AutoUpgrade", () => {
       );
     });
 
+    test("toggling Caps Lock switches the selected shortcut to the matching row", () => {
+      inputHandler.initialize();
+      uiState.ghostStructure = UnitType.City;
+
+      const capsLockOn = new KeyboardEvent("keydown", { code: "CapsLock" });
+      Object.defineProperty(capsLockOn, "getModifierState", {
+        value: () => false,
+      });
+      window.dispatchEvent(capsLockOn);
+      expect(uiState.ghostStructure).toBe(UnitType.Warship);
+
+      const capsLockOff = new KeyboardEvent("keydown", { code: "CapsLock" });
+      Object.defineProperty(capsLockOff, "getModifierState", {
+        value: () => true,
+      });
+      window.dispatchEvent(capsLockOff);
+      expect(uiState.ghostStructure).toBe(UnitType.City);
+    });
+
+    test("toggling Caps Lock leaves selections without a matching row unchanged", () => {
+      uiState.ghostStructure = UnitType.Tollhouse;
+
+      inputHandler["cycleBuildSelection"](true);
+      expect(uiState.ghostStructure).toBe(UnitType.Tollhouse);
+    });
+
     test("unit shortcuts do not activate while Caps Lock is off", () => {
       expect(
         inputHandler["resolveBuildKeybind"]("Digit1", false, false),
