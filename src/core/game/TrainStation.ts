@@ -1,3 +1,4 @@
+import { log } from "../DetMath";
 import { TrainExecution } from "../execution/TrainExecution";
 import { PseudoRandom } from "../PseudoRandom";
 import { Game, Player, Unit, UnitType } from "./Game";
@@ -158,6 +159,30 @@ export class TrainStation {
 }
 
 /**
+ * How strongly a destination's level pulls train traffic toward it.
+ * `w(L) = 1 + TRAIN_DESTINATION_LEVEL_WEIGHT * ln(L)`: a level-1 station is
+ * the baseline, every level above adds a small bonus that diminishes as the
+ * level grows (level 50 is ~1.98x a level-1 station). Kept deliberately mild.
+ */
+export const TRAIN_DESTINATION_LEVEL_WEIGHT = 0.25;
+
+// Integer scale so weighted reservoir sampling stays deterministic (no
+// float comparisons in the PRNG draw).
+const DESTINATION_WEIGHT_SCALE = 1000;
+
+/**
+ * Integer selection weight for a destination at the given level. Uses the
+ * deterministic `log` from DetMath so every client computes the same weight.
+ */
+export function trainDestinationWeight(level: number): number {
+  if (level <= 1) return DESTINATION_WEIGHT_SCALE;
+  return Math.round(
+    (1 + TRAIN_DESTINATION_LEVEL_WEIGHT * log(level)) *
+      DESTINATION_WEIGHT_SCALE,
+  );
+}
+
+/**
  * Cluster of connected stations
  */
 export class Cluster {
@@ -212,14 +237,17 @@ export class Cluster {
     random: PseudoRandom,
   ): TrainStation | null {
     let selected: TrainStation | null = null;
-    let eligibleSeen = 0;
+    let totalWeight = 0;
 
     for (const station of this.tradeStations) {
       if (!station.tradeAvailable(player)) continue;
-      eligibleSeen++;
+      const weight = trainDestinationWeight(station.unit.level());
+      totalWeight += weight;
 
-      // Reservoir sampling: keep each eligible station with probability 1/eligibleSeen.
-      if (random.nextInt(0, eligibleSeen) === 0) {
+      // Weighted reservoir sampling: keep each eligible station with
+      // probability weight / totalWeight. Higher-level destinations are
+      // slightly more likely, with diminishing returns (trainDestinationWeight).
+      if (random.nextInt(0, totalWeight) < weight) {
         selected = station;
       }
     }
