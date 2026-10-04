@@ -134,8 +134,18 @@ npm run dev:prod
   ```
 
 - **Testing**
+
   ```bash
   npm test
+  ```
+
+- **End-to-end testing (headless browser)**. Drives a real single-player game
+  in headless Chrome and writes screenshots plus a simulation-state dump to
+  `e2e/artifacts/`. Uses the installed Chrome (no browser download); see
+  [`e2e/README.md`](e2e/README.md) for options.
+  ```bash
+  npm install --no-save --no-package-lock playwright
+  node e2e/run.mjs
   ```
 
 ## 🏗️ Project Structure

@@ -31,8 +31,12 @@ export async function startSoloGame(page, opts = {}) {
     }, opts);
     await page.waitForTimeout(300); // let Lit re-render
   }
+  // The Start button's translation key varies by fork/version (upstream used
+  // `single_modal.start`; this fork uses `game_settings.start`), so match by
+  // visible text within the modal instead of by key.
   await page
-    .locator('o-button[translationKey="single_modal.start"] button:visible')
+    .locator("single-player-modal o-button button:visible")
+    .filter({ hasText: /start/i })
     .first()
     .click();
   await waitForGameReady(page);

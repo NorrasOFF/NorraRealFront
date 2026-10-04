@@ -11,6 +11,7 @@ npm run start:client     # Client only
 npm run start:server-dev # Server only
 npm test                 # Run all tests (Vitest)
 npm run test:coverage    # Tests with coverage
+node e2e/run.mjs         # Browser E2E smoke test (headless Chrome; see e2e/README.md)
 npm run lint             # Oxlint + ESLint
 npm run lint:fix         # Oxlint + ESLint with auto-fix
 npm run format           # Prettier
@@ -75,6 +76,8 @@ All user-visible text must go through `translateText()` and have a corresponding
 ## Testing Patterns
 
 Tests use a `setup()` helper from `tests/util/Setup.ts` that creates a full game instance with map data from `tests/testdata/maps/`. Write tests that exercise the core simulation directly — not mocks.
+
+`src/core` changes **must** include unit tests. Changes that affect rendering, HUD/UI, input, or the client↔worker loop should additionally be exercised in a real browser with the end-to-end harness (`node e2e/run.mjs`, or `--headed`/`--observe`; see `e2e/README.md`). It drives a single-player game in headless Chrome and writes screenshots + a simulation-state dump to `e2e/artifacts/`. One-time prereq: `npm install --no-save --no-package-lock playwright`.
 
 ## Tech Stack
 
