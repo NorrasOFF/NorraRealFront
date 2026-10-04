@@ -720,7 +720,9 @@ export const disableStationElement: MenuElement = {
       .filter(
         (unit) =>
           !unit.isUnderConstruction() &&
-          (unit.type() === UnitType.Factory || unit.type() === UnitType.Port || unit.type() === UnitType.City) &&
+          (unit.type() === UnitType.Factory ||
+            unit.type() === UnitType.Port ||
+            unit.type() === UnitType.City) &&
           params.game.manhattanDist(unit.tile(), params.tile) <=
             DISABLE_SELECTION_RADIUS,
       );
@@ -746,7 +748,9 @@ export const disableStationElement: MenuElement = {
       .filter(
         (unit) =>
           !unit.isUnderConstruction() &&
-          (unit.type() === UnitType.Factory || unit.type() === UnitType.Port || unit.type() === UnitType.City) &&
+          (unit.type() === UnitType.Factory ||
+            unit.type() === UnitType.Port ||
+            unit.type() === UnitType.City) &&
           params.game.manhattanDist(unit.tile(), params.tile) <=
             DISABLE_SELECTION_RADIUS,
       );
@@ -795,7 +799,11 @@ export const boatMenuElement: MenuElement = {
         icon: boatIcon,
         color: COLORS.boat,
         action: async (params: MenuElementParams) => {
-          params.playerActionHandler.handleBoatAttack(params.myPlayer, params.tile, false);
+          params.playerActionHandler.handleBoatAttack(
+            params.myPlayer,
+            params.tile,
+            false,
+          );
           params.closeMenu();
         },
       },
@@ -813,7 +821,11 @@ export const boatMenuElement: MenuElement = {
           },
         ],
         action: async (params: MenuElementParams) => {
-          params.playerActionHandler.handleBoatAttack(params.myPlayer, params.tile, true);
+          params.playerActionHandler.handleBoatAttack(
+            params.myPlayer,
+            params.tile,
+            true,
+          );
           params.closeMenu();
         },
       },
@@ -887,8 +899,9 @@ export const rootMenuElement: MenuElement = {
     const inExtensionWindow =
       params.playerActions.interaction?.allianceInfo?.inExtensionWindow;
 
-    // After game-over, nukes can target teammates (nukeSpawn allows it).
-    // Show the attack submenu so mobile users can access nukes in the aftergame.
+    // After game-over, nukes can target teammates in multiplayer (nukeSpawn allows it,
+    // but not in singleplayer). Show the attack submenu so mobile users can access
+    // nukes in the aftergame.
     const hasBuildableAttacks =
       params.playerActions.buildableUnits?.some(
         (bu) => BuildableAttacks.has(bu.type) && bu.canBuild !== false,
@@ -900,7 +913,12 @@ export const rootMenuElement: MenuElement = {
     const menuItems: (MenuElement | null)[] = [
       infoMenuElement,
       ...(isOwnTerritory
-        ? [deleteUnitElement, disableStationElement, allyRequestElement, buildMenuElement]
+        ? [
+            deleteUnitElement,
+            disableStationElement,
+            allyRequestElement,
+            buildMenuElement,
+          ]
         : [
             isAllied && !isDisconnected ? allyBreakElement : boatMenuElement,
             inExtensionWindow ? allyExtendElement : allyRequestElement,

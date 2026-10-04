@@ -95,6 +95,25 @@ export class DistanceBasedBezierCurve {
     return this.currentIndex;
   }
 
+  /** Control points and progress, for game snapshots. */
+  getState(): {
+    points: [Point, Point, Point, Point];
+    currentIndex: number;
+    accumulatedDistanceScaled: number;
+  } {
+    return {
+      points: [{ ...this.p0 }, { ...this.p1 }, { ...this.p2 }, { ...this.p3 }],
+      currentIndex: this.currentIndex,
+      accumulatedDistanceScaled: this.accumulatedDistanceScaled,
+    };
+  }
+
+  /** Restores progress onto a curve rebuilt from the same control points. */
+  setProgress(currentIndex: number, accumulatedDistanceScaled: number): void {
+    this.currentIndex = currentIndex;
+    this.accumulatedDistanceScaled = accumulatedDistanceScaled;
+  }
+
   /**
    * B2: capture the curve's progress so a resumed projectile continues where it
    * left off. The cached points are reconstructed from the control points and

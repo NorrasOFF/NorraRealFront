@@ -1,4 +1,5 @@
 import WebSocket from "ws";
+import { CloseCode, CloseReason } from "../core/CloseCodes";
 import { ClientID } from "../core/Schemas";
 import { Client } from "./Client";
 
@@ -60,7 +61,9 @@ export class Roster {
   // Drops the reconnect mapping, so the persistentID comes back through the
   // full join path and its seat counts as free. Admission is kept.
   forgetReconnect(client: Client): void {
-    this.reconnectable.delete(client.persistentID);
+    if (this.reconnectable.get(client.persistentID) === client.clientID) {
+      this.reconnectable.delete(client.persistentID);
+    }
   }
 
   // Bans the persistentID (no rejoin, no reconnect, no admission) whether or
@@ -90,16 +93,23 @@ export class Roster {
   }
 
   // Closes every socket still open.
-  closeAll(reason: string): void {
+  closeAll(reasonKey: CloseReason): void {
     this.sockets.forEach((ws) => {
       if (ws.readyState === WebSocket.OPEN) {
-        ws.close(1000, reason);
+        ws.close(CloseCode.Normal, reasonKey);
       }
     });
   }
 
   active(): readonly Client[] {
     return this.connected;
+  }
+
+  // Whether this client holds a connection right now. One dropped by
+  // markLeft, kick or pruneStale is gone from the connected list while its
+  // record — and its socket's listeners — can outlive it.
+  isConnected(client: Client): boolean {
+    return this.connected.includes(client);
   }
 
   // Connected clients who will actually play. Spectators are excluded

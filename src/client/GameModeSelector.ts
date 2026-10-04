@@ -35,12 +35,14 @@ import { JoinLobbyModal } from "./JoinLobbyModal";
 import { PublicLobbySocket } from "./LobbySocket";
 import { JoinLobbyEvent } from "./Main";
 import { SavesModal } from "./SavesModal";
+import { manualRetryAvailable, retryServerList } from "./ServerList";
 import { SinglePlayerModal } from "./SinglePlayerModal";
 import { UsernameInput } from "./UsernameInput";
 import {
   calculateServerTimeOffset,
   getSecondsUntilServerTimestamp,
   renderDuration,
+  showToast,
   translateText,
 } from "./Utils";
 
@@ -55,10 +57,38 @@ const CARD_BG = "bg-surface";
 export function shouldBlockMultiplayerAction(
   update: DesktopUpdateState | null,
   session: DesktopSessionState | null,
+  backendOutage = false,
 ): boolean {
   if (update !== null && !multiplayerAllowed(update)) return true;
   if (session !== null && !multiplayerAllowedForSession(session)) return true;
-  return false;
+  return !multiplayerAllowedForBackend(backendOutage);
+}
+
+export function multiplayerAllowedForBackend(backendOutage: boolean): boolean {
+  return !backendOutage;
+}
+
+export function shouldBlockSocketSourcedAction(
+  update: DesktopUpdateState | null,
+  session: DesktopSessionState | null,
+): boolean {
+  return shouldBlockMultiplayerAction(update, session, false);
+}
+
+export function reportMultiplayerRefusal(backendOutage: boolean): void {
+  (
+    document.querySelector("desktop-status-bar") as
+      | (HTMLElement & { wiggle?: () => void })
+      | null
+  )?.wiggle?.();
+  if (!isDesktopShell() && backendOutage) {
+    if (manualRetryAvailable()) {
+      retryServerList().catch((error: unknown) => {
+        console.warn("server list retry from a refused click failed", error);
+      });
+    }
+    showToast(translateText("common.backend_unreachable"), "red");
+  }
 }
 
 /**
@@ -89,6 +119,15 @@ export function shouldBlockDesktopJoin(
 ): boolean {
   if (!joinIsGateable(lobby)) return false;
   return shouldBlockMultiplayerAction(update, session);
+}
+
+export function shouldBlockJoin(
+  lobby: JoinLobbyEvent,
+  update: DesktopUpdateState | null,
+  session: DesktopSessionState | null,
+): boolean {
+  if (!joinIsGateable(lobby)) return false;
+  return shouldBlockSocketSourcedAction(update, session);
 }
 
 @customElement("game-mode-selector")

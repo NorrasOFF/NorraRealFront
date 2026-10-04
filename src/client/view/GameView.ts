@@ -4,6 +4,7 @@ import {
   GameUpdates,
   PlayerID,
   PlayerType,
+  Team,
   TerrainType,
   TerraNullius,
   Tick,
@@ -25,6 +26,7 @@ import {
 import { TerrainMapData } from "../../core/game/TerrainMapLoader";
 import { TerraNulliusImpl } from "../../core/game/TerraNulliusImpl";
 import { UnitGrid, UnitPredicate } from "../../core/game/UnitGrid";
+import { UserSettings } from "../../core/game/UserSettings";
 import { ClientID, GameID, Player, PlayerCosmetics } from "../../core/Schemas";
 import { formatPlayerDisplayName } from "../../core/Util";
 import { WorkerClient } from "../../core/worker/WorkerClient";
@@ -39,6 +41,8 @@ import { SpiralTrails } from "../render/frame/SpiralTrails";
 import { TrailManager } from "../render/frame/TrailManager";
 import type { FrameData, NameEntry } from "../render/types";
 import { STRUCTURE_TYPES } from "../render/types";
+import { resolveTeamClanTag } from "../Utils";
+import type { CosmeticVisibility } from "./CosmeticVisibility";
 import { PlayerView } from "./PlayerView";
 import { UnitView } from "./UnitView";
 
@@ -82,6 +86,7 @@ export class GameView implements GameMap {
   private _unitStates = new Map<number, import("../render/types").UnitState>();
   /** smallID → team, for the renderer's relation matrix (team games). */
   private _teams = new Map<number, string>();
+  private _teamClanTags: Map<Team, string | null> | null = null;
   private updatedTiles: TileRef[] = [];
   private updatedTerrainTiles: TileRef[] = [];
   private nukeImpactTiles: TileRef[] = [];
@@ -145,6 +150,10 @@ export class GameView implements GameMap {
   private toDelete = new Set<number>();
 
   private _cosmetics: Map<string, PlayerCosmetics> = new Map();
+  private _cosmeticVisibility: CosmeticVisibility =
+    new UserSettings().graphicsOverrides().cosmetics ?? {};
+  private _markedPlayers: ReadonlySet<number> | null = null;
+  private _ownSpawnRing = false;
 
   private _map: GameMap;
 
@@ -404,6 +413,7 @@ export class GameView implements GameMap {
         this._namesDirty = true;
         this._relationsDirty = true;
         this._clustersDirty = true;
+        this._teamClanTags = null;
       }
     });
 
@@ -1104,6 +1114,59 @@ export class GameView implements GameMap {
     return Array.from(this._players.values());
   }
 
+  teamClanTag(team: Team | null): string | null {
+    if (team === null) return null;
+    if (this._teamClanTags === null) {
+      const teams = new Map<Team, PlayerView[]>();
+      for (const player of this._players.values()) {
+        const playerTeam = player.team();
+        if (playerTeam === null) continue;
+        const members = teams.get(playerTeam) ?? [];
+        members.push(player);
+        teams.set(playerTeam, members);
+      }
+      this._teamClanTags = new Map(
+        [...teams].map(([playerTeam, members]) => [
+          playerTeam,
+          resolveTeamClanTag(members),
+        ]),
+      );
+    }
+    return this._teamClanTags.get(team) ?? null;
+  }
+
+  invalidateTeamClanTags(): void {
+    this._teamClanTags = null;
+  }
+
+  cosmeticVisibility(): CosmeticVisibility {
+    return this._cosmeticVisibility;
+  }
+
+  refreshPlayerCosmetics(): void {
+    this._cosmeticVisibility =
+      new UserSettings().graphicsOverrides().cosmetics ?? {};
+    for (const player of this._players.values()) {
+      player.refreshCosmetics();
+    }
+  }
+
+  setMarkedPlayers(ids: ReadonlySet<number> | null): void {
+    this._markedPlayers = ids;
+  }
+
+  markedPlayers(): ReadonlySet<number> | null {
+    return this._markedPlayers;
+  }
+
+  setOwnSpawnRing(show: boolean): void {
+    this._ownSpawnRing = show;
+  }
+
+  ownSpawnRing(): boolean {
+    return this._ownSpawnRing;
+  }
+
   /**
    * Recompute every player's theme-derived colors. Call when the active theme
    * changes mid-game (e.g. toggling colorblind mode) so existing territories
@@ -1344,6 +1407,9 @@ export class GameView implements GameMap {
   }
   neighbors4(ref: TileRef, out: TileRef[]): number {
     return this._map.neighbors4(ref, out);
+  }
+  neighbors8(ref: TileRef, out: TileRef[]): number {
+    return this._map.neighbors8(ref, out);
   }
   forEachNeighborWithDiag(
     ref: TileRef,

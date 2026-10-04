@@ -21,6 +21,7 @@ export interface IntentOutcome {
 export interface IntentGameState {
   isPublic: boolean;
   isListed: boolean;
+  isQueued: boolean;
   hasStarted: boolean;
   // A save restored into a lobby that the host has not started yet. It reports
   // hasStarted (the saved turns are a running game) but the host must still be
@@ -82,6 +83,15 @@ export function authorizeIntent(
       if (intent.config.gameType === GameType.Public) {
         return { status: 400, error: "cannot change a game to public" };
       }
+      // Players joined a listed lobby for the settings it was advertised
+      // with, so the host can't change them afterwards. The admin bot still
+      // manages the lobbies it lists.
+      if (game.isListed && !actor.isAdminBot) {
+        return {
+          status: 409,
+          error: "cannot change the config of a publicly listed lobby",
+        };
+      }
       // Host cheats give the host an asymmetric advantage over players
       // recruited from the lobby browser. Listing is likewise rejected
       // while cheats are on (Worker's listing endpoint), so a listed
@@ -114,6 +124,10 @@ export function authorizeIntent(
       // start; every other already-started game refuses the intent.
       if (game.hasStarted && !game.isResumeLobby) {
         return { status: 409, error: "game already started" };
+      }
+      // The public queue's countdown starts a queued lobby.
+      if (game.isQueued && !actor.isAdminBot) {
+        return { status: 409, error: "cannot start a queued lobby" };
       }
       return null;
 

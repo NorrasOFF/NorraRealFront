@@ -4,7 +4,6 @@ import { replacer } from "../core/Util";
 export interface LocalStatsData {
   [key: GameID]: {
     lobby: Partial<GameConfig>;
-    // Only once the game is over
     gameRecord?: PartialGameRecord;
   };
 }
@@ -16,20 +15,15 @@ function getStats(): LocalStatsData {
   return statsStr ? JSON.parse(statsStr) : {};
 }
 
-function save(stats: LocalStatsData) {
-  // To execute asynchronously
+function save(stats: LocalStatsData): void {
   setTimeout(
     () => localStorage.setItem("game-records", JSON.stringify(stats, replacer)),
     0,
   );
 }
 
-// The user can quit the game anytime so better save the lobby as soon as the
-// game starts.
-export function startGame(id: GameID, lobby: Partial<GameConfig>) {
-  if (localStorage === undefined) {
-    return;
-  }
+export function startGame(id: GameID, lobby: Partial<GameConfig>): void {
+  if (typeof localStorage === "undefined") return;
 
   _startTime = Date.now();
   const stats = getStats();
@@ -37,20 +31,20 @@ export function startGame(id: GameID, lobby: Partial<GameConfig>) {
   save(stats);
 }
 
-export function startTime() {
+export function startTime(): number {
   return _startTime;
 }
 
-export function endGame(gameRecord: PartialGameRecord) {
-  if (localStorage === undefined) {
-    return;
-  }
+export function endGame(gameRecord: PartialGameRecord): void {
+  if (typeof localStorage === "undefined") return;
 
   const stats = getStats();
   const gameStat = stats[gameRecord.info.gameID];
-
   if (!gameStat) {
-    console.log("LocalPersistantStats: game not found");
+    console.warn(
+      "Local game record not found for game:",
+      gameRecord.info.gameID,
+    );
     return;
   }
 

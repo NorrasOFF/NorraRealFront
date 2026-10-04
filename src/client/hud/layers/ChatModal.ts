@@ -33,6 +33,7 @@ export class ChatModal extends LitElement {
   private players: PlayerView[] = [];
 
   private playerSearchQuery: string = "";
+  private sortByTerritory = false;
   private previewText: string | null = null;
   private requiresPlayerSelection: boolean = false;
   private selectedCategory: string | null = null;
@@ -126,6 +127,15 @@ export class ChatModal extends LitElement {
                     ${translateText("chat.player")}
                   </div>
 
+                  <label class="flex items-center gap-2 text-sm cursor-pointer">
+                    <input
+                      type="checkbox"
+                      .checked=${this.sortByTerritory}
+                      @change=${this.onPlayerSortChange}
+                    />
+                    ${translateText("chat.sort_by_territory")}
+                  </label>
+
                   <input
                     class="player-search-input"
                     type="text"
@@ -188,6 +198,9 @@ export class ChatModal extends LitElement {
   private selectCategory(categoryId: string) {
     this.selectedCategory = categoryId;
     this.selectedPhraseText = null;
+    this.selectedPhraseTemplate = null;
+    this.selectedQuickChatKey = null;
+    this.selectedPlayer = null;
     this.previewText = null;
     this.requiresPlayerSelection = false;
     this.requestUpdate();
@@ -205,6 +218,7 @@ export class ChatModal extends LitElement {
       `chat.${this.selectedCategory}.${phrase.key}`,
     );
     this.previewText = `chat.${this.selectedCategory}.${phrase.key}`;
+    this.selectedPlayer = null;
     this.requiresPlayerSelection = phrase.requiresPlayer;
     this.requestUpdate();
   }
@@ -254,9 +268,16 @@ export class ChatModal extends LitElement {
     this.requestUpdate();
   }
 
+  private onPlayerSortChange(e: Event) {
+    this.sortByTerritory = (e.target as HTMLInputElement).checked;
+    this.requestUpdate();
+  }
+
   private getSortedFilteredPlayers(): PlayerView[] {
     const sorted = [...this.players].sort((a, b) =>
-      a.displayName().localeCompare(b.displayName()),
+      this.sortByTerritory
+        ? b.numTilesOwned() - a.numTilesOwned()
+        : a.displayName().localeCompare(b.displayName()),
     );
     const filtered = sorted.filter((p) =>
       p.displayName().toLowerCase().includes(this.playerSearchQuery),
@@ -289,6 +310,9 @@ export class ChatModal extends LitElement {
   public close() {
     this.selectedCategory = null;
     this.selectedPhraseText = null;
+    this.selectedPhraseTemplate = null;
+    this.selectedQuickChatKey = null;
+    this.selectedPlayer = null;
     this.previewText = null;
     this.requiresPlayerSelection = false;
     this.modalEl?.close();

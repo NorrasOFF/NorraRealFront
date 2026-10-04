@@ -95,7 +95,7 @@ export class EventsDisplay extends LitElement implements Controller {
   }
 
   private renderButton(options: {
-    content: any; // Can be string, TemplateResult, or other renderable content
+    content: unknown;
     onClick?: () => void;
     className?: string;
     disabled?: boolean;
@@ -110,11 +110,9 @@ export class EventsDisplay extends LitElement implements Controller {
       translate = true,
       hidden = false,
     } = options;
-
     if (hidden) {
       return html``;
     }
-
     return html`
       <button
         class="${className}"
@@ -168,7 +166,7 @@ export class EventsDisplay extends LitElement implements Controller {
     }
     this.addEvent({
       description: translateText("events_display.alliance_request_sent", {
-        name: e.recipient.name(),
+        name: e.recipient.displayName(),
       }),
       type: MessageType.ALLIANCE_REQUEST,
       createdAt: this.game.ticks(),
@@ -260,9 +258,18 @@ export class EventsDisplay extends LitElement implements Controller {
   private resolveParams(
     event: DisplayMessageUpdate,
   ): Record<string, string | number> {
-    const params = event.params;
-    if (params?.name === undefined || event.focusPlayerID === undefined) {
-      return params ?? {};
+    let params = event.params ?? {};
+    if (
+      (event.message === "events_display.missile_intercepted" ||
+        event.message === "events_display.unit_destroyed") &&
+      typeof params.unit === "string" &&
+      params.unit.startsWith("unit_type.")
+    ) {
+      params = { ...params, unit: translateText(params.unit) };
+    }
+
+    if (params.name === undefined || event.focusPlayerID === undefined) {
+      return params;
     }
     const subject = this.game.playerBySmallID(event.focusPlayerID);
     if (!subject.isPlayer()) {
@@ -376,6 +383,11 @@ export class EventsDisplay extends LitElement implements Controller {
       createdAt: this.game.ticks(),
       focusID: update.request.recipientID,
     });
+    this.eventBus.emit(
+      new PlaySoundEffectEvent(
+        update.accepted ? "alliance-accepted" : "alliance-declined",
+      ),
+    );
   }
 
   onBrokeAllianceEvent(update: BrokeAllianceUpdate) {
@@ -459,7 +471,9 @@ export class EventsDisplay extends LitElement implements Controller {
 
     if (update.event !== "stop") return;
 
-    const embargoed = this.game.playerBySmallID(update.embargoedID) as PlayerView;
+    const embargoed = this.game.playerBySmallID(
+      update.embargoedID,
+    ) as PlayerView;
     if (embargoed !== myPlayer) return;
 
     const player = this.game.playerBySmallID(update.playerID) as PlayerView;

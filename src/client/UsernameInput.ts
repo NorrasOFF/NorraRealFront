@@ -15,16 +15,27 @@ import { getUserMe, invalidateUserMe } from "./Api";
 import { checkClanTagOwnership } from "./ClanApi";
 import { verifiedBadge } from "./components/ui/VerifiedBadge";
 import { crazyGamesSDK } from "./CrazyGamesSDK";
-import { showInGameConfirm } from "./InGameModal";
+import { showInGameAlert, showInGameConfirm } from "./InGameModal";
 import {
+  accountNameHeld,
   accountVerifiedName,
   clampUsername,
   genAnonUsername,
+  LAPSE_NOTICE_KEY,
+  lapseNoticeMarker,
   looksGenerated,
   resolvePlayerName,
+  verifiedClaimGrace,
   verifiedNameOptIn,
+  type ClaimGrace,
   type ResolvedPlayerName,
 } from "./PlayerName";
+import {
+  parseSteamGrantStore,
+  STEAM_GRANT_NOTICE_KEY,
+  steamGrantEnded,
+  steamGrantEndedShown,
+} from "./SteamGrantNotices";
 import { steamSDK } from "./SteamSDK";
 
 interface LangSelectorLike {
@@ -43,6 +54,14 @@ const usernameIsGeneratedKey: string = "usernameIsGenerated";
 // once, the first time this code runs here, and never revisited. See
 // resolveVerifiedDefaultCohort.
 const verifiedDefaultAllowedKey: string = "verifiedNameDefaultAllowed";
+// The reserved name we have already warned this device about; see
+// announceLapse. Holds a name, not a boolean, so a later lapse still speaks up.
+// Defined in PlayerName so boot sequencing can read the same key — it has to
+// ask whether a notice is owed before this component writes it.
+const lapseNoticeKey: string = LAPSE_NOTICE_KEY;
+// setTimeout stores its delay in a 32-bit signed int. Anything larger does not
+// saturate — Node warns and fires after 1ms.
+const MAX_TIMEOUT_MS = 2_147_483_647;
 
 // Announced by the clan modal, which invalidates /users/@me but dispatches no
 // fresh userMeResponse.
@@ -84,6 +103,18 @@ function resolveVerifiedDefaultCohort(onCrazyGames: boolean): void {
   );
 }
 
+// Same format the account modal's grace warning uses, so the two places that
+// name this deadline read alike. Local rather than shared: every component in
+// this codebase that shows a date formats its own (FriendsList, TribesPanel,
+// SubscriptionPanel, UsernamePanel).
+function formatClaimDate(date: Date): string {
+  return date.toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
+}
+
 // Shared by the input and the verified chip, which swap places: any drift in
 // box or text metrics shows up as the name jumping on toggle.
 const NAME_BOX =
@@ -113,6 +144,14 @@ export class UsernameInput extends LitElement {
   // player chose. Persisted, because one localStorage string cannot tell the
   // two apart and the reseed rule turns entirely on the difference.
   private usernameIsGenerated: boolean = false;
+  // The bare name still reserved for this player and its deadline, while a
+  // lapsed subscription's grace clock runs. Null whenever nothing is at stake.
+  @state() private claimGrace: ClaimGrace | null = null;
+  // Fires once, at the reservation's deadline, so a client left open across it
+  // drops the notice instead of counting down to a date already past. The
+  // grace value itself only changes on account events, which a sitting client
+  // never receives.
+  private claimGraceTimer: ReturnType<typeof setTimeout> | null = null;
 
   // Clans aren't supported on CrazyGames — hide the tag input and never submit one.
   private readonly onCrazyGames = crazyGamesSDK.isOnCrazyGames();
@@ -302,8 +341,129 @@ export class UsernameInput extends LitElement {
         localStorage.getItem(verifiedDefaultAllowedKey) === "true",
       ) &&
       this.verifiedName() !== null;
+    this.refreshClaimGrace();
     this.requestUpdate();
     this.validateAndStore();
+  }
+
+  // Re-derive the reservation, re-arm the clock, and speak up if the phase
+  // changed. Every path that can move this state goes through here — an
+  // account event, the expiry timer, and reconnecting — so none of them can
+  // do two of the three and silently skip the other. That is exactly how the
+  // banner once escalated with no alert behind it, and how reconnecting past
+  // a deadline left the stale wording in place.
+  private refreshClaimGrace() {
+    this.claimGrace = verifiedClaimGrace(this.userMe);
+    this.scheduleClaimGraceExpiry();
+    this.announceLapse();
+  }
+
+  // Escalate the notice the moment the reservation lapses.
+  //
+  // verifiedClaimGrace is evaluated only when account state changes, and a
+  // client sitting on the main menu receives none — so without this the notice
+  // would keep saying "reserved until {date}" after that date. Re-deriving from
+  // the same userMe flips it to the at-risk wording; nothing arms afterwards,
+  // because at-risk has no further deadline to wait for.
+  //
+  // The delay must be clamped by us. A 30-day reservation exceeds setTimeout's
+  // 32-bit millisecond field, and Node does not saturate — it warns and fires
+  // after 1ms, which would re-arm in a tight loop. Capping below the limit
+  // makes an over-long wait fire early, re-derive to the same non-null value
+  // and re-arm for the remainder: two timers across a 30-day grace, not
+  // millions.
+  private scheduleClaimGraceExpiry() {
+    if (this.claimGraceTimer !== null) {
+      clearTimeout(this.claimGraceTimer);
+      this.claimGraceTimer = null;
+    }
+    const grace = this.claimGrace;
+    if (grace === null) return;
+    const ms = grace.expiresAt.getTime() - Date.now();
+    if (ms <= 0) return;
+    const delay = Math.min(ms, MAX_TIMEOUT_MS);
+    this.claimGraceTimer = setTimeout(() => {
+      this.claimGraceTimer = null;
+      this.refreshClaimGrace();
+    }, delay);
+  }
+
+  // Say it once, the first time we see a reservation with a clock running.
+  //
+  // Keyed on the name rather than a bare "already announced" flag, and cleared
+  // whenever the player is eligible again, so a resubscribe-then-lapse cycle
+  // announces the second lapse too. A flag alone would announce once per
+  // install and then stay quiet through every later lapse.
+  //
+  // Deliberately scoped to the case where something is actually at stake. A
+  // logout or a TEMPORARY#### rename also turns the toggle off, but neither
+  // has a deadline attached and neither costs the player a name, so neither
+  // interrupts them.
+  private announceLapse() {
+    if (this.onCrazyGames) return;
+    if (this.verifiedName() !== null) {
+      localStorage.removeItem(lapseNoticeKey);
+      return;
+    }
+    const grace = this.claimGrace;
+    if (grace === null) return;
+    // Keyed on the phase as well as the name; lapseNoticeMarker owns that rule
+    // now, because boot sequencing has to reach the same verdict from the same
+    // inputs (see lapseNoticeDue) and two copies of the format would let one
+    // side think a notice is pending while the other thinks it is spent.
+    const marker = lapseNoticeMarker(grace);
+    if (localStorage.getItem(lapseNoticeKey) === marker) return;
+    // A former Steam grant holder never subscribed, so "your subscription
+    // ended... resubscribe" is the sentence that convinces them the game hid
+    // one. This notice is the first thing they see after the month ends, so
+    // it carries the sign-off and marks it shown below, or the boot sequencer
+    // would say it all again next launch.
+    const afterGrant =
+      steamGrantEnded(
+        parseSteamGrantStore(localStorage.getItem(STEAM_GRANT_NOTICE_KEY)),
+        this.userMe,
+        Date.now(),
+      ) !== null;
+    const key = afterGrant
+      ? grace.atRisk
+        ? "username.lapse_notice_after_grant_at_risk"
+        : "username.lapse_notice_after_grant"
+      : grace.atRisk
+        ? "username.lapse_notice_at_risk"
+        : "username.lapse_notice";
+    const message = translateText(key, {
+      name: grace.name,
+      date: formatClaimDate(grace.expiresAt),
+    });
+    // translateText echoes the key back until <lang-selector> has fetched its
+    // translation files, and auth can resolve first. Announcing here would
+    // show the player the literal string "username.lapse_notice" AND burn the
+    // marker, so the real notice would never fire — for a one-shot warning
+    // that is the only channel a Steam-only account has.
+    //
+    // Bailing costs the alert for this session, not for good: the marker is
+    // left unwritten, so it fires normally on the next launch. Nothing
+    // re-enters this when the language files land — applyVerifiedPreference
+    // only re-runs on account events, and LangSelector's requestUpdate
+    // re-renders the standing banner without coming back through here. Only
+    // reachable on a non-English locale, since `en` is a static import.
+    if (message === key) return;
+    // Recorded before the dialog, not after: the alert resolves only when the
+    // player dismisses it, and an unawaited promise that never settles would
+    // let a second announcement through.
+    localStorage.setItem(lapseNoticeKey, marker);
+    if (afterGrant && this.userMe !== null && this.userMe !== false) {
+      localStorage.setItem(
+        STEAM_GRANT_NOTICE_KEY,
+        JSON.stringify(
+          steamGrantEndedShown(
+            parseSteamGrantStore(localStorage.getItem(STEAM_GRANT_NOTICE_KEY)),
+            this.userMe.player.publicId,
+          ),
+        ),
+      );
+    }
+    void showInGameAlert(message);
   }
 
   private async handleVerifiedToggle() {
@@ -318,6 +478,23 @@ export class UsernameInput extends LitElement {
     // Ineligible — the toggle can't turn on.
     const player = this.userMe === false ? undefined : this.userMe?.player;
     const status = player?.usernameStatus;
+    if (accountNameHeld(this.userMe)) {
+      // Subscribed, but someone else holds the bare name: they display as
+      // base.disc and cannot play with the check until they rename. Say so,
+      // then offer the form (spec, 10 Sept 2026).
+      const rename = await showInGameConfirm(
+        translateText("username.verified_held_body", {
+          name: player?.usernameBase ?? "",
+        }),
+        {
+          heading: translateText("username.verified_heading"),
+          variant: "warning",
+          confirmText: translateText("username.verified_held_confirm"),
+        },
+      );
+      if (rename) window.location.hash = "modal=change-username";
+      return;
+    }
     if (status === "premium" || status === "indefinite") {
       // Subscribed but no usable name yet (never set, or TEMPORARY####):
       // send them straight to the username form.
@@ -442,6 +619,18 @@ export class UsernameInput extends LitElement {
     for (const type of CLAN_MEMBERSHIP_EVENTS) {
       document.addEventListener(type, this.handleClanMembershipChange);
     }
+    // Refresh unconditionally, before the fetch below can short-circuit.
+    // disconnectedCallback clears the timer but leaves userMe set, so a
+    // detach/reattach of the same instance takes the `userMe !== null` early
+    // return and never reaches applyVerifiedPreference. Re-arming alone was
+    // not enough: if the deadline passed while detached, the stale grace made
+    // the scheduler bail on `ms <= 0` without ever flipping to the at-risk
+    // wording or announcing it. Re-deriving first is what closes that.
+    //
+    // This path looks unreachable today — <play-page> is hidden by class
+    // toggling rather than removed — so treat it as keeping the comment
+    // honest rather than fixing a live bug.
+    this.refreshClaimGrace();
     // userMeResponse is dispatched once and can fire before this connects.
     // Cached, so this re-reads that response rather than refetching.
     void getUserMe().then((me) => {
@@ -536,6 +725,10 @@ export class UsernameInput extends LitElement {
       document.removeEventListener(type, this.handleClanMembershipChange);
     }
     this.clanMenuOpen = false;
+    if (this.claimGraceTimer !== null) {
+      clearTimeout(this.claimGraceTimer);
+      this.claimGraceTimer = null;
+    }
     super.disconnectedCallback();
   }
 
@@ -604,17 +797,52 @@ export class UsernameInput extends LitElement {
       <div class="flex items-center w-full h-full gap-1.5 sm:gap-2">
         ${this.renderClanControl()} ${this.renderNameControl()}
       </div>
-      ${this.validationError
+      <!-- One positioned slot, stacked. An error and the reservation reminder
+           are not alternatives: the error is transient and self-inflicted
+           (mid-edit on a free-form name), while the reminder is a 30-day
+           countdown the player cannot recover once it lapses. Hiding the
+           second behind the first put the time-critical one last. -->
+      ${this.validationError || this.clanTagOwnershipError || this.claimGrace
         ? html`<div
-            id="username-validation-error"
-            class="absolute top-full left-0 z-50 w-full mt-1 px-3 py-2 text-sm font-medium border border-red-500/50 rounded-lg bg-red-900/90 text-red-200 backdrop-blur-md shadow-lg"
+            class="absolute top-full left-0 z-50 w-full mt-1 flex flex-col gap-1"
           >
-            ${this.validationError}
+            ${this.validationError
+              ? html`<div
+                  id="username-validation-error"
+                  class="w-full px-3 py-2 text-sm font-medium border border-red-500/50 rounded-lg bg-red-900/90 text-red-200 backdrop-blur-md shadow-lg"
+                >
+                  ${this.validationError}
+                </div>`
+              : this.clanTagOwnershipError
+                ? this.renderClanTagOwnershipError()
+                : null}
+            ${this.renderClaimGrace()}
           </div>`
-        : this.clanTagOwnershipError
-          ? this.renderClanTagOwnershipError()
-          : null}
+        : null}
     `;
+  }
+
+  // A standing reminder for as long as the reservation lasts. The one-time
+  // notice announces the change; this is what a player who dismissed it — or
+  // who was not at the keyboard when it fired — still sees, every launch,
+  // until either they resubscribe or the name is gone.
+  //
+  // Amber rather than red: nothing is broken and play is not blocked. It
+  // stacks under any validation error rather than replacing it — a player
+  // mid-edit on an invalid name is exactly who still needs to know their
+  // reserved name is expiring. Positioning lives on the shared wrapper.
+  private renderClaimGrace() {
+    const grace = this.claimGrace;
+    if (grace === null) return null;
+    return html`<div
+      id="username-claim-grace"
+      class="w-full px-3 py-2 text-sm font-medium border border-amber-500/40 rounded-lg bg-amber-950/90 text-amber-200 backdrop-blur-md shadow-lg"
+    >
+      ${translateText(
+        grace.atRisk ? "username.claim_at_risk" : "username.claim_reserved",
+        { name: grace.name, date: formatClaimDate(grace.expiresAt) },
+      )}
+    </div>`;
   }
 
   // Members pick from their own clans rather than guessing a tag and waiting
@@ -857,13 +1085,21 @@ export class UsernameInput extends LitElement {
 
   private renderUseVerifiedButton() {
     const eligible = this.verifiedName() !== null;
+    const held = accountNameHeld(this.userMe);
+    const hint = held
+      ? translateText("username.verified_held_hint", {
+          name:
+            (this.userMe === false ? undefined : this.userMe?.player)
+              ?.usernameBase ?? "",
+        })
+      : translateText("username.verified_use_hint");
     return html`
       <button
         type="button"
         class="group flex h-full w-full items-center justify-center gap-1.5 rounded-lg border px-2 transition-colors cursor-pointer select-none ${eligible
           ? "border-malibu-blue/50 bg-malibu-blue/10 hover:border-malibu-blue/80 hover:bg-malibu-blue/20"
           : "border-white/10 bg-black/20 hover:border-white/25 hover:bg-black/35"}"
-        title=${translateText("username.verified_use_hint")}
+        title=${hint}
         aria-pressed="false"
         @click=${this.handleVerifiedToggle}
       >
@@ -889,7 +1125,7 @@ export class UsernameInput extends LitElement {
       tag: this.clanTag,
     });
     const className =
-      "absolute top-full left-0 z-50 mt-1 px-3 py-2 text-sm font-medium border border-red-500/50 rounded-lg bg-red-900/90 text-red-200 backdrop-blur-md shadow-lg lg:whitespace-nowrap";
+      "self-start px-3 py-2 text-sm font-medium border border-red-500/50 rounded-lg bg-red-900/90 text-red-200 backdrop-blur-md shadow-lg lg:whitespace-nowrap";
 
     if (this.clanTagOwnershipError !== "username.tag_not_member") {
       return html`<div id="clan-tag-validation-error" class=${className}>

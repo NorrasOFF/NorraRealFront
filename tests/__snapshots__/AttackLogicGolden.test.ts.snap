@@ -1435,6 +1435,86 @@ exports[`attackLogic golden values > extremes: territory and troop counts 1`] = 
 }
 `;
 
+exports[`attackLogic golden values > player vs player: large attacker overwhelming-push speed floor 1`] = `
+{
+  "attackerTiles=20000 defenderTroops/attackTroops=0.5": {
+    "attackerLoss": 23.1422,
+    "defenderLoss": 5,
+    "tickFraction": 0.0212185,
+  },
+  "attackerTiles=20000 defenderTroops/attackTroops=0.8": {
+    "attackerLoss": 30.8562,
+    "defenderLoss": 5,
+    "tickFraction": 0.0212185,
+  },
+  "attackerTiles=20000 defenderTroops/attackTroops=0.9": {
+    "attackerLoss": 34.7133,
+    "defenderLoss": 5,
+    "tickFraction": 0.0212185,
+  },
+  "attackerTiles=20000 defenderTroops/attackTroops=1": {
+    "attackerLoss": 38.5703,
+    "defenderLoss": 5,
+    "tickFraction": 0.0212185,
+  },
+  "attackerTiles=20000 defenderTroops/attackTroops=1.5": {
+    "attackerLoss": 57.8554,
+    "defenderLoss": 5,
+    "tickFraction": 0.0318277,
+  },
+  "attackerTiles=2000000 defenderTroops/attackTroops=0.5": {
+    "attackerLoss": 14.3426,
+    "defenderLoss": 5,
+    "tickFraction": 0.0128103,
+  },
+  "attackerTiles=2000000 defenderTroops/attackTroops=0.8": {
+    "attackerLoss": 19.1234,
+    "defenderLoss": 5,
+    "tickFraction": 0.0128103,
+  },
+  "attackerTiles=2000000 defenderTroops/attackTroops=0.9": {
+    "attackerLoss": 21.5139,
+    "defenderLoss": 5,
+    "tickFraction": 0.0128103,
+  },
+  "attackerTiles=2000000 defenderTroops/attackTroops=1": {
+    "attackerLoss": 23.9043,
+    "defenderLoss": 5,
+    "tickFraction": 0.0128103,
+  },
+  "attackerTiles=2000000 defenderTroops/attackTroops=1.5": {
+    "attackerLoss": 35.8565,
+    "defenderLoss": 5,
+    "tickFraction": 0.0192154,
+  },
+  "attackerTiles=300000 defenderTroops/attackTroops=0.5": {
+    "attackerLoss": 18.7091,
+    "defenderLoss": 5,
+    "tickFraction": 0.0169826,
+  },
+  "attackerTiles=300000 defenderTroops/attackTroops=0.8": {
+    "attackerLoss": 24.9454,
+    "defenderLoss": 5,
+    "tickFraction": 0.0169826,
+  },
+  "attackerTiles=300000 defenderTroops/attackTroops=0.9": {
+    "attackerLoss": 28.0636,
+    "defenderLoss": 5,
+    "tickFraction": 0.0169826,
+  },
+  "attackerTiles=300000 defenderTroops/attackTroops=1": {
+    "attackerLoss": 31.1818,
+    "defenderLoss": 5,
+    "tickFraction": 0.0169826,
+  },
+  "attackerTiles=300000 defenderTroops/attackTroops=1.5": {
+    "attackerLoss": 46.7727,
+    "defenderLoss": 5,
+    "tickFraction": 0.0254739,
+  },
+}
+`;
+
 exports[`attackLogic golden values > player vs player: large-territory curves 1`] = `
 {
   "attackerTiles=1000": {

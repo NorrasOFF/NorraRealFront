@@ -52,7 +52,7 @@ export function mockLogger(): any {
 
 export interface MockWs {
   on: (event: string, handler: (...args: any[]) => void) => void;
-  removeAllListeners: (event?: string) => void;
+  removeAllListeners: ReturnType<typeof vi.fn>;
   send: ReturnType<typeof vi.fn>;
   close: ReturnType<typeof vi.fn>;
   readyState: number;
@@ -79,10 +79,10 @@ export function makeMockWs(): MockWs {
       list.push(handler);
       listeners.set(event, list);
     },
-    removeAllListeners: (event) => {
+    removeAllListeners: vi.fn((event) => {
       if (event === undefined) listeners.clear();
       else listeners.delete(event);
-    },
+    }),
     send: vi.fn(),
     close: vi.fn(() => {
       ws.readyState = CLOSED;
@@ -115,6 +115,7 @@ export interface ClientOpts {
   friends?: string[];
   spectator?: boolean;
   trusted?: boolean;
+  platform?: Client["platform"];
 }
 
 let nextClient = 1;
@@ -141,6 +142,7 @@ export function makeClient(opts: ClientOpts = {}): Client {
     opts.friends ?? [],
     opts.spectator ?? false,
     opts.trusted ?? false,
+    opts.platform,
   );
 }
 

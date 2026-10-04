@@ -12,10 +12,6 @@ import {
 } from "../../InputHandler";
 import { SaveCheckpointEvent } from "../../SaveCheckpointEvent";
 import { translateText } from "../../Utils";
-import {
-  SetBackgroundMusicVolumeEvent,
-  SetSoundEffectsVolumeEvent,
-} from "../../sound/Sounds";
 import { ShowGraphicsSettingsModalEvent } from "./GraphicsSettingsModal";
 const cursorPriceIcon = assetUrl("images/CursorPriceIconWhite.svg");
 const emojiIcon = assetUrl("images/EmojiIconWhite.svg");
@@ -101,6 +97,10 @@ export class SettingsModal extends LitElement implements Controller {
   public openModal() {
     this.isVisible = true;
     this.requestUpdate();
+  }
+
+  public get open(): boolean {
+    return this.isVisible;
   }
 
   public closeModal({ keepPause = false }: { keepPause?: boolean } = {}) {
@@ -209,14 +209,12 @@ export class SettingsModal extends LitElement implements Controller {
   private onVolumeChange(event: Event) {
     const volume = parseFloat((event.target as HTMLInputElement).value) / 100;
     this.userSettings.setBackgroundMusicVolume(volume);
-    this.eventBus.emit(new SetBackgroundMusicVolumeEvent(volume));
     this.requestUpdate();
   }
 
   private onSoundEffectsVolumeChange(event: Event) {
     const volume = parseFloat((event.target as HTMLInputElement).value) / 100;
     this.userSettings.setSoundEffectsVolume(volume);
-    this.eventBus.emit(new SetSoundEffectsVolumeEvent(volume));
     this.requestUpdate();
   }
 

@@ -1,16 +1,29 @@
 import { AllPlayersStats, ClientID } from "../Schemas";
 import {
+  ALLIANCE_INDEX_BROKEN_BY_OTHER,
+  ALLIANCE_INDEX_EXPIRED,
+  ALLIANCE_INDEX_FORMED,
+  ALLIANCE_INDEX_HELD_TO_END,
+  ALLIANCE_INDEX_LONGEST_HELD,
+  ALLIANCE_INDEX_PEAK_CONCURRENT,
   ATTACK_INDEX_CANCEL,
+  ATTACK_INDEX_MAX_RECV,
   ATTACK_INDEX_RECV,
   ATTACK_INDEX_SENT,
   BOAT_INDEX_ARRIVE,
   BOAT_INDEX_CAPTURE,
   BOAT_INDEX_DESTROY,
+  BOAT_INDEX_LOST,
   BOAT_INDEX_SENT,
   BoatUnit,
+  BoatUnitType,
   BOMB_INDEX_INTERCEPT,
   BOMB_INDEX_LAND,
   BOMB_INDEX_LAUNCH,
+  DONATION_BROKE_GOLD_THRESHOLD,
+  DONATION_INDEX_GOLD_RECV,
+  DONATION_INDEX_GOLD_RECV_BROKE,
+  GOLD_INDEX_DONATE_RECV,
   GOLD_INDEX_STEAL,
   GOLD_INDEX_TRADE,
   GOLD_INDEX_TRAIN_OTHER,
@@ -28,10 +41,15 @@ import {
   PLAYER_INDEX_HUMAN,
   PLAYER_INDEX_NATION,
   PlayerStats,
+  TILE_INDEX_DRAWDOWN_PEAK,
+  TILE_INDEX_DRAWDOWN_TROUGH,
+  TILE_INDEX_PEAK,
+  unitTypeToBoatUnit,
   unitTypeToBombUnit,
   unitTypeToOtherUnit,
 } from "../StatsSchemas";
-import { Player, PlayerType, TerraNullius, UnitType } from "./Game";
+import { Player, PlayerType, TerraNullius } from "./Game";
+import { TileRef } from "./GameMap";
 import { Stats } from "./Stats";
 
 type BigIntLike = bigint | number;
@@ -51,13 +69,8 @@ const conquest_by_type: Record<PlayerType, number> = {
 };
 
 export class StatsImpl implements Stats {
-  private readonly data: AllPlayersStats = {};
-
-  private _numMirvLaunched: bigint = 0n;
-
-  numMirvsLaunched(): bigint {
-    return this._numMirvLaunched;
-  }
+  private data: AllPlayersStats = {};
+  private _numMirvLaunched = 0n;
 
   /** B2: deep-copy all accumulated stats so a checkpoint is not aliased. */
   checkpoint(): { data: AllPlayersStats; numMirvLaunched: bigint } {
@@ -89,6 +102,14 @@ export class StatsImpl implements Stats {
     return this.data;
   }
 
+  numMirvsLaunched(): bigint {
+    return this._numMirvLaunched;
+  }
+
+  recordMirvLaunch(): void {
+    this._numMirvLaunched++;
+  }
+
   private _makePlayerStats(player: Player): PlayerStats {
     const clientID = player.clientID();
     if (clientID === null) return undefined;
@@ -106,6 +127,15 @@ export class StatsImpl implements Stats {
     p.attacks ??= [0n];
     while (p.attacks.length <= index) p.attacks.push(0n);
     p.attacks[index] += _bigint(value);
+  }
+
+  private _maxAttack(player: Player, index: number, value: BigIntLike) {
+    const p = this._makePlayerStats(player);
+    if (p === undefined) return;
+    p.attacks ??= [0n];
+    while (p.attacks.length <= index) p.attacks.push(0n);
+    const v = _bigint(value);
+    if (v > p.attacks[index]) p.attacks[index] = v;
   }
 
   private _addBetrayal(player: Player, value: BigIntLike) {
@@ -152,6 +182,14 @@ export class StatsImpl implements Stats {
     p.gold[index] += _bigint(value);
   }
 
+  private _addDonation(player: Player, index: number, value: BigIntLike) {
+    const p = this._makePlayerStats(player);
+    if (p === undefined) return;
+    p.donations ??= [0n];
+    while (p.donations.length <= index) p.donations.push(0n);
+    p.donations[index] += _bigint(value);
+  }
+
   private _addOtherUnit(
     player: Player,
     otherUnitType: OtherUnitType,
@@ -181,6 +219,36 @@ export class StatsImpl implements Stats {
     p.killedAt = _bigint(tick);
   }
 
+  private _allianceArray(p: NonNullable<PlayerStats>, index: number) {
+    p.alliances ??= [0n];
+    while (p.alliances.length <= index) p.alliances.push(0n);
+    return p.alliances;
+  }
+
+  private _maxAlliance(player: Player, index: number, value: BigIntLike) {
+    const p = this._makePlayerStats(player);
+    if (p === undefined) return;
+    const arr = this._allianceArray(p, index);
+    const v = _bigint(value);
+    if (v > arr[index]) arr[index] = v;
+  }
+
+  private _addAlliance(player: Player, index: number, value: BigIntLike) {
+    const p = this._makePlayerStats(player);
+    if (p === undefined) return;
+    const arr = this._allianceArray(p, index);
+    arr[index] += _bigint(value);
+  }
+
+  /** For slots holding a snapshot of end-of-game state rather than a running
+   * total, so that writing one twice cannot silently double it. */
+  private _setAlliance(player: Player, index: number, value: BigIntLike) {
+    const p = this._makePlayerStats(player);
+    if (p === undefined) return;
+    const arr = this._allianceArray(p, index);
+    arr[index] = _bigint(value);
+  }
+
   attack(
     player: Player,
     target: Player | TerraNullius,
@@ -190,6 +258,14 @@ export class StatsImpl implements Stats {
     if (target.isPlayer()) {
       this._addAttack(target, ATTACK_INDEX_RECV, troops);
     }
+  }
+
+  attackMaxIncoming(target: Player | TerraNullius, troops: BigIntLike): void {
+    if (!target.isPlayer()) return;
+    // A running maximum, deliberately not reversed by attackCancel: the attack
+    // was bearing down at this size, and "the biggest attack I faced" is about
+    // what was sent at you, not what survived being called off.
+    this._maxAttack(target, ATTACK_INDEX_MAX_RECV, troops);
   }
 
   attackCancel(
@@ -206,6 +282,23 @@ export class StatsImpl implements Stats {
 
   betray(player: Player): void {
     this._addBetrayal(player, 1);
+  }
+
+  allianceFormed(player: Player): void {
+    this._addAlliance(player, ALLIANCE_INDEX_FORMED, 1);
+  }
+
+  allianceEnded(
+    player: Player,
+    durationTicks: BigIntLike,
+    counter: "brokenByOther" | "expired" | null,
+  ): void {
+    if (counter === "brokenByOther") {
+      this._addAlliance(player, ALLIANCE_INDEX_BROKEN_BY_OTHER, 1);
+    } else if (counter === "expired") {
+      this._addAlliance(player, ALLIANCE_INDEX_EXPIRED, 1);
+    }
+    this._maxAlliance(player, ALLIANCE_INDEX_LONGEST_HELD, durationTicks);
   }
 
   boatSendTrade(player: Player, target: Player): void {
@@ -254,14 +347,15 @@ export class StatsImpl implements Stats {
     this._addBoat(player, "trans", BOAT_INDEX_CAPTURE, 1);
   }
 
+  boatLose(player: Player, type: BoatUnitType): void {
+    this._addBoat(player, unitTypeToBoatUnit[type], BOAT_INDEX_LOST, 1);
+  }
+
   bombLaunch(
     player: Player,
     target: Player | TerraNullius,
     type: NukeType,
   ): void {
-    if (type === UnitType.MIRV) {
-      this._numMirvLaunched++;
-    }
     this._addBomb(player, type, BOMB_INDEX_LAUNCH, 1);
   }
 
@@ -279,6 +373,18 @@ export class StatsImpl implements Stats {
 
   goldWork(player: Player, gold: BigIntLike): void {
     this._addGold(player, GOLD_INDEX_WORK, gold);
+  }
+
+  goldDonationReceived(
+    player: Player,
+    gold: BigIntLike,
+    goldBefore: BigIntLike,
+  ): void {
+    this._addGold(player, GOLD_INDEX_DONATE_RECV, gold);
+    this._addDonation(player, DONATION_INDEX_GOLD_RECV, 1);
+    if (_bigint(goldBefore) < DONATION_BROKE_GOLD_THRESHOLD) {
+      this._addDonation(player, DONATION_INDEX_GOLD_RECV_BROKE, 1);
+    }
   }
 
   goldWar(player: Player, captured: Player, gold: BigIntLike): void {
@@ -317,6 +423,61 @@ export class StatsImpl implements Stats {
     const p = this._makePlayerStats(player);
     if (p === undefined) return;
     p.finalTiles = _bigint(tiles);
+  }
+
+  recordSpawnTile(player: Player, tile: TileRef): void {
+    const p = this._makePlayerStats(player);
+    if (p === undefined) return;
+    p.spawnTile = tile;
+  }
+
+  recordAlliancesAtEnd(
+    player: Player,
+    stillStanding: number,
+    longestStandingTicks: BigIntLike,
+  ): void {
+    // HELD_TO_END is a count of what was standing at the final tick, not a
+    // tally of events: it is written, not accumulated. Today setWinner runs
+    // once per game, but an additive write would double silently the day that
+    // stops being true, and no assertion anywhere would catch it.
+    this._setAlliance(player, ALLIANCE_INDEX_HELD_TO_END, stillStanding);
+    this._maxAlliance(
+      player,
+      ALLIANCE_INDEX_LONGEST_HELD,
+      longestStandingTicks,
+    );
+  }
+
+  recordTickSample(
+    player: Player,
+    tiles: BigIntLike,
+    troops: BigIntLike,
+    allianceCount: number,
+  ): void {
+    const p = this._makePlayerStats(player);
+    if (p === undefined) return;
+
+    const t = _bigint(tiles);
+    p.tiles ??= [0n, 0n, 0n];
+    while (p.tiles.length <= TILE_INDEX_DRAWDOWN_TROUGH) p.tiles.push(0n);
+    if (t > p.tiles[TILE_INDEX_PEAK]) p.tiles[TILE_INDEX_PEAK] = t;
+    const peak = p.tiles[TILE_INDEX_PEAK];
+    const ddPeak = p.tiles[TILE_INDEX_DRAWDOWN_PEAK];
+    const ddTrough = p.tiles[TILE_INDEX_DRAWDOWN_TROUGH];
+    // Cross-multiplied rather than compared as a ratio, so this stays in
+    // exact integer arithmetic. bigint is unbounded, so there is no overflow
+    // to reason about. ddPeak === 0n means no drawdown has been recorded yet
+    // (including a leading zero-tile sample, which cannot itself represent a
+    // decline), so unconditionally seed rather than comparing against it.
+    if (ddPeak === 0n || (peak - t) * ddPeak > (ddPeak - ddTrough) * peak) {
+      p.tiles[TILE_INDEX_DRAWDOWN_PEAK] = peak;
+      p.tiles[TILE_INDEX_DRAWDOWN_TROUGH] = t;
+    }
+
+    const tr = _bigint(troops);
+    if (p.peakTroops === undefined || tr > p.peakTroops) p.peakTroops = tr;
+
+    this._maxAlliance(player, ALLIANCE_INDEX_PEAK_CONCURRENT, allianceCount);
   }
 
   recordKilledBy(victim: Player, killerClientID: ClientID | null): void {

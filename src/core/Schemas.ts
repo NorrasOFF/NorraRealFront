@@ -135,7 +135,9 @@ export type ServerMessage =
   | ServerErrorMessage
   | ServerLobbyInfoMessage
   | ServerNewLobbyMessage
-  | ServerSaveAckMessage;
+  | ServerSaveAckMessage
+  | ServerPongMessage
+  | ServerRedirectMessage;
 
 export type ServerTurnMessage = z.infer<typeof ServerTurnMessageSchema>;
 export type ServerTurnChunkMessage = z.infer<
@@ -145,6 +147,7 @@ export type ServerStartGameMessage = z.infer<
   typeof ServerStartGameMessageSchema
 >;
 export type ServerPingMessage = z.infer<typeof ServerPingMessageSchema>;
+export type ServerPongMessage = z.infer<typeof ServerPongMessageSchema>;
 export type ServerDesyncMessage = z.infer<typeof ServerDesyncSchema>;
 export type ServerPrestartMessage = z.infer<typeof ServerPrestartMessageSchema>;
 export type ServerErrorMessage = z.infer<typeof ServerErrorSchema>;
@@ -153,6 +156,7 @@ export type ServerLobbyInfoMessage = z.infer<
 >;
 export type ServerNewLobbyMessage = z.infer<typeof ServerNewLobbyMessageSchema>;
 export type ServerSaveAckMessage = z.infer<typeof ServerSaveAckSchema>;
+export type ServerRedirectMessage = z.infer<typeof ServerRedirectMessageSchema>;
 export type ClientSendWinnerMessage = z.infer<typeof ClientSendWinnerSchema>;
 export type ClientSendLiveStatsMessage = z.infer<
   typeof ClientSendLiveStatsSchema
@@ -222,6 +226,16 @@ export const MAX_HOSTED_LOBBIES = 10;
 // deadline; relisting starts a fresh one.
 export const HOSTED_LOBBY_AUTO_START_MS = 5 * 60 * 1000;
 
+// The host picks the start time (up to HOSTED_LOBBY_AUTO_START_MS) and the
+// player cap when listing; filling to the cap starts the game early.
+export const MIN_HOSTED_LOBBY_AUTO_START_MS = 60 * 1000;
+export const MIN_HOSTED_LOBBY_PLAYERS = 10;
+export const MAX_HOSTED_LOBBY_PLAYERS = 100;
+
+// A listed lobby this close to its auto-start can no longer be queued, so a
+// host can't pay for a queue spot the lobby starts before it reaches.
+export const LOBBY_QUEUE_CUTOFF_MS = 30 * 1000;
+
 // Featured lobbies get a longer window. A scheduled event announced ahead of
 // time needs the listing to still be up when its audience arrives, and unlike a
 // subscriber sitting on a listing the host is an authenticated admin bot. Only
@@ -255,7 +269,7 @@ export type LobbyAccent = z.infer<typeof LobbyAccentSchema>;
 // The charset accepts everything AccountUsernameSchema can produce, hyphens
 // included, so a verified account name is always representable on the wire —
 // verified play skips free-form validation, so an unrepresentable name would
-// reach the server and be closed with 1002.
+// reach the server and be closed with CloseCode.BadRequest.
 //
 // Letters and digits the in-game name renderer can actually draw, plus the
 // punctuation a name may carry. This is what lets José, Müller, Renée and
@@ -359,6 +373,9 @@ export const GameInfoSchema = z.object({
   label: LobbyLabelSchema.optional(),
   accent: LobbyAccentSchema.optional(),
   featured: z.boolean().optional(),
+  // Listed lobbies only: the host paid to put it in the public Special
+  // queue, so the queue's countdown starts it.
+  queued: z.boolean().optional(),
 });
 
 // Browser-facing lobby info. Master/worker-internal fields (the creator hash
@@ -376,6 +393,13 @@ export const PublicGameInfoSchema = z.object({
   label: LobbyLabelSchema.optional(),
   accent: LobbyAccentSchema.optional(),
   featured: z.boolean().optional(),
+  // Hosted lobbies only: server timestamp when the listing auto-starts, so
+  // the lobby browser can show a countdown before the host presses Start.
+  autoStartAt: zb.uint().optional(),
+  // A player's listed lobby (hosted, or paid into a public queue) rather
+  // than one the server scheduled, so the browser can label it Custom.
+  // Featured lobbies are official events and never carry it.
+  custom: z.boolean().optional(),
 });
 
 export const PublicGamesSchema = z.object({
@@ -392,6 +416,19 @@ export const PublicLobbyFullSchema = z.object({
   type: z.literal("full"),
   serverTime: zb.uint(),
   games: z.partialRecord(PublicGameTypeSchema, z.array(PublicGameInfoSchema)),
+  // Build commit of the serving deployment. Clients on the homepage compare
+  // it to their own bundle's commit to detect that a new version deployed
+  // and prompt a refresh. Optional only so a server can omit it in tests; a
+  // bundle built before this field cannot decode the frame at all (zbin
+  // presence header shifts), which is the usual ship-together tradeoff.
+  gitCommit: z.string().max(64).optional(),
+  // False when the serving deployment is draining: the load balancer routes
+  // elsewhere and this one has stopped queueing public lobbies, so a pinned
+  // tab would watch the list empty out. Clients respond with the same reload
+  // prompt as a commit mismatch — which cannot catch this case by itself,
+  // because the pinned server reports its own commit and a same-commit
+  // blue/green flip keeps them equal. Absent means active.
+  active: z.boolean().optional(),
 });
 
 export const PublicLobbyCountsSchema = z.object({
@@ -412,6 +449,15 @@ export class LobbyInfoEvent implements GameEvent {
     public lobby: GameInfo,
     public myClientID: ClientID,
   ) {}
+}
+
+// This game's opaque grouping token arrived (see GroupToken in the server
+// message schemas). One event for both carriers — lobby_info for anyone who
+// sat in the lobby, the start message for a late joiner who never saw one —
+// so a listener does not have to know which message it came from. Never
+// emitted for singleplayer or a replay: there is no server game to group.
+export class GroupTokenEvent implements GameEvent {
+  constructor(public groupToken: string) {}
 }
 
 export interface ClientInfo {
@@ -474,14 +520,42 @@ export const DoomsdayClockConfigSchema = z.object({
 });
 
 // Overtime (anti-stalemate). After startMinutes of game time the tile share
-// required to win drops steadily from the base (80% FFA / 95% team) at a fixed
-// rate (see OVERTIME_DEFAULTS in Config.ts), so the leading side eventually
-// crosses the shrinking bar and a stalled game is guaranteed to end. Only
-// `enabled` and `startMinutes` are wire-configurable.
+// required to win drops steadily from the 80% base at a fixed rate (see
+// OVERTIME_DEFAULTS in Config.ts), so the leading side eventually crosses the
+// shrinking bar and a stalled game is guaranteed to end. Only `enabled` and
+// `startMinutes` are wire-configurable.
 export const OvertimeConfigSchema = z.object({
   enabled: z.boolean().optional(),
   startMinutes: zb.uint({ min: 1, max: 120 }).optional(),
 });
+
+// A lobby pool: several lobbies that arriving players are spread across, so
+// one advertised entry point can absorb more players than a single lobby
+// holds. Assignment is a hash of the joiner's identity (server/PoolRouting.ts),
+// so members need no shared state. Every member carries this same config and
+// recognises itself by its own game id.
+//
+// The advertised entry point is itself a member rather than an empty router:
+// a lobby nobody plays in would start, leave the Lobby phase, drop out of the
+// listing and be reaped, taking the entry point with it.
+export const PoolConfigSchema = z
+  .object({
+    id: z.string().min(1).max(64),
+    // z.lazy because ID is declared further down this file, and GameConfigSchema
+    // — which embeds this — is evaluated before that point.
+    siblings: z
+      .lazy(() => ID)
+      .array()
+      .min(1)
+      .max(64),
+  })
+  // Rejected rather than deduped: a repeated id holds more than one slot and
+  // draws proportionally more players than the rest.
+  .refine((pool) => new Set(pool.siblings).size === pool.siblings.length, {
+    error: "pool siblings must be unique",
+    path: ["siblings"],
+  });
+export type PoolConfig = z.infer<typeof PoolConfigSchema>;
 
 export const GameConfigSchema = z.object({
   gameMap: z.enum(GameMapType),
@@ -561,6 +635,9 @@ export const GameConfigSchema = z.object({
       startingGold: zb.uint({ max: 1000000000 }).nullable().optional(),
     })
     .optional(),
+  // Stripped from gameStartInfo and from the advertised lobby config: sibling
+  // ids are private lobby ids, which are join secrets.
+  pool: PoolConfigSchema.optional(),
 });
 
 export const TeamSchema = z.string();
@@ -587,7 +664,11 @@ const TokenSchema = z
 
 const EmojiSchema = zb.uint({ max: flattenedEmojiTable.length - 1 });
 
-export const GAME_ID_REGEX = /^[A-Za-z0-9]{8}$/;
+// 8–10: today's ids are 8 chars; multi-server ids (docs/MultiServer.md) will
+// be 10 (instance letter + 9 random). The range ships ahead of the new format
+// so every deployed client/server validates the longer ids before any are
+// minted — old bundles reject unknown id lengths at the Zod layer.
+export const GAME_ID_REGEX = /^[A-Za-z0-9]{8,10}$/;
 
 export const isValidGameID = (value: string): boolean =>
   GAME_ID_REGEX.test(value);
@@ -900,10 +981,10 @@ export const PlayerCosmeticRefsSchema = z.object({
   // One selected effect per slot: key = slot (effectType for trails, nukeType for
   // nuke explosions — see effectTypeForSlot), value = effect name.
   effects: z.record(z.string(), CosmeticNameSchema).optional(),
-  // The player claims to be playing under their verified account username
-  // (renders the blue check next to the name). The game server keeps the
-  // claim only when the join name exactly matches the account's resolved
-  // display name from /users/@me (Worker join → verifiedBadgeAllowed).
+  // Intent to play under the account name. The game server keeps the check
+  // only when the screened join name is the account's bare name
+  // (resolveVerifiedJoin in src/server/Privilege.ts); the name is never
+  // replaced and nothing sent here can mint a badge.
   verified: z.boolean().optional(),
 });
 
@@ -1011,6 +1092,18 @@ export const ServerPrestartMessageSchema = z.object({
   serverTime: zb.uint().optional(),
 });
 
+// An opaque, server-minted, per-game token. It identifies "everyone in this
+// game" to something outside the game — the desktop shell publishes it as the
+// Steam player group — without handing that something the game id, which is a
+// private lobby's join secret. Random, never a function of the id, and never
+// accepted back: the server reads it from nowhere, so it grants nothing.
+//
+// Not part of GameStartInfoSchema on purpose. That object is archived into the
+// publicly downloadable game record and emitted to telemetry; a token sitting
+// next to the game id in a public record is exactly the derivation this exists
+// to prevent. It rides the two server->client messages instead.
+const GroupToken = z.string().min(1).max(64);
+
 export const ServerStartGameMessageSchema = z.object({
   type: z.literal("start"),
   // Turns the client missed if they are late to the game. When `checkpoint` is
@@ -1032,6 +1125,11 @@ export const ServerStartGameMessageSchema = z.object({
   // holds back live turns from this connection until it has them all).
   chunkSize: zb.uint().optional(),
   numTurns: zb.uint().optional(),
+  // The same token the lobby_info broadcasts carried, repeated here because a
+  // late joiner connects after the lobby phase and never sees one. Optional
+  // because singleplayer and replays synthesize this message locally with no
+  // server game behind it, so they have no token and must send none.
+  groupToken: GroupToken.optional(),
 });
 
 // Phase 4: a range of a resumed game's history, sent while
@@ -1058,6 +1156,12 @@ export const ServerErrorSchema = z.object({
   type: z.literal("error"),
   error: z.string(),
   message: z.string().optional(),
+  // Build commit of the rejecting server, sent with version_mismatch so the
+  // client can log which build it must update to. Rides the same flip as
+  // ClientJoinMessageSchema.gitCommit: optional only so other errors can omit
+  // it — a pre-field bundle cannot decode the frame (zbin presence header
+  // shifts), the same ship-together tradeoff as PublicLobbyFullSchema.
+  gitCommit: z.string().max(64).optional(),
 });
 
 export const ServerLobbyInfoMessageSchema = z.object({
@@ -1065,6 +1169,13 @@ export const ServerLobbyInfoMessageSchema = z.object({
   lobby: GameInfoSchema,
   // The clientID assigned to this connection by the server
   myClientID: ID,
+  // See GroupToken below. Deliberately a sibling of `lobby` rather than a
+  // field of GameInfoSchema: gameInfo() is also the body of several HTTP
+  // routes (Worker's /api/game/:id, the admin-bot routes, the lobby
+  // preview), and a token anyone can GET by game id is a token derived from
+  // the game id. On this message it only ever reaches a connected
+  // participant of this game.
+  groupToken: GroupToken.optional(),
 });
 
 // Broadcast by a finished private game's server to every still-connected client
@@ -1087,6 +1198,21 @@ export const ServerSaveAckSchema = z.object({
   ticks: zb.uint().optional(),
 });
 
+// The reply to a ClientPingMessage, echoing its sentAt.
+export const ServerPongMessageSchema = z.object({
+  type: z.literal("pong"),
+  sentAt: zb.uint(),
+});
+
+// Sent to a joiner this lobby's pool assigns elsewhere, immediately before the
+// close. A close frame's reason is a fixed enum and cannot carry an id, so the
+// target needs a frame of its own; the id is all the client needs, since it
+// resolves the hosting worker from the id itself.
+export const ServerRedirectMessageSchema = z.object({
+  type: z.literal("redirect"),
+  gameID: ID,
+});
+
 export const ServerMessageSchema = zb.discriminatedUnion("type", [
   ServerTurnMessageSchema,
   ServerPrestartMessageSchema,
@@ -1101,6 +1227,9 @@ export const ServerMessageSchema = zb.discriminatedUnion("type", [
   ServerTurnChunkMessageSchema,
   // Appended last for the same reason as TurnChunk.
   ServerSaveAckSchema,
+  ServerPongMessageSchema,
+  // Appended, never inserted: variant order is the wire tag (zbin/README.md).
+  ServerRedirectMessageSchema,
 ]);
 
 //
@@ -1181,14 +1310,24 @@ export const ClientLogMessageSchema = z.object({
   log: ID,
 });
 
+// sentAt is the client's own performance.now() (whole ms), echoed back in the
+// pong so the client can time the round trip without keeping state. Only
+// meaningful to the client that sent it.
 export const ClientPingMessageSchema = z.object({
   type: z.literal("ping"),
+  sentAt: zb.uint(),
 });
 
 export const ClientIntentMessageSchema = z.object({
   type: z.literal("intent"),
   intent: IntentSchema,
 });
+
+// Where the client was distributed, as the client reports it. Unverified, so
+// fit for metric dimensions only; the signed provider="steam" claim is the
+// trustworthy Steam signal. Append new members only (zbin ordinals).
+export const ClientPlatformSchema = z.enum(["web", "steam", "crazygames"]);
+export type ClientPlatform = z.infer<typeof ClientPlatformSchema>;
 
 // WARNING: never send this message to clients.
 // Note: clientID is NOT included - server assigns it based on persistentID from token
@@ -1207,6 +1346,15 @@ export const ClientJoinMessageSchema = z.object({
   // restored from a server-side save. Ignored unless the game is a restored
   // save and the seat is an unclaimed original human player.
   claimClientID: ID.optional(),
+  // Build commit of the client bundle. The sim only stays deterministic when
+  // every client in a game runs identical code, so the server rejects joins
+  // whose commit doesn't match its own (missing counts as a mismatch —
+  // pre-feature bundles are by definition stale).
+  gitCommit: z.string().max(64).optional(),
+  // Must stay the last field, and its presence bit must not spill into a new
+  // header byte: then a stale bundle's frame (which lacks it) still decodes,
+  // reaches the gitCommit check above, and the player is told to refresh.
+  platform: ClientPlatformSchema.optional(),
 });
 
 // B2: a host client volunteering its latest core checkpoint so the server can
@@ -1241,6 +1389,8 @@ export const ClientRejoinMessageSchema = z.object({
   // Note: clientID is NOT sent - server looks it up from persistentID in token
   lastTurn: zb.uint(),
   token: TokenSchema,
+  // See ClientJoinMessageSchema.gitCommit.
+  gitCommit: z.string().max(64).optional(),
 });
 
 // Switch between playing and watching from the lobby screen. Lobby-phase only:
@@ -1286,6 +1436,11 @@ export const GameEndInfoSchema = GameStartInfoSchema.extend({
   num_turns: z.number(),
   winner: WinnerSchema,
   lobbyFillTime: z.number().nonnegative(),
+  // The master-scheduled lobby slot this game filled (ffa/team/special), or
+  // "hosted" for a subscriber-listed lobby. Absent on private and
+  // singleplayer games. Only the record carries it (not GameStartInfo, which
+  // is on the wire): infra measures per-type join rates for map rotation.
+  publicGameType: PublicGameTypeSchema.optional(),
   // Absent on singleplayer records and on records read back from the API,
   // which scrubs them like persistentID.
   reports: PlayerReportSchema.array().optional(),
@@ -1312,6 +1467,9 @@ export const AnalyticsRecordSchema = PartialAnalyticsRecordSchema.extend({
   // identity these fields record) is involved.
   subdomain: z.string().optional(),
   domain: z.string().optional(),
+  // The site the server registered under (ClusterCheckin.registeredSite),
+  // which blue/green share. Absent under local dev and on older records.
+  site: z.string().optional(),
 });
 
 export type AnalyticsRecord = z.infer<typeof AnalyticsRecordSchema>;

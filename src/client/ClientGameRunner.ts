@@ -100,6 +100,7 @@ import {
   trackGLInit,
 } from "./render/gl";
 import { ALL_UNIT_TYPES } from "./render/types";
+import { initAudioMixer } from "./sound/AudioMixer";
 import { SoundManager } from "./sound/SoundManager";
 import { themeProvider } from "./theme/ThemeProvider";
 import { GameView, PlayerView } from "./view";
@@ -732,7 +733,7 @@ async function createClientGame(
   inputOverlay.style.touchAction = "none";
   document.body.appendChild(inputOverlay);
 
-  const soundManager = new SoundManager(eventBus, userSettings);
+  const soundManager = new SoundManager(eventBus, initAudioMixer(userSettings));
   try {
     // Resolve render settings (defaults + user overrides) up front so the
     // renderer is built with the final values — no construct-with-defaults,
@@ -752,8 +753,6 @@ async function createClientGame(
 
     const graphicsListenerAbort = new AbortController();
 
-    view.setShowPatterns(userSettings.territoryPatterns());
-
     const mapLayerController = new MapLayerController(
       view,
       gameMap,
@@ -762,12 +761,6 @@ async function createClientGame(
       lobbyConfig.gameStartInfo.config.gameMapSize,
       mapLoader,
       graphicsListenerAbort.signal,
-    );
-
-    globalThis.addEventListener(
-      `${USER_SETTINGS_CHANGED_EVENT}:settings.territoryPatterns`,
-      (e) => view.setShowPatterns((e as CustomEvent<string>).detail === "true"),
-      { signal: graphicsListenerAbort.signal },
     );
 
     // Re-resolve names drawn on the map when the anonymous-names setting toggles

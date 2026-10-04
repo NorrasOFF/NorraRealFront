@@ -307,10 +307,11 @@ func loadMapInfos() ([]mapInfo, error) {
 
 // generateMapsTS writes the GameMapType enum, the MapCategory union, the
 // MapInfo interface, and the maps list to src/core/game/Maps.gen.ts.
-func generateMapsTS(infos []mapInfo) error {
+// It returns the path written.
+func generateMapsTS(infos []mapInfo) (string, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
-		return fmt.Errorf("failed to get working directory: %w", err)
+		return "", fmt.Errorf("failed to get working directory: %w", err)
 	}
 	outPath := filepath.Join(cwd, "..", "src", "core", "game", "Maps.gen.ts")
 
@@ -391,6 +392,8 @@ func generateMapsTS(infos []mapInfo) error {
 	b.WriteString("  customTribes?: CustomTribe[];\n")
 	b.WriteString("  /** Map layers rendered between terrain and territory. */\n")
 	b.WriteString("  layers?: MapLayer[];\n")
+	b.WriteString("  /** Default nation count defined in the map's manifest/info. */\n")
+	b.WriteString("  defaultNationCount: number;\n")
 	b.WriteString("}\n\n")
 	b.WriteString("export interface CustomTribe {\n")
 	b.WriteString("  name: string;\n")
@@ -437,6 +440,7 @@ func generateMapsTS(infos []mapInfo) error {
 		b.WriteString(fmt.Sprintf("    ffaFrequency: %d,\n", ffaFreq))
 		b.WriteString(fmt.Sprintf("    teamFrequency: %d,\n", teamFreq))
 		b.WriteString(fmt.Sprintf("    specialFrequency: %d,\n", specialFreq))
+		b.WriteString(fmt.Sprintf("    defaultNationCount: %d,\n", len(info.Nations)))
 		if info.FeaturedRank > 0 {
 			b.WriteString(fmt.Sprintf("    featuredRank: %d,\n", info.FeaturedRank))
 		}
@@ -507,9 +511,9 @@ func generateMapsTS(infos []mapInfo) error {
 	b.WriteString("];\n")
 
 	if err := os.WriteFile(outPath, []byte(b.String()), 0644); err != nil {
-		return fmt.Errorf("failed to write %s: %w", outPath, err)
+		return "", fmt.Errorf("failed to write %s: %w", outPath, err)
 	}
-	return nil
+	return outPath, nil
 }
 
 // generateEnJSON rewrites the "map" section of resources/lang/en.json with
@@ -519,24 +523,25 @@ func generateMapsTS(infos []mapInfo) error {
 // The whole file is round-tripped through encoding/json, which marshals
 // object keys in sorted order — a no-op for everything but the map section
 // because en.json is kept sorted (see tests/EnJsonSorted.test.ts).
-func generateEnJSON(infos []mapInfo) error {
+// It returns the path written.
+func generateEnJSON(infos []mapInfo) (string, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
-		return fmt.Errorf("failed to get working directory: %w", err)
+		return "", fmt.Errorf("failed to get working directory: %w", err)
 	}
 	enPath := filepath.Join(cwd, "..", "resources", "lang", "en.json")
 	content, err := os.ReadFile(enPath)
 	if err != nil {
-		return fmt.Errorf("failed to read en.json: %w", err)
+		return "", fmt.Errorf("failed to read en.json: %w", err)
 	}
 
 	var root map[string]interface{}
 	if err := json.Unmarshal(content, &root); err != nil {
-		return fmt.Errorf("failed to parse en.json: %w", err)
+		return "", fmt.Errorf("failed to parse en.json: %w", err)
 	}
 	oldSection, ok := root["map"].(map[string]interface{})
 	if !ok {
-		return fmt.Errorf("en.json has no top-level \"map\" object")
+		return "", fmt.Errorf("en.json has no top-level \"map\" object")
 	}
 
 	mapFolders := make(map[string]bool, len(infos))
@@ -578,10 +583,10 @@ func generateEnJSON(infos []mapInfo) error {
 	enc.SetEscapeHTML(false)
 	enc.SetIndent("", "  ")
 	if err := enc.Encode(root); err != nil {
-		return fmt.Errorf("failed to serialize en.json: %w", err)
+		return "", fmt.Errorf("failed to serialize en.json: %w", err)
 	}
 	if err := os.WriteFile(enPath, b.Bytes(), 0644); err != nil {
-		return fmt.Errorf("failed to write en.json: %w", err)
+		return "", fmt.Errorf("failed to write en.json: %w", err)
 	}
-	return nil
+	return enPath, nil
 }

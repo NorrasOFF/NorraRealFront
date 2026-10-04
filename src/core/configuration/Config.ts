@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { PlayerView } from "../../client/view";
 import { AssetManifest } from "../AssetUrls";
+import type { ClusterConfig } from "../ClusterConfig";
 import { exp, log, pow, pow2 } from "../DetMath";
 import { DoomsdayClockSpeed } from "../game/DoomsdayClock";
 import {
@@ -31,13 +32,18 @@ declare global {
       assetManifest?: AssetManifest;
       cdnBase?: string;
       gameEnv?: string;
+      cluster?: ClusterConfig;
+      instanceLetter?: string;
       numWorkers?: number;
       turnstileSiteKey?: string;
       jwtAudience?: string;
       instanceId?: string;
+      stripePublishableKey?: string;
+      faroCollectorUrl?: string;
       // Desktop-only: explicit game-server host for the WebSocket origin.
       // Absent on the web build (client falls back to same-origin location).
       serverHost?: string;
+      siteHost?: string;
     };
   }
 }

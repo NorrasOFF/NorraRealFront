@@ -575,7 +575,7 @@ class Client {
         // resumePendingSteamLink() consumes the stash on read, so a
         // speculative call while logged out would burn an entry that a
         // *later* successful login should still get to resume.
-        if (resumePendingSteamLink(this.steamLinkModal)) {
+        if (resumePendingSteamLink(userMeResponse, this.steamLinkModal)) {
           return;
         }
 

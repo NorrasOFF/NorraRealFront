@@ -871,6 +871,7 @@ export interface Game extends GameMap {
   // neighbors()) and returns the count. Reuse out across calls to avoid
   // allocation.
   neighbors4(ref: TileRef, out: TileRef[]): number;
+  neighbors8(ref: TileRef, out: TileRef[]): number;
   // Zero-allocation neighbor iteration for performance-critical cluster calculation
   // Alternative to neighborsWithDiag() that returns arrays
   // Avoids creating intermediate arrays and uses a callback for better performance
@@ -891,6 +892,8 @@ export interface Game extends GameMap {
   owner(ref: TileRef): Player | TerraNullius;
 
   teams(): Team[];
+  teamTilesOwned(team: Team): number;
+  totalLandTiles(): number;
   teamSpawnArea(team: Team): SpawnArea | undefined;
 
   // Alliances
@@ -996,6 +999,8 @@ export interface Game extends GameMap {
 
   addUpdate(update: GameUpdate): void;
   railNetwork(): RailNetwork;
+  mirvsLaunched(): number;
+  recordMirvLaunch(): void;
   conquerPlayer(conqueror: Player, conquered: Player): void;
   miniWaterHPA(): PathFinder<number> | null;
   miniWaterGraph(): AbstractGraph | null;

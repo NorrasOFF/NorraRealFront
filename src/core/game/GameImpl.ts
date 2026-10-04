@@ -1098,6 +1098,26 @@ export class GameImpl implements Game {
     return [this.botTeam, ...this.playerTeams];
   }
 
+  teamTilesOwned(team: Team): number {
+    let tilesOwned = 0;
+    for (const player of this._players.values()) {
+      if (player.team() === team) tilesOwned += player.numTilesOwned();
+    }
+    return tilesOwned;
+  }
+
+  totalLandTiles(): number {
+    return this._map.numLandTiles();
+  }
+
+  mirvsLaunched(): number {
+    return Number(this._stats.numMirvsLaunched());
+  }
+
+  recordMirvLaunch(): void {
+    this._stats.recordMirvLaunch();
+  }
+
   teamSpawnArea(team: Team): SpawnArea | undefined {
     if (!this._teamGameSpawnAreas) {
       return undefined;
@@ -1384,6 +1404,9 @@ export class GameImpl implements Game {
   }
   neighbors4(ref: TileRef, out: TileRef[]): number {
     return this._map.neighbors4(ref, out);
+  }
+  neighbors8(ref: TileRef, out: TileRef[]): number {
+    return this._map.neighbors8(ref, out);
   }
   isWater(ref: TileRef): boolean {
     return this._map.isWater(ref);

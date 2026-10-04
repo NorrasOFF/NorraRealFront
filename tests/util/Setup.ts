@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import { Config } from "../../src/core/configuration/Config";
 import {
   Difficulty,
   Game,
@@ -28,7 +29,7 @@ export async function setup(
   _gameConfig: Partial<GameConfig> = {},
   humans: PlayerInfo[] = [],
   currentDir: string = __dirname,
-  ConfigClass: typeof TestConfig = TestConfig,
+  ConfigClass: typeof Config = TestConfig,
   autoEndSpawnPhase: boolean = true,
   nations: Nation[] = [],
 ): Promise<Game> {
