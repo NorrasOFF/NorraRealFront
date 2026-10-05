@@ -344,3 +344,45 @@ execution and in the checkpoint, but the value is no longer read).
 Tests: `tests/core/game/TrainStation.test.ts` ("Config.trainGold has no per-stop
 penalty": self/other/team `25_000`, ally `35_000`) and the mock in
 `tests/NationStructureBehavior.test.ts`.
+
+## Remove-railroad radial button
+
+Clicking a tile on a railroad that is on your own territory now offers a red
+"Remove Railroad" action (the same red-X delete style as Delete Unit /
+Disconnect Grid) that destroys that single rail segment. It is a new radial
+`Slot.Railroad` element (`destroyRailroadElement`) added to
+`rootMenuElement.subMenu` only when `GameView.hasRailroadAt(tile)` is true, so
+the wheel stays uncluttered away from tracks.
+
+Wire/sim: new `destroy_railroad` intent (`DestroyRailroadIntentSchema`,
+`{ type, tile }`, appended at the **end** of `IntentSchema`/`Intent` so existing
+binary variant ordinals are unchanged). `DestroyRailroadExecution` resolves the
+tile to a railroad and removes it; `RailNetwork.railroadsAt(tile)` returns the
+segments whose tile list contains the tile (sorted by id for determinism across
+clients/checkpoints) and `RailNetwork.removeRailroad(rail)` deletes the edge and
+marks the endpoint clusters dirty so the per-tick
+`RecomputeRailClusterExecution` splits any cluster the cut disconnected. The
+two endpoint stations are left standing.
+
+Ownership rule: a player may only cut rails on tiles they own
+(`mg.owner(tile) === player`), so a railroad crossing your land can be pruned
+even if its stations belong to someone else; a non-owner's intent is rejected
+with a `SECURITY` warning. At a junction several segments can share the clicked
+tile, so the execution prefers a segment where the tile is interior (not an
+endpoint), falling back to the lowest-id segment.
+
+Tests: `tests/core/executions/DestroyRailroadExecution.test.ts` (removal on an
+interior tile, removal on an endpoint tile, rejection by a non-owner, no-op on a
+rail-less owned tile) and the `Slot.Railroad` cases in
+`tests/client/graphics/RadialMenuElements.test.ts`. `tests/zbin` still pass
+(appending a union variant does not move existing tags).
+
+Browser-verified end to end (headless Chrome, throwaway `e2e` driver reusing
+`driver.mjs`/`game.mjs`): built a City + Factory with `instantBuild` +
+`infiniteGold`, waited for trains, right-clicked a real rail tile, found the
+`path[data-id="railroad"]` radial slice present, dispatched its click, and
+confirmed `GameView.hasRailroadAt(ref)` went `true -> false` and the client
+`RailroadCache` held 0 railroads. Artifacts: `e2e/artifacts/07-game-train.png`
+(trains on the rail + a `+25.0K` train-gold popup) and
+`08-game-remove-railroad.png` (the radial slice). The throwaway driver was
+deleted; re-create it from this note if the flow needs re-running.

@@ -7,6 +7,7 @@ import {
   SendBoatAttackIntentEvent,
   SendBreakAllianceIntentEvent,
   SendDeleteUnitIntentEvent,
+  SendDestroyRailroadIntentEvent,
   SendDisableTrainStationIntentEvent,
   SendDonateGoldIntentEvent,
   SendDonateTroopsIntentEvent,
@@ -33,7 +34,11 @@ export class PlayerActionHandler {
     );
   }
 
-  handleBoatAttack(player: PlayerView, targetTile: TileRef, escort: boolean = false) {
+  handleBoatAttack(
+    player: PlayerView,
+    targetTile: TileRef,
+    escort: boolean = false,
+  ) {
     this.eventBus.emit(
       new SendBoatAttackIntentEvent(
         targetTile,
@@ -98,5 +103,9 @@ export class PlayerActionHandler {
 
   handleDisableTrainStation(unitId: number) {
     this.eventBus.emit(new SendDisableTrainStationIntentEvent(unitId));
+  }
+
+  handleDestroyRailroad(tile: TileRef) {
+    this.eventBus.emit(new SendDestroyRailroadIntentEvent(tile));
   }
 }

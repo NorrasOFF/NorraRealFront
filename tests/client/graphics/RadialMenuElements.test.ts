@@ -101,6 +101,7 @@ describe("RadialMenuElements", () => {
       inSpawnPhase: vi.fn(() => false),
       owner: vi.fn(() => mockPlayer),
       isLand: vi.fn(() => true),
+      hasRailroadAt: vi.fn(() => false),
       config: vi.fn(() => ({
         theme: () => ({
           territoryColor: () => ({
@@ -335,6 +336,27 @@ describe("RadialMenuElements", () => {
       expect(buildMenu).toBeDefined();
       expect(attackMenu).toBeUndefined();
       expect(deleteMenu).toBeDefined();
+    });
+
+    it("hides the remove-railroad action when the tile has no railroad", () => {
+      const subMenu = rootMenuElement.subMenu!(mockParams);
+      expect(subMenu.find((item) => item.id === Slot.Railroad)).toBeUndefined();
+    });
+
+    it("shows the remove-railroad action on a tile with a railroad", () => {
+      mockGame.hasRailroadAt = vi.fn(() => true);
+      const handler = { handleDestroyRailroad: vi.fn() } as any;
+      mockParams.playerActionHandler = handler;
+
+      const subMenu = rootMenuElement.subMenu!(mockParams);
+      const rail = subMenu.find((item) => item.id === Slot.Railroad);
+
+      expect(rail).toBeDefined();
+      rail!.action!(mockParams);
+      expect(handler.handleDestroyRailroad).toHaveBeenCalledWith(
+        mockParams.tile,
+      );
+      expect(mockParams.closeMenu).toHaveBeenCalled();
     });
 
     it("should show attack and boat menu on enemy territory", () => {

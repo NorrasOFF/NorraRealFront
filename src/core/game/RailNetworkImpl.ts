@@ -271,6 +271,45 @@ export class RailNetworkImpl implements RailNetwork {
     return this.pathService.findStationsPath(from, to);
   }
 
+  /**
+   * Every railroad whose tile list contains `tile`. Walks the station set (not
+   * the spatial grid) so it also sees railroads that tests build by hand and
+   * never register in the grid.
+   */
+  railroadsAt(tile: TileRef): Railroad[] {
+    const result: Railroad[] = [];
+    const seen = new Set<Railroad>();
+    for (const station of this._stationManager.getAll()) {
+      for (const railroad of station.getRailroads()) {
+        if (seen.has(railroad)) continue;
+        if (railroad.tiles.includes(tile)) {
+          seen.add(railroad);
+          result.push(railroad);
+        }
+      }
+    }
+    // Sort by id so a tile shared by several roads resolves identically on
+    // every client and across a checkpoint restore (station set order can
+    // otherwise differ).
+    return result.sort((a, b) => a.id - b.id);
+  }
+
+  /**
+   * Remove one railroad segment. The endpoint stations stay; only the edge
+   * between them is destroyed. Their clusters are marked dirty so the
+   * per-tick RecomputeRailClusterExecution splits any that the removal
+   * disconnected.
+   */
+  removeRailroad(railroad: Railroad): void {
+    railroad.delete(this.game);
+    this.railGrid.unregister(railroad);
+
+    const fromCluster = railroad.from.getCluster();
+    const toCluster = railroad.to.getCluster();
+    if (fromCluster) this.dirtyClusters.add(fromCluster);
+    if (toCluster) this.dirtyClusters.add(toCluster);
+  }
+
   private connectToExistingRails(station: TrainStation): boolean {
     const rails = this.railGrid.query(station.tile(), this.stationRadius);
 

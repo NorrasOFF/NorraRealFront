@@ -169,6 +169,10 @@ export class SendDisableTrainStationIntentEvent implements GameEvent {
   constructor(public readonly unitId: number) {}
 }
 
+export class SendDestroyRailroadIntentEvent implements GameEvent {
+  constructor(public readonly tile: number) {}
+}
+
 export class SendCreateFleetIntentEvent implements GameEvent {
   constructor(public readonly unitIds: number[]) {}
 }
@@ -349,6 +353,10 @@ export class Transport {
 
     this.eventBus.on(SendDisableTrainStationIntentEvent, (e) =>
       this.onSendDisableTrainStationIntent(e),
+    );
+
+    this.eventBus.on(SendDestroyRailroadIntentEvent, (e) =>
+      this.onSendDestroyRailroadIntent(e),
     );
 
     this.eventBus.on(SendCreateFleetIntentEvent, (e) =>
@@ -838,6 +846,13 @@ export class Transport {
     this.sendIntent({
       type: "disable_train_station",
       unitId: event.unitId,
+    });
+  }
+
+  private onSendDestroyRailroadIntent(event: SendDestroyRailroadIntentEvent) {
+    this.sendIntent({
+      type: "destroy_railroad",
+      tile: event.tile,
     });
   }
 

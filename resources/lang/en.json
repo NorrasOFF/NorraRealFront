@@ -1610,6 +1610,8 @@
     "delete_unit_title": "Delete Unit",
     "disconnect_grid_description": "Click to disconnect or reconnect the nearest rail station",
     "disconnect_grid_title": "Disconnect Grid",
+    "remove_railroad_description": "Click to remove this rail connection between two stations",
+    "remove_railroad_title": "Remove Railroad",
     "upgrade_x": "Upgrade x{amount}"
   },
   "relation": {
