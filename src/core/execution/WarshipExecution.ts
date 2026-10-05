@@ -16,6 +16,7 @@ import {
 import { PathStatus } from "../pathfinding/types";
 import { PseudoRandom, PseudoRandomState } from "../PseudoRandom";
 import { findMinimumBy } from "../Util";
+import { shipShouldMove } from "./FleetFormation";
 import { ShellExecution } from "./ShellExecution";
 
 export interface WarshipExecutionCheckpoint {
@@ -862,9 +863,10 @@ export class WarshipExecution implements Execution {
       return;
     }
 
-    // Fleets move at the slowest member's rate (2 = every other tick).
+    // Fleets move at the slowest member's rate (missile ships step every
+    // 1.5 ticks, so a fleet containing one does too).
     const moveRate = this.warship.warshipState().fleetMoveRate ?? 1;
-    if (moveRate > 1 && this.mg.ticks() % moveRate !== 0) {
+    if (!shipShouldMove(moveRate, this.mg.ticks())) {
       return;
     }
 

@@ -1,4 +1,3 @@
-import { renderTroops } from "../../client/Utils";
 import { ExecutionCheckpoint } from "../Checkpoint";
 import { AttackLogicInput } from "../configuration/Config";
 import {
@@ -6,7 +5,6 @@ import {
   Difficulty,
   Execution,
   Game,
-  MessageType,
   Player,
   PlayerID,
   PlayerType,
@@ -18,8 +16,6 @@ import { GameMap, TileRef } from "../game/GameMap";
 import { PseudoRandom, PseudoRandomState } from "../PseudoRandom";
 import { assertNever } from "../Util";
 import { FlatBinaryHeap } from "./utils/FlatBinaryHeap"; // adjust path if needed
-
-const malusForRetreat = 25;
 
 export interface AttackExecutionCheckpoint {
   startTroops: number | null;
@@ -272,21 +268,11 @@ export class AttackExecution implements Execution {
     this._owner.borderTiles().forEach((tile) => this.addNeighbors(tile));
   }
 
-  private retreat(malusPercent = 0) {
+  private retreat() {
     if (this.attack === null) {
       throw new Error("Attack not initialized");
     }
 
-    const deaths = this.attack.troops() * (malusPercent / 100);
-    if (deaths) {
-      this.mg.displayMessage(
-        "events_display.attack_cancelled_retreat",
-        MessageType.ATTACK_CANCELLED,
-        this._owner.id(),
-        undefined,
-        { troops: renderTroops(deaths) },
-      );
-    }
     if (this.removeTroops === false && this.sourceTile === null) {
       // startTroops are always added to attack troops at init but not always removed from owner troops
       // subtract startTroops from attack troops so we don't give back startTroops to owner that were never removed
@@ -294,7 +280,7 @@ export class AttackExecution implements Execution {
       this.attack.setTroops(this.attack.troops() - (this.startTroops ?? 0));
     }
 
-    const survivors = this.attack.troops() - deaths;
+    const survivors = this.attack.troops();
     this._owner.addTroops(survivors);
     this.attack.delete();
     this.active = false;
@@ -315,11 +301,8 @@ export class AttackExecution implements Execution {
     const targetPlayer = targetIsPlayer ? (this.target as Player) : null; // cache target player
 
     if (this.attack.retreated()) {
-      if (targetIsPlayer) {
-        this.retreat(malusForRetreat);
-      } else {
-        this.retreat();
-      }
+      // Retreating refunds all surviving troops: no troop-cost penalty.
+      this.retreat();
       this.active = false;
       return;
     }

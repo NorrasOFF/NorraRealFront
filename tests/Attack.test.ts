@@ -140,7 +140,7 @@ describe("Attack", () => {
     );
   });
 
-  test("Boat penalty on retreat Transport Ship arrival", async () => {
+  test("No troop penalty on retreat Transport Ship arrival", async () => {
     const player_start_troops = defender.troops();
     const boat_troops = player_start_troops * 0.5;
 
@@ -156,8 +156,8 @@ describe("Attack", () => {
     game.executeNextTick();
 
     expect(ship.isActive()).toBe(false);
-    expect(boat_troops).toBeLessThan(defender.troops());
-    expect(defender.troops()).toBeLessThan(player_start_troops);
+    // Every boat troop is refunded on retreat — no 25% malus.
+    expect(defender.troops()).toBeGreaterThanOrEqual(player_start_troops);
   });
 });
 

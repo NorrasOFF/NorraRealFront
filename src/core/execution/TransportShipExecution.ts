@@ -22,8 +22,6 @@ import { transportShipStagger } from "../pathfinding/PathfinderStagger";
 import { PathStatus } from "../pathfinding/types";
 import { AttackExecution } from "./AttackExecution";
 
-const malusForRetreat = 25;
-
 export interface TransportShipExecutionCheckpoint {
   attackerId: PlayerID;
   originalOwnerId: PlayerID;
@@ -376,9 +374,7 @@ export class TransportShipExecution implements Execution {
           return;
         }
         if (this.mg.owner(this.dst) === this.attacker) {
-          const boatTroops = this.escort ? this.troops : this.boat.troops();
-          const deaths = this.escort ? 0 : boatTroops * (malusForRetreat / 100);
-          const survivors = boatTroops - deaths;
+          const survivors = this.escort ? this.troops : this.boat.troops();
           this.attacker.addTroops(survivors);
           this.boat.delete(false);
           this.active = false;
@@ -386,15 +382,6 @@ export class TransportShipExecution implements Execution {
           this.mg
             .stats()
             .boatArriveTroops(this.attacker, this.target, survivors);
-          if (deaths) {
-            this.mg.displayMessage(
-              "events_display.attack_cancelled_retreat",
-              MessageType.ATTACK_CANCELLED,
-              this.attacker.id(),
-              undefined,
-              { troops: renderTroops(deaths) },
-            );
-          }
           return;
         }
         this.attacker.conquer(this.dst);

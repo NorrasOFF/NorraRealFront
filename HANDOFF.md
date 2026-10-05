@@ -1,22 +1,18 @@
-# Handoff — weighted train destinations (level-based) on main
+# Handoff — missile/anti-missile ships step every 1.5 ticks
 
 > Future sessions: this file holds the current handoff. Overwrite it rather than
-> appending; keep only the latest handoff.
+> appending; keep only the latest handoff. Write one only when the session leaves
+> open items or partially verified work.
 
-Companion notes: `testnotes.md` (bug/feature detail + pre-existing failures).
+Companion notes: `testnotes.md` (feature/bug detail + pre-existing failures).
 
 ## 1. Where things are
 
 - Repo: `C:\Users\ai51940\OpenFrontIO`.
-- Token: `H:\Documents\Hexfront-token.txt` (hyphen; the working path this
-  session). Authenticates as user **`hexfront-dev`**.
-- **Push target (confirmed correct):** `origin` =
-  `https://github.com/hexfront-dev/NorraRealFront-Remus-.git` — a fork of
-  NorraRealFront under `hexfront-dev`, branch `main`. This matches the standing
-  instruction; the older "push to hexfront-dev/OpenFrontIO" note is stale.
-- Other remotes: `norrasoff` = `NorrasOFF/NorraRealFront` (fetch/push),
-  `upstream` = `openfrontio/OpenFrontIO`, `hexfront` =
-  `hexfront-dev/OpenFrontIO`.
+- Token: `H:\Documents\Hexfront-token.txt`. Authenticates as **`hexfront-dev`**.
+- Push target: `origin` = `https://github.com/hexfront-dev/NorraRealFront-Remus-.git`,
+  branch `main`. Other remotes: `norrasoff` = `NorrasOFF/NorraRealFront`,
+  `upstream` = `openfrontio/OpenFrontIO`, `hexfront` = `hexfront-dev/OpenFrontIO`.
 - Push command (do not print the token):
   ```powershell
   $tok = (Get-Content -Raw "H:\Documents\Hexfront-token.txt").Trim()
@@ -27,45 +23,35 @@ Companion notes: `testnotes.md` (bug/feature detail + pre-existing failures).
 
 ## 2. What changed this session
 
-**Commit `6cedd0249` — "Weight train destinations toward higher-level
-stations"** (`origin/main`).
+The 2-tick movement slowdown for **Missile Ship** and **Missile Defense Ship** is
+now 1.5 ticks (two steps every three ticks). Warships still step every tick.
 
-Trains previously picked a destination by **uniform** reservoir sampling over
-eligible City/Port stations (`Cluster.randomTradeDestination`), ignoring level.
-Now each eligible destination is weighted by its level so trains slightly
-prefer more developed destinations. Spawn rate / spawn logic is untouched.
-
-- `src/core/game/TrainStation.ts`:
-  - New `TRAIN_DESTINATION_LEVEL_WEIGHT = 0.25` and
-    `trainDestinationWeight(level) = round(1000 * (1 + 0.25 * ln(level)))`
-    (level ≤ 1 → 1000). Uses the deterministic `log` from `src/core/DetMath.ts`,
-    not `Math.log`, so all clients agree.
-  - `randomTradeDestination` switched to weighted reservoir sampling:
-    `totalWeight += weight; if (random.nextInt(0, totalWeight) < weight) selected =
-station;`. Draw count per eligible station is unchanged.
-- `tests/core/game/Cluster.test.ts`: `createStation` gained a `level` arg; new
-  `trainDestinationWeight` unit tests and a seeded-distribution test (level-50
-  vs four level-1 stations, ratio ~1.978).
-
-Effect: a level-50 destination is ~1.98x as likely as a level-1 one; level-10
-~1.58x. Diminishing and mild by design. In a line of 4×L1 + 1×L50 with the L50
-furthest from the source, expected income per trip rises ~10.9%
-(3.00 → 3.33 city stops) because the further destination is picked more often.
-If the high-level station were nearest instead, the same weighting would
-reduce income.
+- `src/core/execution/FleetFormation.ts` — `shipMoveInterval` returns `1.5` for
+  the two ship types (was `2`). New `shipShouldMove(ticksPerMove, ticks)` gates a
+  step with integer half-tick math (`floor(ticks * 2 / rateX2)`,
+  `rateX2 = ticksPerMove * 2`), since `ticks % 1.5` is invalid. Equivalent to the
+  old modulo for integer rates.
+- `MissileShipExecution.ts`, `MissileDefenseShipExecution.ts` — `patrol()` and
+  `moveToPatrolTile()` use `shipShouldMove`.
+- `WarshipExecution.ts` — `moveToPatrolTile()` uses `shipShouldMove`, so a fleet
+  containing a missile ship steps at the fleet's 1.5 rate too.
+- `tests/core/FleetFormation.test.ts` (new) pins the rate and step pattern.
+- `testnotes.md` — "Missile/anti-missile ships step every 1.5 ticks".
 
 ## 3. Verification
 
-- `npx vitest run tests/core/game/Cluster.test.ts` — 12/12 pass.
 - `npx tsc --noEmit` — clean.
-- Pre-commit hook (oxlint --fix + eslint --fix + prettier) ran clean on both
-  files.
+- `npx vitest run tests/core/FleetFormation.test.ts tests/MissileDefenseShip.test.ts tests/core/CheckpointShips.test.ts` — 12/12 pass.
+- `npx oxlint` + `npx eslint` on all changed files — clean.
 
 ## 4. Open items / next steps
 
-- Replay/checkpoint tests are unaffected in structure (same PRNG draw count),
-  but any golden transcript or recorded-game expectations predating this
-  change will now diverge on train routes — expected for a gameplay change.
-  The documented pre-existing suite failures in `testnotes.md` still stand.
-- The change is proximity-agnostic: it only rewards level, so its income effect
-  depends on where high-level stations sit relative to the spawning factory.
+- **Health does not increase per level.** Both ships are flat `maxHealth: 1000`
+  (same as a `Warship`); the +10%/level HP scaling from `e74f86897` was removed in
+  `1413b7445` alongside the speed penalty. The user asked how much health
+  increases — the answer is **0**. If a per-level HP bonus is wanted, re-add it in
+  `UnitImpl` (`effectiveMaxHealth()` is still present but unconditional) without
+  reintroducing the speed penalty.
+- The step change alters movement timing, so any golden transcript / recorded-game
+  expectation covering ship movement will diverge — expected for a gameplay
+  change. The pre-existing suite failures in `testnotes.md` still stand.

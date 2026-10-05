@@ -29,6 +29,53 @@ These are environment-only failures, **not code regressions**: they pass in CI
 (where jsdom provides a working `localStorage`) and on machines where
 `localStorage` is available.
 
+## Retreats are free and twice as fast
+
+The retreat (cancel-attack) cost and delay were removed/halved:
+
+- `AttackExecution.ts`: the `malusForRetreat = 25` constant and the
+  `malusPercent` parameter of `retreat()` are gone. A land attack that retreats
+  against a player now refunds **all** surviving troops; previously 25% were
+  killed and an `events_display.attack_cancelled_retreat` message was shown. The
+  translation key stays in `en.json` but is now unreferenced. `retreat()` no
+  longer uses `renderTroops`/`MessageType`, so those imports were removed.
+- `TransportShipExecution.ts`: the same 25% malus on a boat arriving at a tile
+  the attacker already owns (auto-retreat) is removed — the full boat troop
+  count is refunded and no `ATTACK_CANCELLED` message is emitted.
+- `RetreatExecution.ts`: `cancelDelay` is now `10` (was `20`). A retreat ordered
+  via `orderRetreat` resolves to `executeRetreat` in half the ticks. The delay
+  is part of the retreat checkpoint, so save/resume captures it exactly.
+
+Test impact: `tests/Attack.test.ts` "Boat penalty on retreat Transport Ship
+arrival" became "No troop penalty on retreat Transport Ship arrival" and asserts
+`defender.troops() >= player_start_troops` after the refund.
+
+## Missile/anti-missile ships step every 1.5 ticks
+
+`FleetFormation.shipMoveInterval` now returns `1.5` (was `2`) for
+`MissileShip`/`MissileDefenseShip`; warships stay at `1`. Such a ship therefore
+takes two movement steps every three ticks instead of one every other tick.
+
+Because `1.5` is not an integer, the old `ticks % interval` test cannot be used.
+`FleetFormation.shipShouldMove(ticksPerMove, ticks)` decides a step with integer
+half-tick math: the ship has moved `floor(ticks * 2 / rateX2)` times by `ticks`
+(`rateX2 = ticksPerMove * 2`, so `1 -> 2`, `1.5 -> 3`). This matches the old
+modulo for integer rates, so a resumed checkpoint with `fleetMoveRate = 2` still
+steps on even ticks.
+
+`computeFleetMoveRate` returns `1.5` for a fleet containing a missile ship, and
+`WarshipExecution`/`MissileShipExecution`/`MissileDefenseShipExecution` all gate
+movement through `shipShouldMove`, so a mixed fleet steps at 1.5. `fleetMoveRate`
+is part of the unit checkpoint, so save/resume captures the rate exactly.
+
+Tests: `tests/core/FleetFormation.test.ts` pins the rate and the step pattern
+(two moves per three ticks; gaps of 1 or 2; integer-2 backward compatibility).
+
+Health: `MissileShip`/`MissileDefenseShip` still have `maxHealth: 1000` (same as
+a `Warship`) and no per-level health bonus — the +10%/level HP scaling added in
+`e74f86897` was removed in `1413b7445` together with the speed penalty. So
+leveling these ships increases health by 0 today.
+
 ## Same-nation trade ships
 
 Trade ships may now pick a destination port owned by their own player (same
