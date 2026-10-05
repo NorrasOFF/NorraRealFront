@@ -9,18 +9,31 @@ function isCoreShip(type: UnitType): boolean {
 
 /**
  * Ticks between movement steps for a ship. Warships move every tick; missile
- * ships move every 2 ticks.
+ * ships move every 1.5 ticks (two steps every three ticks).
  */
 export function shipMoveInterval(type: UnitType): number {
   if (type === UnitType.Warship) return 1;
-  return 2;
+  return 1.5;
 }
 
 /** A fleet takes the slowest member's rate. */
 export function computeFleetMoveRate(ships: Unit[]): number {
-  return Math.max(
-    ...ships.map((s) => shipMoveInterval(s.type())),
-  );
+  return Math.max(...ships.map((s) => shipMoveInterval(s.type())));
+}
+
+/**
+ * Whether a ship that moves once every `ticksPerMove` ticks should step on
+ * `ticks`. The rate may be fractional (missile ships use 1.5), so the modulo
+ * used for integer rates does not work. Integer half-tick math instead: the
+ * ship has completed `floor(ticks * 2 / rateX2)` steps by `ticks`, where
+ * `rateX2 = ticksPerMove * 2` (1 tick -> 2, 1.5 ticks -> 3).
+ */
+export function shipShouldMove(ticksPerMove: number, ticks: number): boolean {
+  if (ticksPerMove <= 1) return true;
+  const rateX2 = Math.round(ticksPerMove * 2);
+  const movesNow = Math.floor((ticks * 2) / rateX2);
+  const movesBefore = Math.floor(((ticks - 1) * 2) / rateX2);
+  return movesNow > movesBefore;
 }
 
 /**

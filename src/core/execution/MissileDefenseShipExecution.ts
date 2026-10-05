@@ -15,7 +15,7 @@ import {
 } from "../pathfinding/PathFinder";
 import { PathStatus } from "../pathfinding/types";
 import { PseudoRandom, PseudoRandomState } from "../PseudoRandom";
-import { shipMoveInterval } from "./FleetFormation";
+import { shipMoveInterval, shipShouldMove } from "./FleetFormation";
 import {
   SAMTargetingSystem,
   SAMTargetingSystemCheckpoint,
@@ -217,7 +217,7 @@ export class MissileDefenseShipExecution implements Execution {
 
   private patrol(): void {
     const interval = shipMoveInterval(this.warship.type());
-    if (this.mg.ticks() % interval !== 0) return;
+    if (!shipShouldMove(interval, this.mg.ticks())) return;
 
     if (this.warship.targetTile() === undefined) {
       const tile = this.randomTile();
@@ -246,7 +246,7 @@ export class MissileDefenseShipExecution implements Execution {
     if (this.warship.tile() === patrolTile) return;
 
     const moveRate = this.warship.warshipState().fleetMoveRate ?? 1;
-    if (moveRate > 1 && this.mg.ticks() % moveRate !== 0) return;
+    if (!shipShouldMove(moveRate, this.mg.ticks())) return;
 
     const result = this.pathfinder.next(this.warship.tile(), patrolTile);
     if (
