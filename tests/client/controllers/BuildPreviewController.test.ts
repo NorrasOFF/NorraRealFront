@@ -56,7 +56,7 @@ describe("planDefenseLineActions (drag upgrade defense posts)", () => {
     ]);
   });
 
-  test("shift upgrades each existing post by 5 levels", () => {
+  test("upgrades each existing post by the requested amount (5 on double-tap)", () => {
     const actions = planDefenseLineActions(
       tiles,
       (x, y) => posts[`${x},${y}`],

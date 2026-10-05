@@ -55,7 +55,8 @@ export type DefenseLineAction =
  * new post or upgrade an existing one. `postIdAt` returns the id of an
  * upgradable defense post already on that tile (owned, active, not under
  * construction) or undefined when the tile is empty. Existing posts are
- * upgraded by `upgradeAmount` levels (1 normally, 5 with Shift held).
+ * upgraded by `upgradeAmount` levels (the active build amount: 1 normally, 5
+ * after double-tapping the defense-post keybind).
  */
 export function planDefenseLineActions(
   tiles: readonly { x: number; y: number }[],
@@ -765,7 +766,10 @@ export class BuildPreviewController implements Controller {
     const tiles = this.defenseLineTiles(start.x, start.y, end.x, end.y);
 
     // A defense post already sitting on a sampled tile is upgraded in place
-    // rather than rebuilt. Shift upgrades each existing post by 5 levels.
+    // rather than rebuilt. The upgrade amount is the active build amount
+    // (`uiState.upgradeMultiplier`): tapping the defense-post keybind twice, or
+    // scrolling while the ghost is active, sets it (1 by default, 5 on
+    // double-tap).
     const postByTile = new Map<number, number>();
     const myPlayer = this.game.myPlayer();
     if (myPlayer) {
@@ -774,7 +778,7 @@ export class BuildPreviewController implements Controller {
         postByTile.set(u.tile(), u.id());
       }
     }
-    const upgradeAmount = e.shiftKey ? 5 : 1;
+    const upgradeAmount = this.uiState.upgradeMultiplier || 1;
     const actions = planDefenseLineActions(
       tiles,
       (x, y) => postByTile.get(this.game.ref(x, y)),
