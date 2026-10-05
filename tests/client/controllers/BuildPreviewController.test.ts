@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import {
+  planDefenseLineActions,
   samThreatensNukePreview,
   shouldPreserveGhostAfterBuild,
 } from "../../../src/client/controllers/BuildPreviewController";
@@ -31,6 +32,51 @@ describe("BuildPreviewController ghost preservation (locked nuke / Enter confirm
       expect(shouldPreserveGhostAfterBuild(UnitType.Warship)).toBe(false);
       expect(shouldPreserveGhostAfterBuild(UnitType.MIRV)).toBe(false);
     });
+  });
+});
+
+describe("planDefenseLineActions (drag upgrade defense posts)", () => {
+  const tiles = [
+    { x: 0, y: 0 },
+    { x: 10, y: 0 },
+    { x: 20, y: 0 },
+  ];
+  const posts: Record<string, number> = { "10,0": 42 };
+
+  test("builds on empty tiles and upgrades existing posts in place", () => {
+    const actions = planDefenseLineActions(
+      tiles,
+      (x, y) => posts[`${x},${y}`],
+      1,
+    );
+    expect(actions).toEqual([
+      { kind: "build", x: 0, y: 0 },
+      { kind: "upgrade", unitId: 42, amount: 1 },
+      { kind: "build", x: 20, y: 0 },
+    ]);
+  });
+
+  test("upgrades each existing post by the requested amount (5 on double-tap)", () => {
+    const actions = planDefenseLineActions(
+      tiles,
+      (x, y) => posts[`${x},${y}`],
+      5,
+    );
+    expect(actions).toContainEqual({ kind: "upgrade", unitId: 42, amount: 5 });
+  });
+
+  test("an all-empty line is all builds", () => {
+    const actions = planDefenseLineActions(tiles, () => undefined, 5);
+    expect(actions.every((a) => a.kind === "build")).toBe(true);
+  });
+
+  test("an all-existing line is all upgrades", () => {
+    const actions = planDefenseLineActions(tiles, () => 7, 1);
+    expect(actions).toEqual([
+      { kind: "upgrade", unitId: 7, amount: 1 },
+      { kind: "upgrade", unitId: 7, amount: 1 },
+      { kind: "upgrade", unitId: 7, amount: 1 },
+    ]);
   });
 });
 

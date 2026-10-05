@@ -269,6 +269,45 @@ Tests: `tests/server/GameServerSave.test.ts` (`isWaitingInLobby` before/after
 start), `tests/client/GameServerApiCallers.test.ts` (the `?force=1` URL), and
 `tests/client/SavesModalResume.test.ts` (import calls resume with `force`).
 
+## Defense-post drag upgrades existing posts (5× via double-tapping the keybind)
+
+The left-drag "draw a line of defense posts" gesture previously emitted one
+`build_unit` intent per sampled tile. On a tile that already holds a defense
+post the build simply failed. Now the line decides per tile:
+
+- Empty tile → build a new defense post (unchanged).
+- Tile with an owned, active, not-under-construction defense post → upgrade it.
+
+`BuildPreviewController.onDefenseLineComplete` builds a `tile → unitId` map from
+`myPlayer.units(UnitType.DefensePost)` (skipping under-construction posts) and
+calls the new exported pure helper `planDefenseLineActions(tiles, postIdAt,
+upgradeAmount)`, which returns a `build`/`upgrade` action per tile. Upgrades are
+sent as a **single** `SendUpgradeStructureIntentEvent(unitId, DefensePost,
+amount)` per post. A single intent with `amount` is required: `UpgradeStructureExecution`
+runs its `amount` upgrade loop before `beginDefensePostUpgrade()`, so a bulk
+amount stacks levels in one tick. Emitting several separate intents would make
+all but the first fail, because the post is under construction after the first
+(which is also why the legacy Shift-click 5× upgrade path — 5 separate intents
+with `amount = upgradeMultiplier` — only lands one level on a defense post when
+Instant Build is off).
+
+The upgrade amount comes from `uiState.upgradeMultiplier` (the active build
+amount), not Shift. `InputHandler.setGhostStructure` already sets
+`upgradeMultiplier = 5` when the currently-active structure keybind is pressed a
+second time, so **double-tapping the defense-post keybind (4)** arms a 5-level
+upgrade; a single tap leaves it at 1, and scrolling while the ghost is active
+cycles 1/5/10/50. This also means double-tap-4 + a single click upgrades a post
+5 levels through `createStructure` (one intent with `amount = 5`). Shift is
+untouched: a defense-post ghost does not override the Shift
+`boxSelectWarships` gesture.
+
+Tests: `tests/client/controllers/BuildPreviewController.test.ts`
+(`planDefenseLineActions`: mixed build/upgrade, amount, all-empty, all-existing);
+the double-tap multiplier behavior is covered by `tests/InputHandler.test.ts`
+("pressing the active build hotkey selects five upgrades").
+`tests/core/utilities/DefensePostLine.test.ts` and
+`tests/core/executions/UpgradeStructureExecution.test.ts` still pass.
+
 ## Ctrl+drag conquest avoidance is a region toggle
 
 The ctrl+drag that excludes frontline tiles from conquest no longer toggles each
