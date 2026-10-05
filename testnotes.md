@@ -324,3 +324,23 @@ states. Only tiles whose state actually changes are sent in the `avoid_conquest`
 intent, so the core's per-tile toggle (`AvoidConquestExecution`) still lands on
 the desired uniform state. Tests:
 `tests/client/controllers/AvoidConquestController.test.ts`.
+
+## Trains have no diminishing return per stop
+
+`Config.trainGold` no longer reduces the payout as a train visits more city/port
+stations. The `citiesVisited` parameter and the `5_000`-per-stop `distPenalty`
+(after a 10-stop free window, flooring at `5_000`) are gone. Every stop pays the
+full base for the relation: `25_000` for `self`/`team`/`other`, `35_000` for
+`ally`, scaled by `goldMultiplierFor(player)`. So a train that has already
+visited any number of stations still earns `25_000` per stop (the ally rate
+stays `35_000`).
+
+Callers updated: `TrainStation.TradeStationStopHandler` now calls
+`config.trainGold(rel, owner)` (it still tracks `tradeStopsVisited` on the
+execution and in the checkpoint, but the value is no longer read).
+`NationStructureBehavior.buildReachableStations` drops its `0` stop argument
+(its weights were already based on zero stops, so behavior is unchanged there).
+
+Tests: `tests/core/game/TrainStation.test.ts` ("Config.trainGold has no per-stop
+penalty": self/other/team `25_000`, ally `35_000`) and the mock in
+`tests/NationStructureBehavior.test.ts`.

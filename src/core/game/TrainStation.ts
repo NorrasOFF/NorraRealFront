@@ -23,11 +23,7 @@ class TradeStationStopHandler implements TrainStopHandler {
     const trainOwner = trainExecution.owner();
     const gold = mg
       .config()
-      .trainGold(
-        rel(trainOwner, stationOwner),
-        trainExecution.tradeStopsVisited(),
-        trainOwner,
-      );
+      .trainGold(rel(trainOwner, stationOwner), trainOwner);
     // Share revenue with the station owner if it's not the current player
     if (trainOwner !== stationOwner) {
       stationOwner.addGold(gold, station.tile());
