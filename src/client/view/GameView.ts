@@ -1285,6 +1285,10 @@ export class GameView implements GameMap {
   isLand(ref: TileRef): boolean {
     return this._map.isLand(ref);
   }
+  /** True when the given tile currently holds a railroad track. */
+  hasRailroadAt(ref: TileRef): boolean {
+    return this.railroadCache.railroadState[ref] !== 0;
+  }
   isImpassable(ref: TileRef): boolean {
     return this._map.isImpassable(ref);
   }

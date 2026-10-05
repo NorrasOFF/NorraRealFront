@@ -130,6 +130,7 @@ export enum Slot {
   Back = "back",
   Delete = "delete",
   DisableStation = "disableStation",
+  Railroad = "railroad",
 }
 
 function isFriendlyTarget(params: MenuElementParams): boolean {
@@ -695,6 +696,29 @@ export const deleteUnitElement: MenuElement = {
   },
 };
 
+export const destroyRailroadElement: MenuElement = {
+  id: Slot.Railroad,
+  name: "remove_railroad",
+  disabled: (params: MenuElementParams) =>
+    params.game.inSpawnPhase() || !params.game.hasRailroadAt(params.tile),
+  icon: xIcon,
+  color: COLORS.delete,
+  tooltipKeys: [
+    {
+      key: "radial_menu.remove_railroad_title",
+      className: "title",
+    },
+    {
+      key: "radial_menu.remove_railroad_description",
+      className: "description",
+    },
+  ],
+  action: (params: MenuElementParams) => {
+    params.playerActionHandler.handleDestroyRailroad(params.tile);
+    params.closeMenu();
+  },
+};
+
 export const disableStationElement: MenuElement = {
   id: Slot.DisableStation,
   name: "Disconnect Grid",
@@ -720,7 +744,9 @@ export const disableStationElement: MenuElement = {
       .filter(
         (unit) =>
           !unit.isUnderConstruction() &&
-          (unit.type() === UnitType.Factory || unit.type() === UnitType.Port || unit.type() === UnitType.City) &&
+          (unit.type() === UnitType.Factory ||
+            unit.type() === UnitType.Port ||
+            unit.type() === UnitType.City) &&
           params.game.manhattanDist(unit.tile(), params.tile) <=
             DISABLE_SELECTION_RADIUS,
       );
@@ -746,7 +772,9 @@ export const disableStationElement: MenuElement = {
       .filter(
         (unit) =>
           !unit.isUnderConstruction() &&
-          (unit.type() === UnitType.Factory || unit.type() === UnitType.Port || unit.type() === UnitType.City) &&
+          (unit.type() === UnitType.Factory ||
+            unit.type() === UnitType.Port ||
+            unit.type() === UnitType.City) &&
           params.game.manhattanDist(unit.tile(), params.tile) <=
             DISABLE_SELECTION_RADIUS,
       );
@@ -795,7 +823,11 @@ export const boatMenuElement: MenuElement = {
         icon: boatIcon,
         color: COLORS.boat,
         action: async (params: MenuElementParams) => {
-          params.playerActionHandler.handleBoatAttack(params.myPlayer, params.tile, false);
+          params.playerActionHandler.handleBoatAttack(
+            params.myPlayer,
+            params.tile,
+            false,
+          );
           params.closeMenu();
         },
       },
@@ -813,7 +845,11 @@ export const boatMenuElement: MenuElement = {
           },
         ],
         action: async (params: MenuElementParams) => {
-          params.playerActionHandler.handleBoatAttack(params.myPlayer, params.tile, true);
+          params.playerActionHandler.handleBoatAttack(
+            params.myPlayer,
+            params.tile,
+            true,
+          );
           params.closeMenu();
         },
       },
@@ -897,10 +933,23 @@ export const rootMenuElement: MenuElement = {
     const showDonateInsteadOfAttack =
       isFriendlyTarget(params) && !isDisconnected && !hasBuildableAttacks;
 
+    // Only offer the rail cutter when the clicked tile actually holds a track,
+    // so the wheel stays uncluttered away from railways.
+    const hasRailroad =
+      isOwnTerritory &&
+      !params.game.inSpawnPhase() &&
+      params.game.hasRailroadAt(params.tile);
+
     const menuItems: (MenuElement | null)[] = [
       infoMenuElement,
       ...(isOwnTerritory
-        ? [deleteUnitElement, disableStationElement, allyRequestElement, buildMenuElement]
+        ? [
+            ...(hasRailroad ? [destroyRailroadElement] : []),
+            deleteUnitElement,
+            disableStationElement,
+            allyRequestElement,
+            buildMenuElement,
+          ]
         : [
             isAllied && !isDisconnected ? allyBreakElement : boatMenuElement,
             inExtensionWindow ? allyExtendElement : allyRequestElement,

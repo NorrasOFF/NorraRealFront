@@ -12,6 +12,7 @@ import { BoatRetreatExecution } from "./BoatRetreatExecution";
 import { ConstructionExecution } from "./ConstructionExecution";
 import { CreateFleetExecution } from "./CreateFleetExecution";
 import { DeleteUnitExecution } from "./DeleteUnitExecution";
+import { DestroyRailroadExecution } from "./DestroyRailroadExecution";
 import { DisableTrainStationExecution } from "./DisableTrainStationExecution";
 import { DonateGoldExecution } from "./DonateGoldExecution";
 import { DonateTroopsExecution } from "./DonateTroopExecution";
@@ -147,6 +148,8 @@ export class Executor {
         return new DeleteUnitExecution(player, intent.unitId);
       case "disable_train_station":
         return new DisableTrainStationExecution(player, intent.unitId);
+      case "destroy_railroad":
+        return new DestroyRailroadExecution(player, intent.tile);
       case "create_fleet":
         return new CreateFleetExecution(player, intent.unitIds);
       case "leave_fleet":

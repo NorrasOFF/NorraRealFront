@@ -55,6 +55,7 @@ export type Intent =
   | UpgradeStructureIntent
   | DeleteUnitIntent
   | DisableTrainStationIntent
+  | DestroyRailroadIntent
   | CreateFleetIntent
   | LeaveFleetIntent
   | KickPlayerIntent
@@ -97,6 +98,7 @@ export type DeleteUnitIntent = z.infer<typeof DeleteUnitIntentSchema>;
 export type DisableTrainStationIntent = z.infer<
   typeof DisableTrainStationIntentSchema
 >;
+export type DestroyRailroadIntent = z.infer<typeof DestroyRailroadIntentSchema>;
 export type CreateFleetIntent = z.infer<typeof CreateFleetIntentSchema>;
 export type LeaveFleetIntent = z.infer<typeof LeaveFleetIntentSchema>;
 export type KickPlayerIntent = z.infer<typeof KickPlayerIntentSchema>;
@@ -755,6 +757,14 @@ export const DisableTrainStationIntentSchema = z.object({
   unitId: zb.uint(),
 });
 
+export const DestroyRailroadIntentSchema = z.object({
+  type: z.literal("destroy_railroad"),
+  // Any tile on the segment to remove. The core resolves it to the railroad
+  // whose tile list contains this tile, so the client does not need to know
+  // railroad ids.
+  tile: zb.uint(),
+});
+
 export const CreateFleetIntentSchema = z.object({
   type: z.literal("create_fleet"),
   unitIds: z.array(zb.uint()),
@@ -838,6 +848,7 @@ export const IntentSchema = z.discriminatedUnion("type", [
   TogglePauseIntentSchema,
   UpdateGameConfigIntentSchema,
   ToggleGameStartTimerIntentSchema,
+  DestroyRailroadIntentSchema,
 ]);
 
 // StampedIntent = Intent with server-stamped clientID (used in turns and execution)
