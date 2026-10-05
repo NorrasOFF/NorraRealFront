@@ -1,7 +1,7 @@
 import { ExecutionCheckpoint } from "../Checkpoint";
 import { Execution, Game, Player } from "../game/Game";
 
-const cancelDelay = 20;
+const cancelDelay = 10;
 
 export interface RetreatExecutionCheckpoint {
   playerId: string;

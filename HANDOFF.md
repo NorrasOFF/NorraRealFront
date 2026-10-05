@@ -1,4 +1,4 @@
-# Handoff — weighted train destinations (level-based) on main
+# Handoff — retreats are now free and twice as fast
 
 > Future sessions: this file holds the current handoff. Overwrite it rather than
 > appending; keep only the latest handoff.
@@ -27,45 +27,42 @@ Companion notes: `testnotes.md` (bug/feature detail + pre-existing failures).
 
 ## 2. What changed this session
 
-**Commit `6cedd0249` — "Weight train destinations toward higher-level
-stations"** (`origin/main`).
+**Retreating no longer costs troops and the return delay is halved.**
 
-Trains previously picked a destination by **uniform** reservoir sampling over
-eligible City/Port stations (`Cluster.randomTradeDestination`), ignoring level.
-Now each eligible destination is weighted by its level so trains slightly
-prefer more developed destinations. Spawn rate / spawn logic is untouched.
+1. **No troop cost on retreat** (`src/core/execution/AttackExecution.ts`).
+   Removed the `malusForRetreat = 25` constant and the `malusPercent` parameter
+   from `retreat()`. Retreating an attack now refunds **all** surviving troops
+   (previously a player-target retreat killed 25% of them). The
+   `events_display.attack_cancelled_retreat` messages for land retreats are gone
+   with the deaths; the translation key is left in `en.json` (unused) so Crowdin
+   stays untouched. The now-unused `renderTroops`/`MessageType` imports were
+   dropped.
+2. **No troop cost on boat retreat**
+   (`src/core/execution/TransportShipExecution.ts`). The same 25% malus that
+   fired when a transport/escort arrived at a tile the attacker already owned
+   (auto-retreat) is removed; the full boat troop count is refunded.
+3. **Return delay halved** (`src/core/execution/RetreatExecution.ts`).
+   `cancelDelay` changed `20` → `10` ticks: an ordered retreat now resolves (and
+   refunds troops) in half the time. The value is captured/restored by the
+   checkpoint, so save/resume is unaffected.
 
-- `src/core/game/TrainStation.ts`:
-  - New `TRAIN_DESTINATION_LEVEL_WEIGHT = 0.25` and
-    `trainDestinationWeight(level) = round(1000 * (1 + 0.25 * ln(level)))`
-    (level ≤ 1 → 1000). Uses the deterministic `log` from `src/core/DetMath.ts`,
-    not `Math.log`, so all clients agree.
-  - `randomTradeDestination` switched to weighted reservoir sampling:
-    `totalWeight += weight; if (random.nextInt(0, totalWeight) < weight) selected =
-station;`. Draw count per eligible station is unchanged.
-- `tests/core/game/Cluster.test.ts`: `createStation` gained a `level` arg; new
-  `trainDestinationWeight` unit tests and a seeded-distribution test (level-50
-  vs four level-1 stations, ratio ~1.978).
-
-Effect: a level-50 destination is ~1.98x as likely as a level-1 one; level-10
-~1.58x. Diminishing and mild by design. In a line of 4×L1 + 1×L50 with the L50
-furthest from the source, expected income per trip rises ~10.9%
-(3.00 → 3.33 city stops) because the further destination is picked more often.
-If the high-level station were nearest instead, the same weighting would
-reduce income.
+`testnotes.md` gained a "Retreats are free / faster" section with the exact
+semantics.
 
 ## 3. Verification
 
-- `npx vitest run tests/core/game/Cluster.test.ts` — 12/12 pass.
 - `npx tsc --noEmit` — clean.
-- Pre-commit hook (oxlint --fix + eslint --fix + prettier) ran clean on both
-  files.
+- `npx vitest run tests/Attack.test.ts tests/Disconnected.test.ts` — 45/45 pass
+  (the boat-retreat test was renamed to "No troop penalty on retreat Transport
+  Ship arrival" and now asserts a full refund).
+- `npx oxlint` + `npx eslint` on all four changed files — clean.
 
 ## 4. Open items / next steps
 
-- Replay/checkpoint tests are unaffected in structure (same PRNG draw count),
-  but any golden transcript or recorded-game expectations predating this
-  change will now diverge on train routes — expected for a gameplay change.
-  The documented pre-existing suite failures in `testnotes.md` still stand.
-- The change is proximity-agnostic: it only rewards level, so its income effect
-  depends on where high-level stations sit relative to the spawning factory.
+- The `cancelDelay` change alters the tick at which a retreat lands, so any
+  golden transcript / recorded-game expectation that covers a retreat will
+  diverge — expected for a gameplay change. The documented pre-existing suite
+  failures in `testnotes.md` still stand.
+- No new tests assert the land retreat refund directly; the changed boat test
+  covers the removal of the shared malus. If a dedicated "land retreat refunds
+  all troops" test is wanted, add it to `tests/Attack.test.ts`.

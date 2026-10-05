@@ -29,6 +29,27 @@ These are environment-only failures, **not code regressions**: they pass in CI
 (where jsdom provides a working `localStorage`) and on machines where
 `localStorage` is available.
 
+## Retreats are free and twice as fast
+
+The retreat (cancel-attack) cost and delay were removed/halved:
+
+- `AttackExecution.ts`: the `malusForRetreat = 25` constant and the
+  `malusPercent` parameter of `retreat()` are gone. A land attack that retreats
+  against a player now refunds **all** surviving troops; previously 25% were
+  killed and an `events_display.attack_cancelled_retreat` message was shown. The
+  translation key stays in `en.json` but is now unreferenced. `retreat()` no
+  longer uses `renderTroops`/`MessageType`, so those imports were removed.
+- `TransportShipExecution.ts`: the same 25% malus on a boat arriving at a tile
+  the attacker already owns (auto-retreat) is removed — the full boat troop
+  count is refunded and no `ATTACK_CANCELLED` message is emitted.
+- `RetreatExecution.ts`: `cancelDelay` is now `10` (was `20`). A retreat ordered
+  via `orderRetreat` resolves to `executeRetreat` in half the ticks. The delay
+  is part of the retreat checkpoint, so save/resume captures it exactly.
+
+Test impact: `tests/Attack.test.ts` "Boat penalty on retreat Transport Ship
+arrival" became "No troop penalty on retreat Transport Ship arrival" and asserts
+`defender.troops() >= player_start_troops` after the refund.
+
 ## Same-nation trade ships
 
 Trade ships may now pick a destination port owned by their own player (same
