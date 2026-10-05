@@ -426,11 +426,8 @@ export class Config {
   }
   trainGold(
     rel: "self" | "team" | "ally" | "other",
-    citiesVisited: number,
     player: Player | PlayerView,
   ): Gold {
-    // No penalty for the first 10 cities.
-    citiesVisited = Math.max(0, citiesVisited - 9);
     let baseGold: number;
     switch (rel) {
       case "ally":
@@ -444,9 +441,7 @@ export class Config {
         baseGold = 25_000;
         break;
     }
-    const distPenalty = citiesVisited * 5_000;
-    const gold = Math.max(5000, baseGold - distPenalty);
-    return toInt(gold * this.goldMultiplierFor(player));
+    return toInt(baseGold * this.goldMultiplierFor(player));
   }
 
   trainStationMinRange(): number {
