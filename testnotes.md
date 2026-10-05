@@ -269,6 +269,43 @@ Tests: `tests/server/GameServerSave.test.ts` (`isWaitingInLobby` before/after
 start), `tests/client/GameServerApiCallers.test.ts` (the `?force=1` URL), and
 `tests/client/SavesModalResume.test.ts` (import calls resume with `force`).
 
+## Defense-post drag upgrades existing posts (Shift = 5 levels)
+
+The left-drag "draw a line of defense posts" gesture previously emitted one
+`build_unit` intent per sampled tile. On a tile that already holds a defense
+post the build simply failed. Now the line decides per tile:
+
+- Empty tile → build a new defense post (unchanged).
+- Tile with an owned, active, not-under-construction defense post → upgrade it.
+
+`BuildPreviewController.onDefenseLineComplete` builds a `tile → unitId` map from
+`myPlayer.units(UnitType.DefensePost)` (skipping under-construction posts) and
+calls the new exported pure helper `planDefenseLineActions(tiles, postIdAt,
+upgradeAmount)`, which returns a `build`/`upgrade` action per tile. Upgrades are
+sent as a **single** `SendUpgradeStructureIntentEvent(unitId, DefensePost,
+amount)` per post. A single intent with `amount` is required: `UpgradeStructureExecution`
+runs its `amount` upgrade loop before `beginDefensePostUpgrade()`, so a bulk
+amount stacks levels in one tick. Emitting several separate intents would make
+all but the first fail, because the post is under construction after the first
+(which is also why the existing Shift-click 5× upgrade path — 5 separate
+intents with `amount = upgradeMultiplier` — only lands one level on a defense
+post).
+
+Shift on release upgrades each existing post by 5 levels, otherwise 1 (the
+`DefensePostLineCompleteEvent` now carries `shiftKey`, taken from the pointer-up
+event). `uiState.upgradeMultiplier` is intentionally not applied to the drag so
+Shift has a stable meaning.
+
+InputHandler change: a defense-post ghost now takes priority over the Shift
+`boxSelectWarships` gesture, so Shift+drag draws the line (and upgrades 5×)
+instead of starting a warship selection box. An in-progress selection box and
+touch long-press still take precedence.
+
+Tests: `tests/client/controllers/BuildPreviewController.test.ts`
+(`planDefenseLineActions`: mixed build/upgrade, Shift amount, all-empty,
+all-existing). `tests/core/utilities/DefensePostLine.test.ts` and
+`tests/core/executions/UpgradeStructureExecution.test.ts` still pass.
+
 ## Ctrl+drag conquest avoidance is a region toggle
 
 The ctrl+drag that excludes frontline tiles from conquest no longer toggles each

@@ -130,6 +130,8 @@ export class DefensePostLineCompleteEvent implements GameEvent {
     public readonly startY: number,
     public readonly endX: number,
     public readonly endY: number,
+    /** Shift held on release upgrades existing posts along the line by 5 levels. */
+    public readonly shiftKey: boolean = false,
   ) {}
 }
 
@@ -975,6 +977,7 @@ export class InputHandler {
           this.lastPointerDownY,
           event.clientX,
           event.clientY,
+          event.shiftKey,
         ),
       );
       return;
@@ -1168,12 +1171,20 @@ export class InputHandler {
         }
       }
 
+      // A defense-post ghost turns a left-drag into a line of defense posts
+      // (building new ones and upgrading existing ones along the line). This
+      // takes priority over the Shift box-select gesture so Shift can mean
+      // "upgrade 5 levels" while dragging a line. An in-progress selection box
+      // and touch long-press still win.
+      const defensePostGhost =
+        this.uiState.ghostStructure === UnitType.DefensePost;
       // If shift is held OR touch long-press is active OR selection box already
       // started, continue emitting selection box updates
       if (
         this.selectionBoxActive ||
-        this.activeKeys.has(this.keybinds.boxSelectWarships) ||
-        this.longPressActive
+        this.longPressActive ||
+        (this.activeKeys.has(this.keybinds.boxSelectWarships) &&
+          !defensePostGhost)
       ) {
         this.selectionBoxActive = true;
         this.eventBus.emit(
@@ -1184,10 +1195,7 @@ export class InputHandler {
             event.clientY,
           ),
         );
-      } else if (
-        this.uiState.ghostStructure === UnitType.DefensePost &&
-        !this.activeKeys.has(this.keybinds.boxSelectWarships)
-      ) {
+      } else if (defensePostGhost) {
         // Hold left mouse + drag with a defense-post ghost active → draw a
         // line of defense posts instead of panning the camera.
         const dist =

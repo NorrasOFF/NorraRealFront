@@ -45,6 +45,35 @@ export function shouldPreserveGhostAfterBuild(unitType: UnitType): boolean {
   return unitType === UnitType.AtomBomb || unitType === UnitType.HydrogenBomb;
 }
 
+/** A single placement decision for one tile of a dragged defense-post line. */
+export type DefenseLineAction =
+  | { kind: "build"; x: number; y: number }
+  | { kind: "upgrade"; unitId: number; amount: number };
+
+/**
+ * Decide, for every tile along a dragged defense-post line, whether to build a
+ * new post or upgrade an existing one. `postIdAt` returns the id of an
+ * upgradable defense post already on that tile (owned, active, not under
+ * construction) or undefined when the tile is empty. Existing posts are
+ * upgraded by `upgradeAmount` levels (1 normally, 5 with Shift held).
+ */
+export function planDefenseLineActions(
+  tiles: readonly { x: number; y: number }[],
+  postIdAt: (x: number, y: number) => number | undefined,
+  upgradeAmount: number,
+): DefenseLineAction[] {
+  const actions: DefenseLineAction[] = [];
+  for (const t of tiles) {
+    const unitId = postIdAt(t.x, t.y);
+    if (unitId !== undefined) {
+      actions.push({ kind: "upgrade", unitId, amount: upgradeAmount });
+    } else {
+      actions.push({ kind: "build", x: t.x, y: t.y });
+    }
+  }
+  return actions;
+}
+
 // tSamIntercept value used to flag an untargetable (impassable) destination:
 // draws the red X marker essentially at the destination while leaving the
 // visible line unchanged (1.0 would mean "no marker").
@@ -734,11 +763,40 @@ export class BuildPreviewController implements Controller {
       e.endY,
     );
     const tiles = this.defenseLineTiles(start.x, start.y, end.x, end.y);
-    for (const t of tiles) {
-      const tileRef = this.game.ref(t.x, t.y);
-      this.eventBus.emit(
-        new BuildUnitIntentEvent(UnitType.DefensePost, tileRef),
-      );
+
+    // A defense post already sitting on a sampled tile is upgraded in place
+    // rather than rebuilt. Shift upgrades each existing post by 5 levels.
+    const postByTile = new Map<number, number>();
+    const myPlayer = this.game.myPlayer();
+    if (myPlayer) {
+      for (const u of myPlayer.units(UnitType.DefensePost)) {
+        if (u.isUnderConstruction()) continue;
+        postByTile.set(u.tile(), u.id());
+      }
+    }
+    const upgradeAmount = e.shiftKey ? 5 : 1;
+    const actions = planDefenseLineActions(
+      tiles,
+      (x, y) => postByTile.get(this.game.ref(x, y)),
+      upgradeAmount,
+    );
+    for (const a of actions) {
+      if (a.kind === "upgrade") {
+        this.eventBus.emit(
+          new SendUpgradeStructureIntentEvent(
+            a.unitId,
+            UnitType.DefensePost,
+            a.amount,
+          ),
+        );
+      } else {
+        this.eventBus.emit(
+          new BuildUnitIntentEvent(
+            UnitType.DefensePost,
+            this.game.ref(a.x, a.y),
+          ),
+        );
+      }
     }
 
     this.removeGhostStructure();
