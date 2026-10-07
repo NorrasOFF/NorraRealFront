@@ -386,3 +386,36 @@ confirmed `GameView.hasRailroadAt(ref)` went `true -> false` and the client
 (trains on the rail + a `+25.0K` train-gold popup) and
 `08-game-remove-railroad.png` (the radial slice). The throwaway driver was
 deleted; re-create it from this note if the flow needs re-running.
+
+## Defense-post drag can start on the hotbar; HUD icons are not draggable
+
+Pressing an already-selected build hotbar icon and dragging onto the map was
+swallowed by the browser's native image drag: the `<img>` icons in the hotbar
+(`UnitDisplay`) and build menu (`BuildMenu`) had no `draggable="false"`, so a
+press-and-drag from an icon showed the OS "no-drop" cursor (the reported "stop
+sign") and never reached the canvas, so the defense-post line gesture never
+started.
+
+- `UnitDisplay.renderUnitItem`: the icon `<img>` sets `draggable="false"`, the
+  item container cancels `dragstart`, and a `@pointerdown` on an already-selected
+  icon emits the new `BeginBuildDragEvent`.
+- `BeginBuildDragEvent` (`InputHandler.ts`) makes `InputHandler` start pointer
+  tracking (`pointerDown`, `pointerDownFromHud`, the down position) so the
+  following `window` `pointermove` runs the defense-post line branch and
+  `pointerup` completes it. A press that began on the HUD and did not become a
+  line drag returns early in `onPointerUp` (`pointerDownFromHud` guard), so the
+  hotbar's own `@click` still toggles selection; `window.blur` clears the flag.
+- `BuildMenu` icon + gold `<img>`s set `draggable="false"`.
+
+Only the defense-post ghost starts a line this way; other build icons keep their
+click-only behavior. Browser-verified in headless Chrome (throwaway `e2e` driver
+reusing `driver.mjs`/`game.mjs`): a hotbar press-drag built a post on an empty
+sample and upgraded the post under the end sample by +5 (double-tap
+multiplier), with zero native `dragstart` events.
+
+Known limitation (unchanged): the line samples tiles every
+`2 * defensePostRange - 5` = 55 world units (plus the exact start/end tiles), and
+a post is upgraded only when a sample lands exactly on its tile. Dragging over a
+post whose tile is not a sample point still builds/skips instead of upgrading
+it. A map drag from post A to post B upgrades both because the sampler always
+includes the start and end tiles.

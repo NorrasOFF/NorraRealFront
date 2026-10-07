@@ -133,6 +133,20 @@ export class DefensePostLineCompleteEvent implements GameEvent {
   ) {}
 }
 
+/**
+ * Emitted when the pointer goes down on a HUD build hotbar icon whose unit is
+ * already the active ghost. Lets a hold-and-drag gesture that starts on the
+ * icon (e.g. the defense-post slot) continue as a map build drag instead of
+ * being swallowed by the HUD.
+ */
+export class BeginBuildDragEvent implements GameEvent {
+  constructor(
+    public readonly x: number,
+    public readonly y: number,
+    public readonly unitType: UnitType,
+  ) {}
+}
+
 /** Emitted while the user is drawing a shift+drag selection rectangle */
 export class WarshipSelectionBoxUpdateEvent implements GameEvent {
   constructor(
@@ -301,6 +315,10 @@ export class InputHandler {
   private lastGestureScale: number | null = null;
 
   private pointerDown: boolean = false;
+  // True when the current press started on a HUD hotbar build icon (see
+  // BeginBuildDragEvent). Such a press must not fall through to a build click
+  // unless it turned into a map drag.
+  private pointerDownFromHud: boolean = false;
 
   private alternateView = false;
 
@@ -554,6 +572,19 @@ export class InputHandler {
       }
     });
 
+    // A build drag that starts on a HUD hotbar icon: take over pointer tracking
+    // so the subsequent window pointermove can draw a defense-post line.
+    this.eventBus.on(BeginBuildDragEvent, (e) => {
+      if (e.unitType !== UnitType.DefensePost) return;
+      if (this.uiState.ghostStructure !== e.unitType) return;
+      this.pointerDown = true;
+      this.pointerDownFromHud = true;
+      this.lastPointerX = e.x;
+      this.lastPointerY = e.y;
+      this.lastPointerDownX = e.x;
+      this.lastPointerDownY = e.y;
+    });
+
     this.canvas.addEventListener("pointerdown", (e) => this.onPointerDown(e));
     window.addEventListener("pointerup", (e) => this.onPointerUp(e));
     window.addEventListener("pointercancel", (e) => this.onPointerUp(e));
@@ -609,6 +640,7 @@ export class InputHandler {
         this.eventBus.emit(new AlternateViewEvent(false));
       }
       this.pointerDown = false;
+      this.pointerDownFromHud = false;
       this.pointers.clear();
       this.lastGestureScale = null;
       if (this.longPressTimer !== null) {
@@ -963,6 +995,15 @@ export class InputHandler {
       // suppress the tap so we don't emit a spurious TouchEvent
       if (!this.selectionBoxActive) {
         this.suppressNextTap = true;
+      }
+    }
+
+    // A press that began on a HUD hotbar icon only acts if it grew into a
+    // defense-post line drag; otherwise the hotbar's own click handler decides.
+    if (this.pointerDownFromHud) {
+      this.pointerDownFromHud = false;
+      if (!this.defenseLineActive) {
+        return;
       }
     }
 
