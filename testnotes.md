@@ -413,9 +413,24 @@ reusing `driver.mjs`/`game.mjs`): a hotbar press-drag built a post on an empty
 sample and upgraded the post under the end sample by +5 (double-tap
 multiplier), with zero native `dragstart` events.
 
-Known limitation (unchanged): the line samples tiles every
-`2 * defensePostRange - 5` = 55 world units (plus the exact start/end tiles), and
-a post is upgraded only when a sample lands exactly on its tile. Dragging over a
-post whose tile is not a sample point still builds/skips instead of upgrading
-it. A map drag from post A to post B upgrades both because the sampler always
-includes the start and end tiles.
+## Defense-post drag upgrades every post the line passes over
+
+`planDefenseLineActions` (`BuildPreviewController.ts`) no longer matches posts
+by exact sample tile. It now takes the owned posts and the dragged segment and
+upgrades **every** post within `structureMinDist` (15) of the segment
+(`distanceSqToSegment`, also exported), then builds on each sampled tile that
+has no post within that radius. So dragging across a cluster of posts upgrades
+all of them, even when their tiles fall between the 55-unit build samples.
+
+The controller (`onDefenseLineComplete`) passes the live post list (owned,
+active, not under construction) and the segment; the radius is
+`config().structureMinDist()`, matching the radius a click uses to offer an
+upgrade. Unit tests: `tests/client/controllers/BuildPreviewController.test.ts`
+(post on the line upgrades + far samples build; posts between samples all
+upgrade; off-line posts untouched; samples near a post aren't built on;
+`distanceSqToSegment` cases).
+
+Browser-verified: built a row of 4 posts 55 tiles apart with the line tool, then
+re-dragged shifted 5 tiles (so no build sample lands on any post) — all four
+went level 1 -> 6 at the 5x multiplier. Under the old exact-tile matcher none
+would have upgraded.

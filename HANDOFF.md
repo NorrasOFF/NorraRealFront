@@ -46,13 +46,20 @@ Fix (client-only):
   the hotbar `@click` still toggles selection; `window.blur` clears the flag.
 - `src/client/hud/layers/BuildMenu.ts` — icon + gold `<img>` `draggable="false"`.
 
+Follow-up (same session): `planDefenseLineActions` was changed so a dragged line
+upgrades **every** owned post within `structureMinDist` (15) of the dragged
+segment (`distanceSqToSegment`), not only posts sitting exactly on a build
+sample. Empty sampled tiles with no post within 15 still get a new post. Files:
+`src/client/controllers/BuildPreviewController.ts` (planner + `onDefenseLineComplete`)
+and `tests/client/controllers/BuildPreviewController.test.ts` (rewritten).
+
 ## 3. Verification
 
 - `npx tsc --noEmit` — clean.
 - `npx prettier --check`, `npx eslint`, `npx oxlint` on the three changed files —
   clean.
 - `npx vitest run tests/client/controllers/BuildPreviewController.test.ts` —
-  15 passed. (`tests/InputHandler.test.ts` still fails wholesale in this
+  21 passed. (`tests/InputHandler.test.ts` still fails wholesale in this
   environment on the documented `localStorage is undefined` issue; it aborts in
   `InputHandler.initialize` before touching this change. CI/jsdom is unaffected.)
 - Real-browser e2e (throwaway driver reusing `e2e/driver.mjs` +
@@ -63,17 +70,12 @@ Fix (client-only):
     under the line's end sample by +5 (double-tap multiplier) and built a post
     on an empty sample (`2 -> 7,1`).
   - `0` native `dragstart` events fired during the hotbar drag.
+  - Built a row of 4 posts 55 tiles apart with the line tool, then re-dragged
+    shifted 5 tiles (no sample lands on a post) — all four went `1 -> 6`. The old
+    exact-tile matcher upgraded none.
 
 ## 4. Open items / next steps
 
-- **Sample alignment (pre-existing, unchanged).** `onDefenseLineComplete` only
-  upgrades a post when a sample tile lands _exactly_ on it. Samples are spaced
-  `2 * defensePostRange() - 5` = 55 world units, and the start/end tiles are
-  always included. So a drag over a post whose tile is not a sample still
-  builds/skips instead of upgrading. If users expect "drag across N posts =>
-  upgrade all N", change the `postIdAt` callback to resolve the nearest owned
-  post within `structureMinDist` (15) of a sample (mirrors the core's click
-  upgrade radius) — `planDefenseLineActions` itself needs no change.
 - Other HUD `<img>`s (e.g. `PlayerPanel`, `PlayerInfoOverlay`) are still natively
   draggable; only the build-origin icons were changed. If a stop-sign cursor is
   reported from another HUD area, add `draggable="false"` there too.
