@@ -3,6 +3,7 @@ import { GameCheckpoint } from "./Checkpoint";
 import { Config } from "./configuration/Config";
 import { DoomsdayClockExecution } from "./execution/DoomsdayClockExecution";
 import { Executor } from "./execution/ExecutionManager";
+import { RailroadLinkExecution } from "./execution/RailroadLinkExecution";
 import { RecomputeRailClusterExecution } from "./execution/RecomputeRailClusterExecution";
 import { SpawnTimerExecution } from "./execution/SpawnTimerExecution";
 import { WinCheckExecution } from "./execution/WinCheckExecution";
@@ -136,6 +137,9 @@ export class GameRunner {
       this.game.addExecution(
         new RecomputeRailClusterExecution(this.game.railNetwork()),
       );
+      // Registered after the cluster recompute so it observes up-to-date
+      // clusters in the same tick.
+      this.game.addExecution(new RailroadLinkExecution());
     }
   }
 

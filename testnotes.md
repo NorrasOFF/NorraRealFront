@@ -434,3 +434,41 @@ Browser-verified: built a row of 4 posts 55 tiles apart with the line tool, then
 re-dragged shifted 5 tiles (so no build sample lands on any post) — all four
 went level 1 -> 6 at the 5x multiplier. Under the old exact-tile matcher none
 would have upgraded.
+
+## Factory rail links are an informational "Railroad" unit
+
+A private-fork feature: two of **the same player's own factories** that are
+joined by rail become a persistent `UnitType.Railroad` unit, shown only in that
+player's own info menu (the radial `PlayerPanel`) in a fleet-display-shaped list
+with a small red delete button per entry.
+
+- `UnitType.Railroad = "Railroad"` (`Game.ts`, appended last so existing binary
+  union ordinals are unchanged). `Config.unitInfo` gives it `cost: () => 0n`,
+  no `maxHealth`, no construction; it is not in `Structures`/`BuildMenus`/
+  `PlayerBuildable`, is never rendered (it is absent from the client
+  `ALL_UNIT_TYPES`, so `UnitPass`/`StructurePass` skip it) and is created with
+  `setTargetable(false)`. `PlayerImpl.canSpawnUnitType` returns `false` for it.
+- `RailroadLinkExecution` (added in `GameRunner.init` right after
+  `RecomputeRailClusterExecution`, only when Factory is not disabled) reconciles
+  links every tick. Two factories count as connected when their `TrainStation`s
+  share a `Cluster` (i.e. **any rail path**, through any intermediate stations).
+- Link state lives on `PlayerImpl._railroadLinks` (factoryId -> partner/unitId;
+  both endpoints share one entry pair) and is captured by
+  `PlayerCheckpoint.railroadLinks` (optional field for old blobs). The
+  execution only tracks `prevConnected` (checkpointed as `kind:
+"railroad_link"`) to turn connectivity into events.
+- Semantics (per the feature request): a link is created on the transition into
+  "connected" and then persists even if the rail is torn down and rebuilt (the
+  same unit is reused, because the pair is not _newly_ connected on rebuild).
+  It is dropped when either factory dies, or when one of the two factories
+  connects to a different factory (newest connection wins). Manual deletes
+  stick until the pair actually reconnects.
+- Delete: client `SendDeleteRailroadIntentEvent` -> `delete_railroad { unitId }`
+  intent -> `DeleteRailroadExecution`, which cuts the station-path rail between
+  the two factories and removes the link/unit.
+- Tests: `tests/core/executions/RailroadLinkExecution.test.ts` (create,
+  no-link when disconnected, persist across teardown/rebuild, replace on
+  reconnect, drop on factory death, delete cuts the rail).
+
+Not yet browser-verified end to end (the panel rendering + delete button were
+not driven in headless Chrome in this session).
