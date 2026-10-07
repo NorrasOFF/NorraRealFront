@@ -59,17 +59,18 @@ be close to 25.555`), unrelated and present on the clean tip.
 - `npx vitest run tests/zbin` + `RailNetwork`/`TrainStation`/
   `DestroyRailroadExecution` — 192 passed. `tests/core/Checkpoint*.test.ts` —
   passed (LateGame gated/skipped).
+- **Browser e2e** (headless Chrome, throwaway driver reusing `e2e/driver.mjs` +
+  `.claude/skills/run-openfront/game.mjs`; deleted afterwards): built two
+  factories for one player, opened the radial info menu on own territory, saw
+  `Factory Rail Links | 1 | <ax>,<ay> ↔ <bx>,<by>`, clicked the rail's ✕ and
+  confirmed the link was removed while both factories survived. Gotcha: the
+  panel's own close button also renders "✕", so target the rail button by
+  `aria-label="Delete rail link"`, not by text.
 
 ## 4. Open items / next steps
 
-- **Not browser-verified**: the `PlayerPanel` rail list and its delete button
-  were not driven end to end in headless Chrome. Recreate the throwaway e2e
-  driver (see `testnotes.md`, reuse `e2e/driver.mjs` + `.claude/skills/
-run-openfront/game.mjs`): build two factories for one player within rail range,
-  open the radial info menu on your own land, confirm the `railroad` list appears
-  and the ✕ removes the entry and the rail.
-- The pairing rule ("newest connection wins" when one factory connects to
-  several at once) is heuristic in a single-tick multi-connect; the execution
-  processes new pairs in sorted order and later pairs override earlier ones.
-  Confirm this matches the intended behavior in dense factory clusters.
+- Pairing rule ("newest connection wins" when one factory connects to several at
+  once) is heuristic in a single-tick multi-connect: new pairs are processed in
+  sorted order and later pairs override earlier ones. Confirm this matches the
+  intended behavior in dense factory clusters.
 - The pre-existing suite failures listed in `testnotes.md` still stand.

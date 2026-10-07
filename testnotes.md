@@ -470,5 +470,11 @@ with a small red delete button per entry.
   no-link when disconnected, persist across teardown/rebuild, replace on
   reconnect, drop on factory death, delete cuts the rail).
 
-Not yet browser-verified end to end (the panel rendering + delete button were
-not driven in headless Chrome in this session).
+Browser-verified end to end (headless Chrome, throwaway `e2e` driver reusing
+`e2e/driver.mjs` + `.claude/skills/run-openfront/game.mjs`; deleted afterwards):
+built two factories for one player, opened the radial info menu on own
+territory, and confirmed the panel showed `Factory Rail Links | 1 |
+<ax>,<ay> ↔ <bx>,<by>`; clicking the rail's ✕ (`aria-label="Delete rail
+link"`) removed the link (`count 1 -> 0`) while both factories stayed standing.
+The panel's own close button also renders "✕", so a test must match the rail
+button by its `aria-label`, not by text.
