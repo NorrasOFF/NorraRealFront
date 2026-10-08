@@ -27,6 +27,7 @@ import {
   PlayerReportedEvent,
   SendAllianceRequestIntentEvent,
   SendBreakAllianceIntentEvent,
+  SendDeleteRailroadIntentEvent,
   SendEmbargoAllIntentEvent,
   SendEmbargoIntentEvent,
   SendEmojiIntentEvent,
@@ -753,6 +754,81 @@ export class PlayerPanel extends LitElement implements Controller {
     this.eventBus.emit(new SendSetTollRateIntentEvent(other, value));
   }
 
+  /**
+   * Own-nation only: the persistent rail links between your own factories,
+   * shown in a compact list shaped like the fleet display. Each entry is one
+   * `UnitType.Railroad` unit and carries a small delete button that cuts the
+   * rail and removes the link.
+   */
+  private renderRailroads(viewer: PlayerView) {
+    const railroads = viewer.units(UnitType.Railroad);
+    if (railroads.length === 0) return html``;
+
+    const nodeLabel = (unit: (typeof railroads)[number]): string => {
+      const otherId = unit.targetUnitId();
+      const partner = otherId !== undefined ? this.g.unit(otherId) : undefined;
+      const from = unit.tile();
+      const fromLabel = `${this.g.x(from)},${this.g.y(from)}`;
+      if (partner === undefined) return fromLabel;
+      const to = partner.tile();
+      return `${fromLabel} ↔ ${this.g.x(to)},${this.g.y(to)}`;
+    };
+
+    return html`
+      <ui-divider></ui-divider>
+      <div class="flex flex-col gap-1.5">
+        <div class="flex items-center justify-between mb-0.5">
+          <span class="text-sm font-semibold tracking-tight">
+            ${translateText("railroad.title")}
+          </span>
+          <span
+            class="inline-flex items-center justify-center min-w-5 h-5 px-1.5 rounded-[10px]
+                 text-[12px] text-zinc-100 bg-white/10 border border-white/20"
+          >
+            ${railroads.length}
+          </span>
+        </div>
+        <div
+          class="rounded-lg bg-zinc-800/70 ring-1 ring-zinc-700/60 w-full min-w-0"
+        >
+          <ul
+            class="max-h-30 overflow-y-auto p-1.5 flex flex-col gap-1
+                 scrollbar-thin scrollbar-thumb-zinc-600 hover:scrollbar-thumb-zinc-500 scrollbar-track-zinc-800"
+            role="list"
+            translate="no"
+          >
+            ${railroads.map(
+              (unit) => html`
+                <li
+                  class="flex items-center justify-between gap-2 rounded-md border border-white/10
+                       bg-white/5 px-2.5 py-1 text-[13px] text-zinc-100"
+                >
+                  <span class="truncate font-mono">${nodeLabel(unit)}</span>
+                  <button
+                    class="shrink-0 rounded-md px-1.5 leading-none text-red-400 transition-colors
+                         hover:bg-red-500/20 hover:text-red-300"
+                    title=${translateText("railroad.delete")}
+                    aria-label=${translateText("railroad.delete")}
+                    @click=${(e: Event) =>
+                      this.handleDeleteRailroad(e, unit.id())}
+                  >
+                    ✕
+                  </button>
+                </li>
+              `,
+            )}
+          </ul>
+        </div>
+      </div>
+    `;
+  }
+
+  private handleDeleteRailroad(e: Event, unitId: number) {
+    e.stopPropagation();
+    this.eventBus.emit(new SendDeleteRailroadIntentEvent(unitId));
+    this.requestUpdate();
+  }
+
   private renderStats(other: PlayerView, my: PlayerView) {
     return html`
       <!-- Betrayals -->
@@ -1194,6 +1270,11 @@ export class PlayerPanel extends LitElement implements Controller {
 
                     <!-- Per-nation toll rate (other nations) -->
                     ${this.renderPersonalTollRate(viewer, other)}
+
+                    <!-- Rail links between own factories (own nation only) -->
+                    ${other === viewer && !isSpectator
+                      ? this.renderRailroads(viewer)
+                      : ""}
 
                     <ui-divider></ui-divider>
 

@@ -268,6 +268,12 @@ export interface PlayerCheckpoint {
    */
   borderTiles: TileRef[];
   unitIds: number[];
+  /**
+   * Persistent informational rail links between this player's own factories,
+   * as `[factoryAId, factoryBId, railroadUnitId]`. Optional for checkpoints
+   * written before the feature existed.
+   */
+  railroadLinks?: [number, number, number][];
   allianceIds: number[];
   outgoingAttackIds: string[];
   incomingAttackIds: string[];

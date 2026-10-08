@@ -386,3 +386,117 @@ confirmed `GameView.hasRailroadAt(ref)` went `true -> false` and the client
 (trains on the rail + a `+25.0K` train-gold popup) and
 `08-game-remove-railroad.png` (the radial slice). The throwaway driver was
 deleted; re-create it from this note if the flow needs re-running.
+
+## Defense-post drag can start on the hotbar; HUD icons are not draggable
+
+Pressing an already-selected build hotbar icon and dragging onto the map was
+swallowed by the browser's native image drag: the `<img>` icons in the hotbar
+(`UnitDisplay`) and build menu (`BuildMenu`) had no `draggable="false"`, so a
+press-and-drag from an icon showed the OS "no-drop" cursor (the reported "stop
+sign") and never reached the canvas, so the defense-post line gesture never
+started.
+
+- `UnitDisplay.renderUnitItem`: the icon `<img>` sets `draggable="false"`, the
+  item container cancels `dragstart`, and a `@pointerdown` on an already-selected
+  icon emits the new `BeginBuildDragEvent`.
+- `BeginBuildDragEvent` (`InputHandler.ts`) makes `InputHandler` start pointer
+  tracking (`pointerDown`, `pointerDownFromHud`, the down position) so the
+  following `window` `pointermove` runs the defense-post line branch and
+  `pointerup` completes it. A press that began on the HUD and did not become a
+  line drag returns early in `onPointerUp` (`pointerDownFromHud` guard), so the
+  hotbar's own `@click` still toggles selection; `window.blur` clears the flag.
+- `BuildMenu` icon + gold `<img>`s set `draggable="false"`.
+
+Only the defense-post ghost starts a line this way; other build icons keep their
+click-only behavior. Browser-verified in headless Chrome (throwaway `e2e` driver
+reusing `driver.mjs`/`game.mjs`): a hotbar press-drag built a post on an empty
+sample and upgraded the post under the end sample by +5 (double-tap
+multiplier), with zero native `dragstart` events.
+
+## Defense-post drag upgrades every post the line passes over
+
+`planDefenseLineActions` (`BuildPreviewController.ts`) no longer matches posts
+by exact sample tile. It now takes the owned posts and the dragged segment and
+upgrades **every** post within `structureMinDist` (15) of the segment
+(`distanceSqToSegment`, also exported), then builds on each sampled tile that
+has no post within that radius. So dragging across a cluster of posts upgrades
+all of them, even when their tiles fall between the 55-unit build samples.
+
+The controller (`onDefenseLineComplete`) passes the live post list (owned,
+active, not under construction) and the segment; the radius is
+`config().structureMinDist()`, matching the radius a click uses to offer an
+upgrade. Unit tests: `tests/client/controllers/BuildPreviewController.test.ts`
+(post on the line upgrades + far samples build; posts between samples all
+upgrade; off-line posts untouched; samples near a post aren't built on;
+`distanceSqToSegment` cases).
+
+Browser-verified: built a row of 4 posts 55 tiles apart with the line tool, then
+re-dragged shifted 5 tiles (so no build sample lands on any post) — all four
+went level 1 -> 6 at the 5x multiplier. Under the old exact-tile matcher none
+would have upgraded.
+
+## Factory rail links are an informational "Railroad" unit
+
+A private-fork feature: two of **the same player's own factories** that are
+joined by rail become a persistent `UnitType.Railroad` unit, shown only in that
+player's own info menu (the radial `PlayerPanel`) in a fleet-display-shaped list
+with a small red delete button per entry.
+
+- `UnitType.Railroad = "Railroad"` (`Game.ts`, appended last so existing binary
+  union ordinals are unchanged). `Config.unitInfo` gives it `cost: () => 0n`,
+  no `maxHealth`, no construction; it is not in `Structures`/`BuildMenus`/
+  `PlayerBuildable`, is never rendered (it is absent from the client
+  `ALL_UNIT_TYPES`, so `UnitPass`/`StructurePass` skip it) and is created with
+  `setTargetable(false)`. `PlayerImpl.canSpawnUnitType` returns `false` for it.
+- `RailroadLinkExecution` (added in `GameRunner.init` right after
+  `RecomputeRailClusterExecution`, only when Factory is not disabled) reconciles
+  links every tick. Two factories count as connected when their `TrainStation`s
+  share a `Cluster` (i.e. **any rail path**, through any intermediate stations).
+- Link state lives on `PlayerImpl._railroadLinks` (factoryId -> partner/unitId;
+  both endpoints share one entry pair) and is captured by
+  `PlayerCheckpoint.railroadLinks` (optional field for old blobs). The
+  execution only tracks `prevConnected` (checkpointed as `kind:
+"railroad_link"`) to turn connectivity into events.
+- Semantics (per the feature request): a link is created on the transition into
+  "connected" and then persists even if the rail is torn down and rebuilt (the
+  same unit is reused, because the pair is not _newly_ connected on rebuild).
+  It is dropped when either factory dies, or when one of the two factories
+  connects to a different factory (newest connection wins). Manual deletes
+  stick until the pair actually reconnects.
+- Delete: client `SendDeleteRailroadIntentEvent` -> `delete_railroad { unitId }`
+  intent -> `DeleteRailroadExecution`, which cuts the station-path rail between
+  the two factories and removes the link/unit.
+- Tests: `tests/core/executions/RailroadLinkExecution.test.ts` (create,
+  no-link when disconnected, persist across teardown/rebuild, replace on
+  reconnect, drop on factory death, delete cuts the rail).
+
+Browser-verified end to end (headless Chrome, throwaway `e2e` driver reusing
+`e2e/driver.mjs` + `.claude/skills/run-openfront/game.mjs`; deleted afterwards):
+built two factories for one player, opened the radial info menu on own
+territory, and confirmed the panel showed `Factory Rail Links | 1 |
+<ax>,<ay> ↔ <bx>,<by>`; clicking the rail's ✕ (`aria-label="Delete rail
+link"`) removed the link (`count 1 -> 0`) while both factories stayed standing.
+The panel's own close button also renders "✕", so a test must match the rail
+button by its `aria-label`, not by text.
+
+## Railroad factory links survive checkpoints (targeted regression test)
+
+`tests/core/executions/RailroadLinkCheckpoint.test.ts` closes the save gap left
+by the `RailroadLinkExecution` feature: the original test only exercised live
+behavior, never a capture/restore. The new test builds two rail-connected
+factories for one player, runs `RailroadLinkExecution`, captures a checkpoint and
+restores it into a fresh game, then asserts the player link table, the
+`UnitType.Railroad` unit and its `targetUnit` all survive, and that a 30-tick
+suffix replays to identical hashes.
+
+Determination for the latest 5 commits (2026-10-08): only `75a0c64a9` (the
+Railroad feature) touches save state — `PlayerCheckpoint.railroadLinks`, the
+`railroad_link` execution checkpoint kind, and a new persistent unit type. The
+other four are docs and client-only input/HUD changes with no checkpoint or wire
+impact (`6bb4049ce`, `fc09efa75`) or pure documentation (`aa09b0fb8`,
+`911865cdb`). The exhaustive `EndgameSaveResume` soak documented above is **not
+needed** for these commits: the new state is additive and backward compatible
+(optional player field, `CHECKPOINT_VERSION` left at 5, so old blobs restore it
+empty), and the targeted round-trip test above proves the new state resumes
+deterministically at a fraction of the cost — no save regression for games saved
+after the commit.

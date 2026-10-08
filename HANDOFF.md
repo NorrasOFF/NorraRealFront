@@ -1,4 +1,4 @@
-# Handoff — remove-railroad button + no train diminishing return
+# Handoff — Railroad-link save coverage; latest-5-commits save-test evaluation
 
 > Future sessions: this file holds the current handoff. Overwrite it rather than
 > appending; keep only the latest handoff. Write one only when the session leaves
@@ -23,106 +23,36 @@ Companion notes: `testnotes.md` (feature/bug detail + pre-existing failures).
 
 ## 2. What changed this session
 
-Two features, both committed together on `main`:
+- Added `tests/core/executions/RailroadLinkCheckpoint.test.ts`: a fast B2
+  checkpoint round-trip for the informational `UnitType.Railroad` links. It
+  builds two rail-connected factories, runs `RailroadLinkExecution`, captures a
+  checkpoint, restores it, and asserts the player link table + the Railroad unit
+  (incl. `targetUnit`) survive and a 30-tick suffix replays to identical hashes.
+- Documented the determination in `testnotes.md` ("Railroad factory links
+  survive checkpoints").
 
-1. **Trains have no diminishing return per stop.** `Config.trainGold` dropped
-   its `citiesVisited` param and the `5_000`/stop `distPenalty`; every stop pays
-   the full base (`25_000` self/team/other, `35_000` ally). Callers in
-   `TrainStation.ts` and `NationStructureBehavior.ts` updated.
-2. **Remove-railroad radial button.** Clicking a railroad on your own territory
-   shows a red "Remove Railroad" slice (same delete style as Delete Unit) that
-   destroys that single segment between its two stations.
+## 3. Save-test evaluation of the latest 5 commits
 
-New/edited pieces for (2):
+Only `75a0c64a9` (Railroad feature) touches save state: `PlayerCheckpoint.
+railroadLinks`, the `railroad_link` execution kind, a new persistent unit type.
+The other four are docs (`aa09b0fb8`, `911865cdb`) or client-only input/HUD
+changes with no checkpoint/wire impact (`6bb4049ce`, `fc09efa75`).
 
-- `src/core/Schemas.ts` — `DestroyRailroadIntentSchema` (`{type:"destroy_railroad",
-tile}`), type `DestroyRailroadIntent`, added to the `Intent` union and appended
-  at the **end** of `IntentSchema` (existing binary tags unchanged).
-- `src/core/execution/DestroyRailroadExecution.ts` — new; ownership check
-  (`mg.owner(tile) === player`), resolves the railroad via the network, prefers
-  an interior tile at junctions, removes it. Instantaneous (`active=false` in
-  `init`), no checkpoint (same as `DisableTrainStationExecution`).
-- `src/core/execution/ExecutionManager.ts` — `case "destroy_railroad"`.
-- `src/core/game/RailNetwork.ts` / `RailNetworkImpl.ts` — `railroadsAt(tile)`
-  (walks stations, sorted by railroad id) and `removeRailroad(rail)` (delete edge
-  - mark endpoint clusters dirty).
-- `src/client/Transport.ts` — `SendDestroyRailroadIntentEvent` + handler.
-- `src/client/hud/layers/PlayerActionHandler.ts` — `handleDestroyRailroad(tile)`.
-- `src/client/hud/layers/RadialMenuElements.ts` — `Slot.Railroad`,
-  `destroyRailroadElement`, included in `rootMenuElement` only when
-  `game.hasRailroadAt(tile)`.
-- `src/client/view/GameView.ts` — `hasRailroadAt(tile)` reads
-  `railroadCache.railroadState`.
-- `resources/lang/en.json` — `radial_menu.remove_railroad_title/_description`.
+Conclusion: the exhaustive `EndgameSaveResume` soak (30-min gated, run per the
+instructions in `testnotes.md`) is **not prudent/necessary** for these commits.
+The new state is additive and backward compatible, and the targeted round-trip
+test covers the save path directly. No save regression for games saved after the
+commit.
 
-## 3. Verification
+## 4. Verification
 
-- `npx tsc --noEmit` — clean.
-- `npx vitest run tests/core/executions/DestroyRailroadExecution.test.ts
-tests/core/game/RailNetwork.test.ts tests/core/executions/TrainExecution.test.ts
-tests/core/CheckpointRail.test.ts tests/zbin
-tests/client/graphics/RadialMenuElements.test.ts tests/radialMenuElements.test.ts`
-  — all pass.
-- `npx prettier --check`, `npx oxlint`, `npx eslint` on changed files — clean.
-- Browser e2e (headless Chrome, throwaway driver): built City + Factory with
-  `instantBuild`/`infiniteGold`, let trains spawn, right-clicked a rail tile, saw
-  the `path[data-id="railroad"]` slice, clicked it, and confirmed the rail was
-  removed (`hasRailroadAt` `true -> false`, cache held 0 railroads). Artifacts:
-  `e2e/artifacts/07-game-train.png`, `08-game-remove-railroad.png`.
-- `tests/server/GameServerWire.test.ts` still fails only on the pre-existing
-  `numTurns` golden mismatch documented in `testnotes.md` — unrelated.
-- A full `npx vitest run` is expected to still show the documented
-  `localStorage`/WebGL environment-only failures.
-
-## 4. Save/resume review (commits of 2026-10-04/05)
-
-Checked every core-touching commit from the last two days against the
-checkpoint system (`CHECKPOINT_VERSION = 5`, `src/core/Checkpoint.ts`). No
-structural/serialization break:
-
-- `6cedd0249` (weighted train destinations) and `764866e9f` (flat train payout)
-  add no persistent state; the destination weighting draws once per eligible
-  station exactly as before (`PseudoRandom` sequence length unchanged) and uses
-  deterministic `DetMath.log`.
-- `911682e5c` (ships step every 1.5 ticks) stores fractional `fleetMoveRate` in
-  `warshipState`, which is part of the unit checkpoint. The checkpoint codec is
-  JSON+tags (`CheckpointCodec.ts`), not zbin, so `1.5` round-trips fine; the new
-  `shipShouldMove` matches the old modulo for integer rates, so restored v5
-  blobs with `fleetMoveRate: 2` behave identically.
-- `49e1435ea` (retreats) and the defense-post client commits add no checkpointed
-  state (defense-post work is client-only). `RetreatExecution` still captures
-  `startTick`; only the constant changed.
-- The remove-railroad change adds `railroadsAt`/`removeRailroad` (the latter
-  marks endpoint clusters dirty, which the rail checkpoint already captures) and
-  an instantaneous execution with no checkpoint, like `DisableTrainStationExecution`.
-
-Empirical: `tests/core/Checkpoint*.test.ts`, `tests/LateGameSaveResume.test.ts`
-and `tests/SaveManager.test.ts` all pass on the working tree (48 passed, 1
-skipped).
-
-**Soft risk (not a crash):** none of these commits bumped `CHECKPOINT_VERSION`,
-so a save captured on an older build is still accepted and then simulated under
-today's rules. In-flight retreats resolve at 10 ticks instead of 20, missile
-ships move at 1.5, train destinations weight toward high-level stations, and
-train payouts are flat. Cross-build fidelity was already impossible (zbin
-requires all peers on one build; the deployed `GIT_COMMIT` is `"unknown"`);
-within one build, save/resume is deterministic. If old saves must be rejected
-explicitly rather than silently re-simulated, bump `CHECKPOINT_VERSION` to 6
-(that forces a full-history fallback, which also re-simulates under new rules —
-neither path restores the original run). Recommendation: leave as-is for this
-fork unless cross-day save fidelity is a requirement.
+- `npx vitest run tests/core/executions/RailroadLinkCheckpoint.test.ts` — 2 passed.
+- `npx vitest run tests/core/executions/RailroadLinkExecution.test.ts tests/core/CheckpointRail.test.ts` — 9 passed.
+- `npx tsc --noEmit` clean; `npx prettier --write` on the new test;
+  `npx oxlint` + `npx eslint` on it — clean.
 
 ## 5. Open items / next steps
 
-- **Junction ambiguity.** If several segments share the clicked tile, the
-  execution removes the lowest-id _interior_ segment (or the lowest-id segment if
-  all are endpoints). There is no per-segment picker yet; if users expect to
-  choose, the intent should carry a railroad id the client reads from
-  `RailroadCache.getRailroads()`.
-- **No cooldown / refund semantics.** Unlike Delete Unit (which has a cooldown
-  and staged destruction) this removes instantly and costs nothing. Decide
-  whether a cooldown is wanted.
-- **Trains mid-segment** on a cut edge finish their current segment and then
-  despawn when `nextStation()` finds no edge (no path). This is intentional but
-  untested explicitly.
+- `75a0c64a9` pairing rule ("newest connection wins" in a single-tick
+  multi-connect) is still heuristic; confirm against dense factory clusters.
 - The pre-existing suite failures listed in `testnotes.md` still stand.

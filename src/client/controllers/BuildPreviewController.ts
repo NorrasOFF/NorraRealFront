@@ -50,25 +50,64 @@ export type DefenseLineAction =
   | { kind: "build"; x: number; y: number }
   | { kind: "upgrade"; unitId: number; amount: number };
 
+/** An owned defense post considered by {@link planDefenseLineActions}. */
+export interface DefenseLinePost {
+  id: number;
+  x: number;
+  y: number;
+}
+
+/** Squared distance from point `p` to segment `ab`. */
+export function distanceSqToSegment(
+  px: number,
+  py: number,
+  ax: number,
+  ay: number,
+  bx: number,
+  by: number,
+): number {
+  const abx = bx - ax;
+  const aby = by - ay;
+  const apx = px - ax;
+  const apy = py - ay;
+  const lenSq = abx * abx + aby * aby;
+  if (lenSq === 0) return apx * apx + apy * apy;
+  const t = Math.max(0, Math.min(1, (apx * abx + apy * aby) / lenSq));
+  const dx = px - (ax + t * abx);
+  const dy = py - (ay + t * aby);
+  return dx * dx + dy * dy;
+}
+
 /**
- * Decide, for every tile along a dragged defense-post line, whether to build a
- * new post or upgrade an existing one. `postIdAt` returns the id of an
- * upgradable defense post already on that tile (owned, active, not under
- * construction) or undefined when the tile is empty. Existing posts are
- * upgraded by `upgradeAmount` levels (the active build amount: 1 normally, 5
- * after double-tapping the defense-post keybind).
+ * Decide what a dragged defense-post line does. Every owned post within
+ * `radius` of the dragged segment is upgraded (so posts the line is dragged
+ * across are all upgraded, even when they fall between the build samples). A
+ * new post is built on each sampled `tiles` entry that has no owned post
+ * within `radius`, so builds don't collide with an existing post.
+ *
+ * `radius` is expected to be the structure minimum spacing, matching the radius
+ * the core uses when a click offers to upgrade a nearby structure.
  */
 export function planDefenseLineActions(
   tiles: readonly { x: number; y: number }[],
-  postIdAt: (x: number, y: number) => number | undefined,
+  posts: readonly DefenseLinePost[],
+  start: { x: number; y: number },
+  end: { x: number; y: number },
+  radius: number,
   upgradeAmount: number,
 ): DefenseLineAction[] {
+  const r2 = radius * radius;
   const actions: DefenseLineAction[] = [];
+  for (const p of posts) {
+    if (distanceSqToSegment(p.x, p.y, start.x, start.y, end.x, end.y) <= r2) {
+      actions.push({ kind: "upgrade", unitId: p.id, amount: upgradeAmount });
+    }
+  }
   for (const t of tiles) {
-    const unitId = postIdAt(t.x, t.y);
-    if (unitId !== undefined) {
-      actions.push({ kind: "upgrade", unitId, amount: upgradeAmount });
-    } else {
+    const nearPost = posts.some(
+      (p) => (p.x - t.x) ** 2 + (p.y - t.y) ** 2 <= r2,
+    );
+    if (!nearPost) {
       actions.push({ kind: "build", x: t.x, y: t.y });
     }
   }
@@ -765,23 +804,30 @@ export class BuildPreviewController implements Controller {
     );
     const tiles = this.defenseLineTiles(start.x, start.y, end.x, end.y);
 
-    // A defense post already sitting on a sampled tile is upgraded in place
-    // rather than rebuilt. The upgrade amount is the active build amount
-    // (`uiState.upgradeMultiplier`): tapping the defense-post keybind twice, or
-    // scrolling while the ghost is active, sets it (1 by default, 5 on
-    // double-tap).
-    const postByTile = new Map<number, number>();
+    // Every owned post the dragged line passes over is upgraded; empty
+    // sampled tiles get a new post. The upgrade amount is the active build
+    // amount (`uiState.upgradeMultiplier`): tapping the defense-post keybind
+    // twice, or scrolling while the ghost is active, sets it (1 by default, 5
+    // on double-tap).
+    const posts: DefenseLinePost[] = [];
     const myPlayer = this.game.myPlayer();
     if (myPlayer) {
       for (const u of myPlayer.units(UnitType.DefensePost)) {
         if (u.isUnderConstruction()) continue;
-        postByTile.set(u.tile(), u.id());
+        posts.push({
+          id: u.id(),
+          x: this.game.x(u.tile()),
+          y: this.game.y(u.tile()),
+        });
       }
     }
     const upgradeAmount = this.uiState.upgradeMultiplier || 1;
     const actions = planDefenseLineActions(
       tiles,
-      (x, y) => postByTile.get(this.game.ref(x, y)),
+      posts,
+      start,
+      end,
+      this.game.config().structureMinDist(),
       upgradeAmount,
     );
     for (const a of actions) {

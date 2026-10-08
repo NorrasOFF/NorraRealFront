@@ -306,6 +306,66 @@ export async function waitForTick(page, tick, timeout = 120_000) {
   );
 }
 
+// ---------- building structures ----------
+
+// Select a build ghost from page JS. `type` is a UnitType string
+// (e.g. "Factory", "City", "Defense Post"). BuildPreviewController clears
+// uiState.ghostStructure after every successful build, so re-select before
+// each placement.
+export async function selectGhostStructure(page, type) {
+  await page.evaluate((t) => {
+    document.querySelector("control-panel").uiState.ghostStructure = t;
+  }, type);
+}
+
+// Number of the local player's unit instances of a type string.
+export async function countMyUnits(page, type) {
+  return await page.evaluate((t) => {
+    const me = document.querySelector("build-menu")?.game?.myPlayer();
+    if (!me) return 0;
+    return me.units().filter((u) => u.type() === t).length;
+  }, type);
+}
+
+// Place a structure at a world tile, reliably, under software rendering.
+//
+// The ghost's "buildable" query is async and lags the pointer: a click right
+// after moving the mouse can use a STALE ghost state and upgrade a previously
+// hovered structure instead of building at the new tile (observed as "only
+// one factory built, second click upgraded the first"). This re-selects the
+// ghost, wiggles the pointer over the tile until the ghost refreshes, clicks,
+// and retries until the instance count actually grows.
+export async function buildStructureAt(page, type, x, y, opts = {}) {
+  const attempts = opts.attempts ?? 4;
+  const settleMs = opts.settleMs ?? 1500;
+  const frameMs = opts.frameMs ?? 1500;
+  const afterMs = opts.afterMs ?? 3000;
+  const before = await countMyUnits(page, type);
+  for (let a = 0; a < attempts; a++) {
+    await selectGhostStructure(page, type);
+    await page.waitForTimeout(settleMs);
+    let s = await worldToScreen(page, x + 0.5, y + 0.5);
+    if (!s) {
+      await panTo(page, x, y);
+      s = await worldToScreen(page, x + 0.5, y + 0.5);
+    }
+    if (!s) continue;
+    for (let i = 0; i < 4; i++) {
+      await page.mouse.move(s.x + (i % 2), s.y);
+      await page.waitForTimeout(frameMs);
+    }
+    try {
+      await clickWorld(page, x, y);
+    } catch {
+      await panTo(page, x, y);
+      await clickWorld(page, x, y).catch(() => {});
+    }
+    await page.waitForTimeout(afterMs);
+    if ((await countMyUnits(page, type)) > before) return true;
+  }
+  return false;
+}
+
 // ---------- smoke flow ----------
 
 const isMain =

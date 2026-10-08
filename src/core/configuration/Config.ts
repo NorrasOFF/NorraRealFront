@@ -663,6 +663,13 @@ export class Config {
           upgradable: true,
         };
         break;
+      case UnitType.Railroad:
+        // Purely informational link between two own factories: free, no
+        // health, never constructed/upgraded and never rendered on the map.
+        info = {
+          cost: () => 0n,
+        };
+        break;
       default:
         assertNever(type);
     }
