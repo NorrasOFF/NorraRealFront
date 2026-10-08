@@ -1,4 +1,4 @@
-# Handoff — informational "Railroad" unit linking two own factories
+# Handoff — Railroad-link save coverage; latest-5-commits save-test evaluation
 
 > Future sessions: this file holds the current handoff. Overwrite it rather than
 > appending; keep only the latest handoff. Write one only when the session leaves
@@ -23,54 +23,36 @@ Companion notes: `testnotes.md` (feature/bug detail + pre-existing failures).
 
 ## 2. What changed this session
 
-Feature request: the rail between two factories should become a unit visible in
-your own info menu, persisting even if the rail is remade. Clarified by the
-user: only same-player factory pairs; not a real gameplay unit (info only);
-info menu = the radial modal (`PlayerPanel`); connectivity = any rail path;
-persists while both factories live, until one connects to a different factory;
-type named **Railroad**; listed like the fleet menu; a per-entry delete button
-cuts the rail.
+- Added `tests/core/executions/RailroadLinkCheckpoint.test.ts`: a fast B2
+  checkpoint round-trip for the informational `UnitType.Railroad` links. It
+  builds two rail-connected factories, runs `RailroadLinkExecution`, captures a
+  checkpoint, restores it, and asserts the player link table + the Railroad unit
+  (incl. `targetUnit`) survive and a 30-tick suffix replays to identical hashes.
+- Documented the determination in `testnotes.md` ("Railroad factory links
+  survive checkpoints").
 
-Implementation (see `testnotes.md` "Factory rail links" for the full spec):
+## 3. Save-test evaluation of the latest 5 commits
 
-- Core: `UnitType.Railroad` (`Game.ts`), `Config.unitInfo` case,
-  `PlayerImpl.canSpawnUnitType` returns false, `setTargetable(false)`.
-- Core: `PlayerImpl._railroadLinks` + getter/`railroadPartner`/`setRailroadLink`/
-  `removeRailroadLink`; captured in `PlayerCheckpoint.railroadLinks`.
-- Core: `src/core/execution/RailroadLinkExecution.ts` reconciles links each tick
-  from rail `Cluster` membership; checkpointed (`kind: "railroad_link"`);
-  registered in `GameRunner.init` (after `RecomputeRailClusterExecution`).
-- Core: `delete_railroad` intent (`Schemas.ts` union + `Intent` type) ->
-  `DeleteRailroadExecution.ts`, which cuts the rail path and removes the link.
-- Client: `SendDeleteRailroadIntentEvent` (`Transport.ts`) and a
-  fleet-display-shaped list in `PlayerPanel.renderRailroads` (own nation only),
-  with a red ✕ delete button; i18n keys `railroad.title` / `railroad.delete`.
-- Tests: `tests/core/executions/RailroadLinkExecution.test.ts`.
+Only `75a0c64a9` (Railroad feature) touches save state: `PlayerCheckpoint.
+railroadLinks`, the `railroad_link` execution kind, a new persistent unit type.
+The other four are docs (`aa09b0fb8`, `911865cdb`) or client-only input/HUD
+changes with no checkpoint/wire impact (`6bb4049ce`, `fc09efa75`).
 
-## 3. Verification
+Conclusion: the exhaustive `EndgameSaveResume` soak (30-min gated, run per the
+instructions in `testnotes.md`) is **not prudent/necessary** for these commits.
+The new state is additive and backward compatible, and the targeted round-trip
+test covers the save path directly. No save regression for games saved after the
+commit.
 
-- `npx tsc --noEmit` — clean.
-- `npx prettier --write` on all touched files; `npx oxlint` + `npx eslint` on the
-  new/changed files — clean.
-- `npx vitest run tests/core/executions/RailroadLinkExecution.test.ts` — 6 passed.
-- `npx vitest run tests/core` — 436 passed, **1 failed**: the documented
-  pre-existing `SAMLauncherExecution` dynamic-range failure (`expected 23.333… to
-be close to 25.555`), unrelated and present on the clean tip.
-- `npx vitest run tests/zbin` + `RailNetwork`/`TrainStation`/
-  `DestroyRailroadExecution` — 192 passed. `tests/core/Checkpoint*.test.ts` —
-  passed (LateGame gated/skipped).
-- **Browser e2e** (headless Chrome, throwaway driver reusing `e2e/driver.mjs` +
-  `.claude/skills/run-openfront/game.mjs`; deleted afterwards): built two
-  factories for one player, opened the radial info menu on own territory, saw
-  `Factory Rail Links | 1 | <ax>,<ay> ↔ <bx>,<by>`, clicked the rail's ✕ and
-  confirmed the link was removed while both factories survived. Gotcha: the
-  panel's own close button also renders "✕", so target the rail button by
-  `aria-label="Delete rail link"`, not by text.
+## 4. Verification
 
-## 4. Open items / next steps
+- `npx vitest run tests/core/executions/RailroadLinkCheckpoint.test.ts` — 2 passed.
+- `npx vitest run tests/core/executions/RailroadLinkExecution.test.ts tests/core/CheckpointRail.test.ts` — 9 passed.
+- `npx tsc --noEmit` clean; `npx prettier --write` on the new test;
+  `npx oxlint` + `npx eslint` on it — clean.
 
-- Pairing rule ("newest connection wins" when one factory connects to several at
-  once) is heuristic in a single-tick multi-connect: new pairs are processed in
-  sorted order and later pairs override earlier ones. Confirm this matches the
-  intended behavior in dense factory clusters.
+## 5. Open items / next steps
+
+- `75a0c64a9` pairing rule ("newest connection wins" in a single-tick
+  multi-connect) is still heuristic; confirm against dense factory clusters.
 - The pre-existing suite failures listed in `testnotes.md` still stand.

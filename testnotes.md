@@ -478,3 +478,25 @@ territory, and confirmed the panel showed `Factory Rail Links | 1 |
 link"`) removed the link (`count 1 -> 0`) while both factories stayed standing.
 The panel's own close button also renders "✕", so a test must match the rail
 button by its `aria-label`, not by text.
+
+## Railroad factory links survive checkpoints (targeted regression test)
+
+`tests/core/executions/RailroadLinkCheckpoint.test.ts` closes the save gap left
+by the `RailroadLinkExecution` feature: the original test only exercised live
+behavior, never a capture/restore. The new test builds two rail-connected
+factories for one player, runs `RailroadLinkExecution`, captures a checkpoint and
+restores it into a fresh game, then asserts the player link table, the
+`UnitType.Railroad` unit and its `targetUnit` all survive, and that a 30-tick
+suffix replays to identical hashes.
+
+Determination for the latest 5 commits (2026-10-08): only `75a0c64a9` (the
+Railroad feature) touches save state — `PlayerCheckpoint.railroadLinks`, the
+`railroad_link` execution checkpoint kind, and a new persistent unit type. The
+other four are docs and client-only input/HUD changes with no checkpoint or wire
+impact (`6bb4049ce`, `fc09efa75`) or pure documentation (`aa09b0fb8`,
+`911865cdb`). The exhaustive `EndgameSaveResume` soak documented above is **not
+needed** for these commits: the new state is additive and backward compatible
+(optional player field, `CHECKPOINT_VERSION` left at 5, so old blobs restore it
+empty), and the targeted round-trip test above proves the new state resumes
+deterministically at a fraction of the cost — no save regression for games saved
+after the commit.
