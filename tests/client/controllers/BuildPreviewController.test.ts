@@ -1,6 +1,5 @@
 import { describe, expect, test } from "vitest";
 import {
-  distanceSqToSegment,
   planDefenseLineActions,
   samThreatensNukePreview,
   shouldPreserveGhostAfterBuild,
@@ -42,114 +41,42 @@ describe("planDefenseLineActions (drag upgrade defense posts)", () => {
     { x: 10, y: 0 },
     { x: 20, y: 0 },
   ];
+  const posts: Record<string, number> = { "10,0": 42 };
 
-  test("upgrades an owned post on the line and builds on far samples", () => {
+  test("builds on empty tiles and upgrades existing posts in place", () => {
     const actions = planDefenseLineActions(
       tiles,
-      [{ id: 42, x: 10, y: 0 }],
-      { x: 0, y: 0 },
-      { x: 20, y: 0 },
-      3,
+      (x, y) => posts[`${x},${y}`],
       1,
     );
     expect(actions).toEqual([
-      { kind: "upgrade", unitId: 42, amount: 1 },
       { kind: "build", x: 0, y: 0 },
+      { kind: "upgrade", unitId: 42, amount: 1 },
       { kind: "build", x: 20, y: 0 },
     ]);
   });
 
-  test("upgrades every post the line passes over, including ones between samples", () => {
+  test("upgrades each existing post by the requested amount (5 on double-tap)", () => {
     const actions = planDefenseLineActions(
-      [
-        { x: 0, y: 0 },
-        { x: 30, y: 0 },
-      ],
-      [
-        { id: 1, x: 10, y: 0 },
-        { id: 2, x: 20, y: 0 },
-      ],
-      { x: 0, y: 0 },
-      { x: 30, y: 0 },
-      3,
-      1,
-    );
-    expect(actions.filter((a) => a.kind === "upgrade")).toEqual([
-      { kind: "upgrade", unitId: 1, amount: 1 },
-      { kind: "upgrade", unitId: 2, amount: 1 },
-    ]);
-  });
-
-  test("uses the requested upgrade amount (5 on double-tap)", () => {
-    const actions = planDefenseLineActions(
-      [],
-      [{ id: 7, x: 5, y: 0 }],
-      { x: 0, y: 0 },
-      { x: 10, y: 0 },
-      3,
+      tiles,
+      (x, y) => posts[`${x},${y}`],
       5,
     );
-    expect(actions).toContainEqual({ kind: "upgrade", unitId: 7, amount: 5 });
+    expect(actions).toContainEqual({ kind: "upgrade", unitId: 42, amount: 5 });
   });
 
   test("an all-empty line is all builds", () => {
-    const actions = planDefenseLineActions(
-      [
-        { x: 0, y: 0 },
-        { x: 20, y: 0 },
-      ],
-      [],
-      { x: 0, y: 0 },
-      { x: 20, y: 0 },
-      3,
-      5,
-    );
+    const actions = planDefenseLineActions(tiles, () => undefined, 5);
+    expect(actions.every((a) => a.kind === "build")).toBe(true);
+  });
+
+  test("an all-existing line is all upgrades", () => {
+    const actions = planDefenseLineActions(tiles, () => 7, 1);
     expect(actions).toEqual([
-      { kind: "build", x: 0, y: 0 },
-      { kind: "build", x: 20, y: 0 },
+      { kind: "upgrade", unitId: 7, amount: 1 },
+      { kind: "upgrade", unitId: 7, amount: 1 },
+      { kind: "upgrade", unitId: 7, amount: 1 },
     ]);
-  });
-
-  test("posts off the line are left alone", () => {
-    const actions = planDefenseLineActions(
-      [{ x: 0, y: 0 }],
-      [{ id: 9, x: 10, y: 20 }],
-      { x: 0, y: 0 },
-      { x: 20, y: 0 },
-      3,
-      1,
-    );
-    expect(actions).toEqual([{ kind: "build", x: 0, y: 0 }]);
-  });
-
-  test("a sample within radius of a post is not built on", () => {
-    const actions = planDefenseLineActions(
-      [{ x: 12, y: 0 }],
-      [{ id: 5, x: 10, y: 0 }],
-      { x: 0, y: 0 },
-      { x: 20, y: 0 },
-      3,
-      1,
-    );
-    expect(actions).toEqual([{ kind: "upgrade", unitId: 5, amount: 1 }]);
-  });
-});
-
-describe("distanceSqToSegment", () => {
-  test("point on the segment is zero", () => {
-    expect(distanceSqToSegment(10, 0, 0, 0, 20, 0)).toBe(0);
-  });
-
-  test("point beyond an endpoint clamps to the endpoint", () => {
-    expect(distanceSqToSegment(30, 0, 0, 0, 20, 0)).toBe(100);
-  });
-
-  test("perpendicular distance", () => {
-    expect(distanceSqToSegment(10, 4, 0, 0, 20, 0)).toBe(16);
-  });
-
-  test("degenerate segment is the point distance", () => {
-    expect(distanceSqToSegment(3, 4, 0, 0, 0, 0)).toBe(25);
   });
 });
 

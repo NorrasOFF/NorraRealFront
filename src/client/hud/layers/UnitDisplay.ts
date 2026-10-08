@@ -10,7 +10,7 @@ import {
 } from "../../../core/game/Game";
 import { UserSettings } from "../../../core/game/UserSettings";
 import { Controller } from "../../Controller";
-import { BeginBuildDragEvent, ToggleStructureEvent } from "../../InputHandler";
+import { ToggleStructureEvent } from "../../InputHandler";
 import { UIState } from "../../UIState";
 import { renderNumber, translateText } from "../../Utils";
 import { GameView } from "../../view";
@@ -361,17 +361,6 @@ export class UnitDisplay extends LitElement implements Controller {
             }
             this.requestUpdate();
           }}
-          @pointerdown=${(e: PointerEvent) => {
-            // A press on an already-selected build icon begins a map build drag
-            // (e.g. drag a line to upgrade defense posts) rather than a native
-            // image drag, which the browser shows as a "no-drop" stop sign.
-            if (selected) {
-              this.eventBus?.emit(
-                new BeginBuildDragEvent(e.clientX, e.clientY, unitType),
-              );
-            }
-          }}
-          @dragstart=${(e: DragEvent) => e.preventDefault()}
           @mouseenter=${() => {
             switch (unitType) {
               case UnitType.AtomBomb:
@@ -397,12 +386,7 @@ export class UnitDisplay extends LitElement implements Controller {
             ${displayHotkey}
           </div>`}
           <div class="flex items-center gap-0.5 pt-0.5">
-            <img
-              src=${icon}
-              alt=${structureKey}
-              class="align-middle size-5"
-              draggable="false"
-            />
+            <img src=${icon} alt=${structureKey} class="align-middle size-5" />
             ${number !== null
               ? html`<span class="shrink-0 whitespace-nowrap text-xs"
                   >${renderNumber(number)}</span

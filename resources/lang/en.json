@@ -1846,10 +1846,6 @@
     "rate_label": "Toll rate",
     "universal_rate_label": "Minimum toll rate (all nations)"
   },
-  "railroad": {
-    "title": "Factory Rail Links",
-    "delete": "Delete rail link"
-  },
   "troubleshooting": {
     "battery": "Battery",
     "battery_level": "Battery Level",

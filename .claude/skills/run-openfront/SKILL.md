@@ -103,9 +103,6 @@ import {
   panTo,
   setAttackRatio,
   openRadialMenu, // right-click on own territory; returns true if the menu opened
-  selectGhostStructure, // set control-panel.uiState.ghostStructure = "<Type>"
-  countMyUnits, // number of my unit instances of a type string
-  buildStructureAt, // place a structure reliably (see the ghost gotcha below)
 } from "./.claude/skills/run-openfront/game.mjs";
 
 const { browser, page } = await launch({ rafIntervalMs: 3000 }); // throttle is REQUIRED in-game, see below
@@ -158,25 +155,6 @@ await browser.close();
   success. The radial menu (right click) is a DOM/SVG overlay —
   `.radial-menu-container` exists from startup; check
   `style.display !== "none"` for "open".
-- **Building a structure (ghost + click) is timing-sensitive.** Select the
-  ghost from page JS with `control-panel.uiState.ghostStructure = "<Type>"`
-  (`uiState` is shared with the attack ratio). `BuildPreviewController`
-  clears the ghost after every successful build, so re-select before each
-  placement. Under software rendering the ghost's async `buildables` query
-  lags the pointer: click too soon after moving and the click uses a STALE
-  ghost state, **upgrading a previously hovered structure instead of
-  building at the new tile** (symptom: two intended builds yield one unit at
-  level 2). Use `buildStructureAt(page, type, x, y)` — it re-selects,
-  wiggles the pointer over the tile to refresh the ghost, clicks, and
-  retries until the instance count grows.
-- **Radial slices are `[data-id="<name>"]`**: `.radial-menu-container
-[data-id="info"|"build"|"delete"|"disableStation"|"ally_request"]`. Each
-  can appear **twice** in the DOM — use `.first()`.
-- **Light-DOM panels include their own close "✕".** In `player-panel` (and
-  other modals) the first `<button>` whose text is "✕" closes the panel, so
-  matching a row action by visible text hits the wrong button. The rail
-  delete button is `button[aria-label="Delete rail link"]`; prefer
-  `aria-label`/`title` over text for panel actions.
 - Verify rendering visually by reading the screenshots — a blank WebGL
   canvas means SwiftShader broke (check `webgl2` context creation and
   `LD_LIBRARY_PATH`/fontconfig from setup.sh).

@@ -1,58 +1,64 @@
-# Handoff — Railroad-link save coverage; latest-5-commits save-test evaluation
+# Handoff — Reverted PR #14 (train/railroad); blocked landing on NorrasOFF
 
 > Future sessions: this file holds the current handoff. Overwrite it rather than
 > appending; keep only the latest handoff. Write one only when the session leaves
 > open items or partially verified work.
 
-Companion notes: `testnotes.md` (feature/bug detail + pre-existing failures).
+Companion notes: `testnotes.md`.
 
 ## 1. Where things are
 
 - Repo: `C:\Users\ai51940\OpenFrontIO`.
-- Token: `H:\Documents\Hexfront-token.txt`. Authenticates as **`hexfront-dev`**.
-- Push target: `origin` = `https://github.com/hexfront-dev/NorraRealFront-Remus-.git`,
-  branch `main`. Other remotes: `norrasoff` = `NorrasOFF/NorraRealFront`,
-  `upstream` = `openfrontio/OpenFrontIO`, `hexfront` = `hexfront-dev/OpenFrontIO`.
-- Push command (do not print the token):
-  ```powershell
-  $tok = (Get-Content -Raw "H:\Documents\Hexfront-token.txt").Trim()
-  $b64 = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("x-access-token:$tok"))
-  git -C "C:\Users\ai51940\OpenFrontIO" -c http.extraheader="Authorization: Basic $b64" `
-    push origin HEAD:main
-  ```
+- Tokens (both authenticate as **`hexfront-dev`**):
+  - `H:\Documents\Hexfront-token.txt` — write access to the fork only.
+  - `H:\Documents\Norrasoff-token.txt` — **read-only**; see the blocker below.
+- Remotes: `origin` = `hexfront-dev/NorraRealFront-Remus-` (branch `main`),
+  `norrasoff` = `NorrasOFF/NorraRealFront`, `upstream` = `openfrontio/OpenFrontIO`,
+  `hexfront` = `hexfront-dev/OpenFrontIO`.
+- Local branches: `main` still at `647ca65a4`; work is on `revert-pr-14`.
 
 ## 2. What changed this session
 
-- Added `tests/core/executions/RailroadLinkCheckpoint.test.ts`: a fast B2
-  checkpoint round-trip for the informational `UnitType.Railroad` links. It
-  builds two rail-connected factories, runs `RailroadLinkExecution`, captures a
-  checkpoint, restores it, and asserts the player link table + the Railroad unit
-  (incl. `targetUnit`) survive and a 30-tick suffix replays to identical hashes.
-- Documented the determination in `testnotes.md` ("Railroad factory links
-  survive checkpoints").
+Reverted the latest PR on `NorrasOFF/NorraRealFront`: **PR #14 "Nya täggrejer"**
+(merge commit `1d963cf20`, 6 commits from the fork: informational `Railroad`
+unit, defense-post drag upgrades, run-openfront e2e skill docs, railroad
+checkpoint test, handoff notes).
 
-## 3. Save-test evaluation of the latest 5 commits
+- `git revert -m 1 1d963cf20` produced commit **`9b31b8789`**. Its tree is
+  **exactly equal** to the pre-merge base `96ce9a417` (`git diff 96ce9a417 HEAD`
+  is empty), i.e. a clean, conflict-free revert of the merge.
+- Pushed to the fork: `origin/main` is now `9b31b8789` (fast-forward from
+  `647ca65a4`).
 
-Only `75a0c64a9` (Railroad feature) touches save state: `PlayerCheckpoint.
-railroadLinks`, the `railroad_link` execution kind, a new persistent unit type.
-The other four are docs (`aa09b0fb8`, `911865cdb`) or client-only input/HUD
-changes with no checkpoint/wire impact (`6bb4049ce`, `fc09efa75`).
+## 3. BLOCKER — cannot write to NorrasOFF/NorraRealFront
 
-Conclusion: the exhaustive `EndgameSaveResume` soak (30-min gated, run per the
-instructions in `testnotes.md`) is **not prudent/necessary** for these commits.
-The new state is additive and backward compatible, and the targeted round-trip
-test covers the save path directly. No save regression for games saved after the
-commit.
+The provided Norrasoff token cannot write to `NorrasOFF/NorraRealFront`. Verified
+(HTTP 403) for: git `push`, `POST /git/refs` (create branch), and
+`POST /pulls` (open PR). The Hexfront token writes the fork but is also 403 on
+NorrasOFF. The repo API reports `permissions.push = true` for the user, so it is
+the **token scope**, not repo membership: a fine-grained PAT with no
+`Contents: write` on that repo.
 
-## 4. Verification
+To land the revert, either grant `hexfront-dev` a token with **Contents: write**
+(and **Pull requests: write** to open a PR) on `NorrasOFF/NorraRealFront`, or
+push/merge from a machine that has it.
 
-- `npx vitest run tests/core/executions/RailroadLinkCheckpoint.test.ts` — 2 passed.
-- `npx vitest run tests/core/executions/RailroadLinkExecution.test.ts tests/core/CheckpointRail.test.ts` — 9 passed.
-- `npx tsc --noEmit` clean; `npx prettier --write` on the new test;
-  `npx oxlint` + `npx eslint` on it — clean.
+## 4. How to land it once write access exists
+
+The fork `main` (`9b31b8789`) already contains `1d963cf20` as an ancestor, so a
+PR from `hexfront-dev:main` → `NorrasOFF:main` diffs to exactly the revert commit
+and can merge via fast-forward. Direct push is equivalent:
+
+```powershell
+$tok = (Get-Content -Raw "<write-capable-token>").Trim()
+$b64 = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("x-access-token:$tok"))
+git -C "C:\Users\ai51940\OpenFrontIO" -c http.extraheader="Authorization: Basic $b64" `
+  push norrasoff revert-pr-14:main
+```
 
 ## 5. Open items / next steps
 
-- `75a0c64a9` pairing rule ("newest connection wins" in a single-tick
-  multi-connect) is still heuristic; confirm against dense factory clusters.
+- Land `9b31b8789` on `NorrasOFF/NorraRealFront` main (blocked, see §3).
+- After it lands, `norrasoff/main` should equal the `96ce9a417` tree (PR #13 and
+  earlier are untouched; the revert only undoes PR #14).
 - The pre-existing suite failures listed in `testnotes.md` still stand.

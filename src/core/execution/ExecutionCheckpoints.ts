@@ -34,7 +34,6 @@ import { NationExecution, NationExecutionCheckpoint } from "./NationExecution";
 import { NukeExecution, NukeExecutionCheckpoint } from "./NukeExecution";
 import { PlayerExecution } from "./PlayerExecution";
 import { PortExecution } from "./PortExecution";
-import { RailroadLinkExecution } from "./RailroadLinkExecution";
 import { RecomputeRailClusterExecution } from "./RecomputeRailClusterExecution";
 import {
   RetreatExecution,
@@ -120,13 +119,6 @@ export function restoreExecution(
       const exec = new RecomputeRailClusterExecution(game.railNetwork());
       if (initialize) exec.init(game, ticks);
       exec.restoreCheckpoint({});
-      return exec;
-    }
-    case "railroad_link": {
-      const data = cp.data as { prevConnected?: string[] };
-      const exec = new RailroadLinkExecution();
-      if (initialize) exec.init(game, ticks);
-      exec.restoreCheckpoint(data);
       return exec;
     }
     case "train_station": {
