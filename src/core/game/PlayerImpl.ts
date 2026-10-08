@@ -177,15 +177,6 @@ export class PlayerImpl implements Player {
   private _avoidedTiles = new Set<TileRef>();
 
   public _units: Unit[] = [];
-  /**
-   * Persistent informational rail links between this player's own factories.
-   * Keyed on factory unit id; both endpoints of a pair map to the same link
-   * (and the same `UnitType.Railroad` unit). Survives rail teardown/rebuild.
-   */
-  private _railroadLinks = new Map<
-    number,
-    { partnerId: number; unitId: number }
-  >();
   /** Bumped on every change that can alter a per-type answer over _units: add, remove, ownership
    *  transfer, level-up, construction toggle (see UnitImpl). Keys the three memos below. */
   public _myUnitsVersion = 0;
@@ -605,26 +596,6 @@ export class PlayerImpl implements Player {
       owned: total,
     });
     return total;
-  }
-
-  railroadLinks(): ReadonlyMap<number, { partnerId: number; unitId: number }> {
-    return this._railroadLinks;
-  }
-
-  railroadPartner(factoryId: number): number | undefined {
-    return this._railroadLinks.get(factoryId)?.partnerId;
-  }
-
-  setRailroadLink(factoryA: number, factoryB: number, unitId: number): void {
-    this._railroadLinks.set(factoryA, { partnerId: factoryB, unitId });
-    this._railroadLinks.set(factoryB, { partnerId: factoryA, unitId });
-  }
-
-  removeRailroadLink(factoryId: number): void {
-    const link = this._railroadLinks.get(factoryId);
-    if (link === undefined) return;
-    this._railroadLinks.delete(factoryId);
-    this._railroadLinks.delete(link.partnerId);
   }
 
   sharesBorderWith(other: Player | TerraNullius): boolean {
@@ -1754,9 +1725,6 @@ export class PlayerImpl implements Player {
       case UnitType.Factory:
       case UnitType.Tollhouse:
         return this.landBasedStructureSpawn(targetTile, validTiles);
-      case UnitType.Railroad:
-        // Never built by a build intent; spawned internally as an info link.
-        return false;
       default:
         assertNever(unitType);
     }
@@ -2113,13 +2081,6 @@ export class PlayerImpl implements Player {
       avoidedTiles: Array.from(this._avoidedTiles),
       borderTiles: Array.from(this._borderTiles),
       unitIds: this._units.map((u) => u.id()),
-      railroadLinks: [...this._railroadLinks.entries()]
-        .filter(([id, link]) => id < link.partnerId)
-        .map(([id, link]): [number, number, number] => [
-          id,
-          link.partnerId,
-          link.unitId,
-        ]),
       allianceIds: this._alliances.map((a) => a.id()),
       outgoingAttackIds: this._outgoingAttacks.map((a) => a.id()),
       incomingAttackIds: this._incomingAttacks.map((a) => a.id()),
@@ -2200,12 +2161,6 @@ export class PlayerImpl implements Player {
     this._borderTiles = new TileSet();
     this._avoidedTiles = new Set(cp.avoidedTiles);
     this._units = [];
-    this._railroadLinks = new Map();
-    if (cp.railroadLinks !== undefined) {
-      for (const [a, b, unitId] of cp.railroadLinks) {
-        this.setRailroadLink(a, b, unitId);
-      }
-    }
     // Units, attacks and alliances are re-linked by GameImpl, which owns the
     // cross-player object graph.
     this._outgoingAttacks = [];

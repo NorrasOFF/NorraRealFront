@@ -459,7 +459,6 @@ export class BuildMenu extends LitElement implements Controller {
                       alt="${item.unitType}"
                       width="40"
                       height="40"
-                      draggable="false"
                     />
                     <span class="build-name"
                       >${item.key && translateText(item.key)}</span
@@ -478,7 +477,6 @@ export class BuildMenu extends LitElement implements Controller {
                         width="12"
                         height="12"
                         class="align-middle"
-                        draggable="false"
                       />
                     </span>
                     ${item.countable
