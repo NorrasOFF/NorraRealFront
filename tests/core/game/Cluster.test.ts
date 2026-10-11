@@ -104,8 +104,8 @@ describe("trainDestinationWeight", () => {
     expect(earlyGain).toBeGreaterThan(lateGain);
   });
 
-  test("level 50 is ~1.98x a level 1", () => {
-    expect(trainDestinationWeight(50)).toBe(1978);
+  test("level 50 is ~2.17x a level 1", () => {
+    expect(trainDestinationWeight(50)).toBe(2174);
   });
 });
 
@@ -131,10 +131,10 @@ describe("Cluster weighted train destinations", () => {
     for (const low of lows) {
       expect(highCount).toBeGreaterThan(counts.get(low.id)!);
     }
-    // Theoretical ratio is trainDestinationWeight(50) / 1000 = 1.978.
+    // Theoretical ratio is trainDestinationWeight(50) / 1000 = 2.174.
     const avgLow =
       lows.reduce((sum, low) => sum + counts.get(low.id)!, 0) / lows.length;
-    expect(highCount / avgLow).toBeGreaterThan(1.8);
-    expect(highCount / avgLow).toBeLessThan(2.15);
+    expect(highCount / avgLow).toBeGreaterThan(1.9);
+    expect(highCount / avgLow).toBeLessThan(2.5);
   });
 });

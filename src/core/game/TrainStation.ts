@@ -158,9 +158,9 @@ export class TrainStation {
  * How strongly a destination's level pulls train traffic toward it.
  * `w(L) = 1 + TRAIN_DESTINATION_LEVEL_WEIGHT * ln(L)`: a level-1 station is
  * the baseline, every level above adds a small bonus that diminishes as the
- * level grows (level 50 is ~1.98x a level-1 station). Kept deliberately mild.
+ * level grows (level 50 is ~2.17x a level-1 station). Kept deliberately mild.
  */
-export const TRAIN_DESTINATION_LEVEL_WEIGHT = 0.25;
+export const TRAIN_DESTINATION_LEVEL_WEIGHT = 0.3;
 
 // Integer scale so weighted reservoir sampling stays deterministic (no
 // float comparisons in the PRNG draw).
