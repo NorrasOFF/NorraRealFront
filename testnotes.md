@@ -587,12 +587,17 @@ speed round-trips through `packMotionPlans`/`unpackMotionPlans`.
 
 Two changes to the buildable `UnitType.RailroadCenter`:
 
-- **Level cap 5.** `UnitInfo` gained an optional `maxLevel` (`Game.ts`), set to
-  `5` for Railroad Center (`Config.ts`, `RAILROAD_CENTER_MAX_LEVEL`). Enforced in
-  `PlayerImpl.isUnitValidToUpgrade`, so both the upgrade execution and the client
-  `buildableUnits` ghost refuse a 6th level. The old speed curve already caps at
-  2x by level 5 (`railroadCenterBoostUnits(5) = 16 >= ~14`), so the cap does not
-  change the speed behaviour; it only stops wasted upgrades.
+- **Aggregate level cap 5 (per player).** A player may hold at most 5 summed
+  Railroad Center levels across all their centers (`Config.railroadCenterMaxTotalLevels()`
+  = `RAILROAD_CENTER_MAX_TOTAL_LEVELS`). Enforced in `PlayerImpl.isUnitValidToUpgrade`
+  (blocks any upgrade once `unitsOwned(RailroadCenter) >= 5`) and in the
+  `UnitType.RailroadCenter` case of `canSpawnUnitType` (blocks building a new
+  center at the cap). `ConstructionExecution` already gates on `player.canBuild`,
+  so the intent path is covered; the client `buildableUnits` ghost reads the same
+  check. So 5 level-1 centers are allowed but a 6th (or any upgrade) is refused.
+- **Flat cost.** Every Railroad Center level now costs a flat `1_500_000` gold
+  (`RAILROAD_CENTER_COST`), replacing the `min(1M, 2^n*125k)` curve — the cost
+  function ignores `numUnits`, so build and each upgrade are 1.5M.
 - **Spawn throughput +15%/level.** `Config.railroadCenterSpawnMultiplier(total)`
   = `1 + 0.15 * total` (`RAILROAD_CENTER_SPAWN_BONUS_PER_LEVEL`), where `total`
   is the summed active Railroad Center levels owned by the station's player.
@@ -605,8 +610,9 @@ Note: the boost is owner-wide (like the speed boost is route/owner-based) and
 computed live from unit state, so it needs no new checkpoint field. It changes
 the PRNG stream for factory stations, which is deterministic.
 
-Tests: `tests/core/executions/RailroadCenter.test.ts` (multiplier curve, level
-cap by driving `UpgradeStructureExecution`, and the spawn-odds scaling observed
-through `shouldSpawnTrain`). Reduced from earlier: this session also halved the
-train spawn cooldown (10→5), raised the destination level-weight coefficient
-(0.25→0.30) and the self/team train gold (25k→30k) — see those commits.
+Tests: `tests/core/executions/RailroadCenter.test.ts` (multiplier curve, the
+aggregate cap — 5 level-1 centers accepted, a 6th and any upgrade refused at the
+cap — the flat 1.5M cost, and the spawn-odds scaling observed through
+`shouldSpawnTrain`). This session also halved the train spawn cooldown (10→5),
+raised the destination level-weight coefficient (0.25→0.30) and the self/team
+train gold (25k→30k) — see those commits.

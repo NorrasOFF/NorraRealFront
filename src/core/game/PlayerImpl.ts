@@ -1582,8 +1582,14 @@ export class PlayerImpl implements Player {
     if (unit.owner() !== this) {
       return false;
     }
-    const maxLevel = this.mg.config().unitInfo(unit.type()).maxLevel;
-    if (maxLevel !== undefined && unit.level() >= maxLevel) {
+    // Railroad Centers are capped in aggregate, not per building: a player may
+    // hold at most `railroadCenterMaxTotalLevels()` summed center levels, so no
+    // single center can be upgraded once the player is at the cap.
+    if (
+      unit.type() === UnitType.RailroadCenter &&
+      this.unitsOwned(UnitType.RailroadCenter) >=
+        this.mg.config().railroadCenterMaxTotalLevels()
+    ) {
       return false;
     }
     return true;
@@ -1722,13 +1728,22 @@ export class PlayerImpl implements Player {
         return this.tradeShipSpawn(targetTile);
       case UnitType.Train:
         return this.landBasedUnitSpawn(targetTile);
+      case UnitType.RailroadCenter:
+        // Aggregate cap: building a new center is refused once the player's
+        // summed center levels reach the limit.
+        if (
+          this.unitsOwned(UnitType.RailroadCenter) >=
+          this.mg.config().railroadCenterMaxTotalLevels()
+        ) {
+          return false;
+        }
+        return this.landBasedStructureSpawn(targetTile, validTiles);
       case UnitType.MissileSilo:
       case UnitType.DefensePost:
       case UnitType.SAMLauncher:
       case UnitType.City:
       case UnitType.Factory:
       case UnitType.Tollhouse:
-      case UnitType.RailroadCenter:
         return this.landBasedStructureSpawn(targetTile, validTiles);
       default:
         assertNever(unitType);

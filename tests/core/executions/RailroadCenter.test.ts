@@ -2,7 +2,6 @@ import { describe, expect, it, vi } from "vitest";
 import { TrainExecutionCheckpoint } from "../../../src/core/Checkpoint";
 import { TrainExecution } from "../../../src/core/execution/TrainExecution";
 import { TrainStationExecution } from "../../../src/core/execution/TrainStationExecution";
-import { UpgradeStructureExecution } from "../../../src/core/execution/UpgradeStructureExecution";
 import {
   Game,
   Player,
@@ -152,23 +151,45 @@ describe("RailroadCenter speed boost", () => {
     expect(config.railroadCenterSpawnMultiplier(5)).toBeCloseTo(1.75, 6);
   });
 
-  it("caps Railroad Center upgrades at level 5", async () => {
+  it("caps a player's summed Railroad Center levels at 5, for build and upgrade", async () => {
     const game = await setup(
       "plains",
       { instantBuild: true, infiniteGold: true },
       [new PlayerInfo("p1", PlayerType.Human, null, "p1")],
     );
     const player = game.player("p1")!;
-    [0, 1, 2, 3, 4, 5].forEach((t) => player.conquer(t));
-    const center = player.buildUnit(UnitType.RailroadCenter, 4, {});
-
-    for (let i = 0; i < 10; i++) {
-      game.addExecution(new UpgradeStructureExecution(player, center.id()));
-      game.executeNextTick();
+    for (let y = 0; y <= 95; y++) {
+      for (let x = 0; x <= 30; x++) player.conquer(game.ref(x, y));
     }
 
-    expect(center.level()).toBe(5);
-    expect(player.canUpgradeUnit(center)).toBe(false);
+    // Five level-1 centers, spaced past structureMinDist (15), are allowed
+    // (summed levels = 5).
+    const tiles = [0, 20, 40, 60, 80].map((y) => game.ref(0, y));
+    for (const tile of tiles) {
+      expect(player.canBuild(UnitType.RailroadCenter, tile)).not.toBe(false);
+      player.buildUnit(UnitType.RailroadCenter, tile, {});
+    }
+    // A sixth is refused, and no existing center can be upgraded past the cap.
+    expect(player.canBuild(UnitType.RailroadCenter, game.ref(0, 95))).toBe(
+      false,
+    );
+    const existing = player.units(UnitType.RailroadCenter)[0];
+    expect(player.canUpgradeUnit(existing)).toBe(false);
+  });
+
+  it("charges a flat 1.5M gold per Railroad Center level", async () => {
+    const game = await setup("plains", { instantBuild: true }, [
+      new PlayerInfo("p1", PlayerType.Human, null, "p1"),
+    ]);
+    const player = game.player("p1")!;
+    [0, 1, 2, 3, 4].forEach((t) => player.conquer(t));
+    const cost = () =>
+      game.config().unitInfo(UnitType.RailroadCenter).cost(game, player);
+    expect(cost()).toBe(1_500_000n);
+    player.buildUnit(UnitType.RailroadCenter, 4, {});
+    expect(cost()).toBe(1_500_000n);
+    player.units(UnitType.RailroadCenter)[0].increaseLevel();
+    expect(cost()).toBe(1_500_000n);
   });
 
   it("scales factory spawn odds by the owner's center levels", async () => {

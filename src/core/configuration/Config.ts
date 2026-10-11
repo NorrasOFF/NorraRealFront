@@ -243,12 +243,16 @@ const OVERTIME_DEFAULTS = {
 const RAILROAD_CENTER_LOG_COEFF = 0.375;
 
 // Spawn-throughput bonus a Railroad Center grants its owner's factories: each
-// center level raises the effective train spawn chance by +15%. With the level
-// cap of 5 (see unitInfo) a maxed center is +75%.
+// total center level raises the effective train spawn chance by +15%.
 const RAILROAD_CENTER_SPAWN_BONUS_PER_LEVEL = 0.15;
 
-// Highest level a Railroad Center can be upgraded to.
-const RAILROAD_CENTER_MAX_LEVEL = 5;
+// Flat gold cost of one Railroad Center level (build or upgrade). A player may
+// hold at most RAILROAD_CENTER_MAX_TOTAL_LEVELS summed levels.
+const RAILROAD_CENTER_COST = 1_500_000;
+
+// Highest summed Railroad Center levels a single player may have (across all
+// their centers).
+const RAILROAD_CENTER_MAX_TOTAL_LEVELS = 5;
 
 export class Config {
   private unitInfoCache = new Map<UnitType, UnitInfo>();
@@ -505,6 +509,15 @@ export class Config {
     return 1 + RAILROAD_CENTER_SPAWN_BONUS_PER_LEVEL * totalLevels;
   }
 
+  /**
+   * Highest summed Railroad Center levels one player may own across all their
+   * centers (building a new one or upgrading an existing one is refused at the
+   * cap).
+   */
+  railroadCenterMaxTotalLevels(): number {
+    return RAILROAD_CENTER_MAX_TOTAL_LEVELS;
+  }
+
   /** Base Tollhouse interception radius: half the Factory's train range. */
   tollhouseBaseRange(): number {
     return Math.floor(this.trainStationMaxRange() / 2);
@@ -717,12 +730,11 @@ export class Config {
       case UnitType.RailroadCenter:
         info = {
           cost: this.costWrapper(
-            (numUnits: number) => Math.min(1_000_000, pow2(numUnits) * 125_000),
+            () => RAILROAD_CENTER_COST,
             UnitType.RailroadCenter,
           ),
           constructionDuration: this.instantBuild() ? 0 : 2 * 10,
           upgradable: true,
-          maxLevel: RAILROAD_CENTER_MAX_LEVEL,
         };
         break;
       default:
