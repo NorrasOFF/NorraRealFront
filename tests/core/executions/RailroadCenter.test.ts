@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { TrainExecutionCheckpoint } from "../../../src/core/Checkpoint";
 import { TrainExecution } from "../../../src/core/execution/TrainExecution";
+import { TrainStationExecution } from "../../../src/core/execution/TrainStationExecution";
+import { UpgradeStructureExecution } from "../../../src/core/execution/UpgradeStructureExecution";
 import {
   Game,
   Player,
@@ -140,5 +142,74 @@ describe("RailroadCenter speed boost", () => {
     expect(
       (restored as unknown as { speedAccumulator: number }).speedAccumulator,
     ).toBe((exec as unknown as { speedAccumulator: number }).speedAccumulator);
+  });
+
+  it("spawn multiplier rises +15% per center level", async () => {
+    const game = await setup("plains", {}, []);
+    const config = game.config();
+    expect(config.railroadCenterSpawnMultiplier(0)).toBe(1);
+    expect(config.railroadCenterSpawnMultiplier(1)).toBeCloseTo(1.15, 6);
+    expect(config.railroadCenterSpawnMultiplier(5)).toBeCloseTo(1.75, 6);
+  });
+
+  it("caps Railroad Center upgrades at level 5", async () => {
+    const game = await setup(
+      "plains",
+      { instantBuild: true, infiniteGold: true },
+      [new PlayerInfo("p1", PlayerType.Human, null, "p1")],
+    );
+    const player = game.player("p1")!;
+    [0, 1, 2, 3, 4, 5].forEach((t) => player.conquer(t));
+    const center = player.buildUnit(UnitType.RailroadCenter, 4, {});
+
+    for (let i = 0; i < 10; i++) {
+      game.addExecution(new UpgradeStructureExecution(player, center.id()));
+      game.executeNextTick();
+    }
+
+    expect(center.level()).toBe(5);
+    expect(player.canUpgradeUnit(center)).toBe(false);
+  });
+
+  it("scales factory spawn odds by the owner's center levels", async () => {
+    async function spawnOdds(centerLevel: number): Promise<number[]> {
+      const game = await setup(
+        "plains",
+        { instantBuild: true, infiniteGold: true },
+        [new PlayerInfo("p1", PlayerType.Human, null, "p1")],
+      );
+      const player = game.player("p1")!;
+      [0, 1, 2, 3, 4, 5].forEach((t) => player.conquer(t));
+      const factory = player.buildUnit(UnitType.Factory, 0, {});
+      if (centerLevel > 0) {
+        const center = player.buildUnit(UnitType.RailroadCenter, 4, {});
+        for (let i = 1; i < centerLevel; i++) center.increaseLevel();
+      }
+
+      const exec = new TrainStationExecution(factory, true) as unknown as {
+        init(g: Game, t: number): void;
+        random: { chance(odds: number): boolean };
+        shouldSpawnTrain(): boolean;
+      };
+      exec.init(game, 0);
+      const odds: number[] = [];
+      // Capture the spawn odds each level-roll is asked for; always fail so we
+      // observe every roll without side effects.
+      exec.random = {
+        chance: (o: number) => {
+          odds.push(o);
+          return false;
+        },
+      };
+      exec.shouldSpawnTrain();
+      return odds;
+    }
+
+    const base = await spawnOdds(0);
+    const boosted = await spawnOdds(5);
+    // Factory level 1 -> one roll, at round(trainSpawnRate(1) / boost).
+    expect(base).toEqual([165]);
+    expect(boosted).toEqual([Math.round(165 / 1.75)]);
+    expect(boosted[0]).toBeLessThan(base[0]);
   });
 });

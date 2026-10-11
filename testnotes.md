@@ -582,3 +582,31 @@ checkpoints must replay the spawn and later ones carry it in restored state. It
 asserts `speed`/`speedAccumulator` survive the wire exactly, that at least one
 mid-step accumulator is non-zero, and (separately) that a fractional motion-plan
 speed round-trips through `packMotionPlans`/`unpackMotionPlans`.
+
+## Railroad Center: level cap 5 + spawn-throughput buff (rebalance)
+
+Two changes to the buildable `UnitType.RailroadCenter`:
+
+- **Level cap 5.** `UnitInfo` gained an optional `maxLevel` (`Game.ts`), set to
+  `5` for Railroad Center (`Config.ts`, `RAILROAD_CENTER_MAX_LEVEL`). Enforced in
+  `PlayerImpl.isUnitValidToUpgrade`, so both the upgrade execution and the client
+  `buildableUnits` ghost refuse a 6th level. The old speed curve already caps at
+  2x by level 5 (`railroadCenterBoostUnits(5) = 16 >= ~14`), so the cap does not
+  change the speed behaviour; it only stops wasted upgrades.
+- **Spawn throughput +15%/level.** `Config.railroadCenterSpawnMultiplier(total)`
+  = `1 + 0.15 * total` (`RAILROAD_CENTER_SPAWN_BONUS_PER_LEVEL`), where `total`
+  is the summed active Railroad Center levels owned by the station's player.
+  `TrainStationExecution.shouldSpawnTrain` divides the base `trainSpawnRate` odds
+  by this multiplier, so each center level raises the per-tick spawn chance by
+  ~1.15x. A maxed center is +75%. This is the lever that actually moves train
+  gold, since income = spawn rate × gold/stop (the speed buff does not).
+
+Note: the boost is owner-wide (like the speed boost is route/owner-based) and
+computed live from unit state, so it needs no new checkpoint field. It changes
+the PRNG stream for factory stations, which is deterministic.
+
+Tests: `tests/core/executions/RailroadCenter.test.ts` (multiplier curve, level
+cap by driving `UpgradeStructureExecution`, and the spawn-odds scaling observed
+through `shouldSpawnTrain`). Reduced from earlier: this session also halved the
+train spawn cooldown (10→5), raised the destination level-weight coefficient
+(0.25→0.30) and the self/team train gold (25k→30k) — see those commits.

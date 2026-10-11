@@ -242,6 +242,14 @@ const OVERTIME_DEFAULTS = {
 // and the cap of 2x is reached at ~14 (see `railroadCenterSpeedMultiplier`).
 const RAILROAD_CENTER_LOG_COEFF = 0.375;
 
+// Spawn-throughput bonus a Railroad Center grants its owner's factories: each
+// center level raises the effective train spawn chance by +15%. With the level
+// cap of 5 (see unitInfo) a maxed center is +75%.
+const RAILROAD_CENTER_SPAWN_BONUS_PER_LEVEL = 0.15;
+
+// Highest level a Railroad Center can be upgraded to.
+const RAILROAD_CENTER_MAX_LEVEL = 5;
+
 export class Config {
   private unitInfoCache = new Map<UnitType, UnitInfo>();
   constructor(
@@ -486,6 +494,17 @@ export class Config {
     return Math.min(2, 1 + RAILROAD_CENTER_LOG_COEFF * log(units + 1));
   }
 
+  /**
+   * Train spawn-throughput multiplier granted by `totalLevels` summed Railroad
+   * Center levels owned by the station's player: `1 + 0.15 * totalLevels`.
+   * Applied to a factory station's spawn odds, so each center level raises the
+   * effective number of trains on the rails by ~15%.
+   */
+  railroadCenterSpawnMultiplier(totalLevels: number): number {
+    if (totalLevels <= 0) return 1;
+    return 1 + RAILROAD_CENTER_SPAWN_BONUS_PER_LEVEL * totalLevels;
+  }
+
   /** Base Tollhouse interception radius: half the Factory's train range. */
   tollhouseBaseRange(): number {
     return Math.floor(this.trainStationMaxRange() / 2);
@@ -703,6 +722,7 @@ export class Config {
           ),
           constructionDuration: this.instantBuild() ? 0 : 2 * 10,
           upgradable: true,
+          maxLevel: RAILROAD_CENTER_MAX_LEVEL,
         };
         break;
       default:

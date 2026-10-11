@@ -55,15 +55,34 @@ export class TrainStationExecution implements Execution {
   }
 
   private shouldSpawnTrain(): boolean {
-    const spawnRate = this.mg
-      .config()
-      .trainSpawnRate(this.unit.owner().unitCount(UnitType.Factory));
+    const config = this.mg.config();
+    const baseRate = config.trainSpawnRate(
+      this.unit.owner().unitCount(UnitType.Factory),
+    );
+    // Railroad Centers raise this player's factory spawn throughput: each
+    // owned center level multiplies the spawn chance (1/spawnRate) by ~1.15.
+    // Dividing the odds by the boost scales the per-tick spawn probability up.
+    const boost = config.railroadCenterSpawnMultiplier(
+      this.railroadCenterLevels(),
+    );
+    const spawnRate = Math.max(1, Math.round(baseRate / boost));
     for (let i = 0; i < this.unit!.level(); i++) {
       if (this.random.chance(spawnRate)) {
         return true;
       }
     }
     return false;
+  }
+
+  /** Summed, active Railroad Center levels owned by this station's player. */
+  private railroadCenterLevels(): number {
+    let levels = 0;
+    for (const center of this.unit.owner().units(UnitType.RailroadCenter)) {
+      if (center.isActive()) {
+        levels += center.level();
+      }
+    }
+    return levels;
   }
 
   private spawnTrain(station: TrainStation, currentTick: number) {

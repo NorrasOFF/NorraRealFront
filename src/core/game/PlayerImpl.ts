@@ -1582,6 +1582,10 @@ export class PlayerImpl implements Player {
     if (unit.owner() !== this) {
       return false;
     }
+    const maxLevel = this.mg.config().unitInfo(unit.type()).maxLevel;
+    if (maxLevel !== undefined && unit.level() >= maxLevel) {
+      return false;
+    }
     return true;
   }
 

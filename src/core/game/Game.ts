@@ -182,6 +182,11 @@ export interface UnitInfo {
   damage?: number;
   constructionDuration?: number;
   upgradable?: boolean;
+  /**
+   * Optional hard ceiling on upgrade level (e.g. Railroad Center caps at 5).
+   * Upgrades are refused once `unit.level()` reaches this value.
+   */
+  maxLevel?: number;
 }
 
 function unitTypeGroup<T extends readonly UnitType[]>(types: T) {
