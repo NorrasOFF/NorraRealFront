@@ -20,6 +20,7 @@ import {
 import { ATTACK_DELTA_OUTGOING } from "../../core/game/GameUpdateUtils";
 import {
   MotionPlanRecord,
+  TRAIN_SPEED_SCALE,
   unpackMotionPlans,
 } from "../../core/game/MotionPlans";
 import { TerrainMapData } from "../../core/game/TerrainMapLoader";
@@ -53,7 +54,10 @@ const TRAIL_TYPES: ReadonlySet<UnitType> = new Set<UnitType>([
 type TrainPlanState = {
   planId: number;
   startTick: number;
-  speed: number;
+  /** Tiles per tick, scaled by TRAIN_SPEED_SCALE (may be fractional). */
+  speedScaled: number;
+  /** Integer remainder of the fractional step, in TRAIN_SPEED_SCALE units. */
+  speedAccum: number;
   spacing: number;
   carUnitIds: Uint32Array;
   path: Uint32Array;
@@ -894,11 +898,18 @@ export class GameView implements GameMap {
         if (cursor >= lastIndex) {
           break;
         }
-        for (let i = 0; i < plan.speed && cursor + i < path.length; i++) {
+
+        // Fractional speed (Railroad Center boost): carry the remainder in an
+        // integer accumulator, mirroring TrainExecution.nextSpeedStep().
+        plan.speedAccum += plan.speedScaled;
+        const advance = Math.floor(plan.speedAccum / TRAIN_SPEED_SCALE);
+        plan.speedAccum -= advance * TRAIN_SPEED_SCALE;
+
+        for (let i = 0; i < advance && cursor + i < path.length; i++) {
           pushUsed(path[cursor + i] as TileRef);
         }
 
-        plan.cursor = Math.min(lastIndex, cursor + plan.speed);
+        plan.cursor = Math.min(lastIndex, cursor + advance);
 
         for (let i = plan.carUnitIds.length - 1; i >= 0; --i) {
           const carId = plan.carUnitIds[i] >>> 0;
@@ -998,7 +1009,8 @@ export class GameView implements GameMap {
           this.trainMotionPlans.set(record.engineUnitId, {
             planId: record.planId,
             startTick: record.startTick,
-            speed: record.speed,
+            speedScaled: Math.round(record.speed * TRAIN_SPEED_SCALE),
+            speedAccum: 0,
             spacing: record.spacing,
             carUnitIds,
             path,

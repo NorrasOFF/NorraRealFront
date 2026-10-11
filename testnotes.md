@@ -500,3 +500,45 @@ needed** for these commits: the new state is additive and backward compatible
 empty), and the targeted round-trip test above proves the new state resumes
 deterministically at a fraction of the cost — no save regression for games saved
 after the commit.
+
+## Railroad Center replaces the factory rail-link feature
+
+The informational `UnitType.Railroad` link (and `RailroadLinkExecution`,
+`DeleteRailroadExecution`, the `delete_railroad` intent, `PlayerCheckpoint.
+railroadLinks`, and the `PlayerPanel` list) is gone. In its place is a buildable
+`UnitType.RailroadCenter` structure that boosts train speed.
+
+- Boost is applied per train **journey** based on the two endpoint stations:
+  `TrainExecution.computeSpeed()` boosts when `source.unit.owner() ===
+destination.unit.owner()`, by `Config.railroadCenterSpeedMultiplier(N)` where
+  `N = Σ 2^(level-1)` over that owner's active Railroad Centers. Curve
+  `min(2, 1 + 0.375*ln(1+N))` (1 center ≈ 1.26x, 10 ≈ 1.90x, cap 2 at ~14).
+  This is endpoint-based, **not** per-segment (see `HANDOFF.md` §4).
+- Train speed may now be fractional. `TrainExecution` keeps `currentTile` whole
+  via `speedAccumulator` (scaled by `TRAIN_SPEED_SCALE = 100`, exported from
+  `MotionPlans.ts`); `packMotionPlans` stores `round(speed*100)` and unpack
+  divides it back, and `GameView.advanceTrainMotionPlannedUnits` replays the same
+  integer accumulator. Base speed is still 2, so unboosted trains are unchanged
+  (accumulator stays 0).
+- `TrainExecutionCheckpoint.speedAccumulator` is **optional**: old blobs restore
+  it as 0 and `CHECKPOINT_VERSION` stays **5**. `tests/core/executions/
+RailroadCenter.test.ts` covers the curve, boost, cross-nation no-boost,
+  level-2 ≡ two level-1, and a checkpoint round-trip.
+- Stats: `otherUnits` / `unitTypeToOtherUnit` gained `railc`;
+  `PlayerStatsTable` now lists 8 buildings (its test was updated from 7 to 8).
+- Rendering: `resources/atlases/icon-atlas.png` is now 512×64 (8 columns, col 7
+  = Railroad Center); `structure.frag.glsl` has the matching index-7 branch.
+
+## Pre-existing full-suite failures observed on the clean tip
+
+Diffing a full `npx vitest run` against an unmodified `HEAD` worktree showed the
+only new failure from this work was `tests/client/PlayerStatsTable.test.ts`
+(now fixed). Everything else was already failing on the clean tip, including two
+not called out before:
+
+- `tests/EnJsonSorted.test.ts` — `en.json` has `"unit_type"` before
+  `"unit_display"` and the `user_setting.build_missile_carrier*` /
+  `build_aac_carrier*` keys out of alphabetical order on the clean tip.
+- `tests/TranslationSystem.test.ts` — five unused keys
+  (`error_modal.turnstile_error`, `events_display.attack_cancelled_retreat`,
+  `main.clans`, `main.inventory`, `main.leaderboard`).

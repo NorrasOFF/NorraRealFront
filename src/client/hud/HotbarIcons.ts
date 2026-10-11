@@ -9,6 +9,9 @@ export const missileSiloIcon = assetUrl("images/MissileSiloIconWhite.svg");
 export const hydrogenBombIcon = assetUrl("images/MushroomCloudIconWhite.svg");
 export const atomBombIcon = assetUrl("images/NukeIconWhite.svg");
 export const portIcon = assetUrl("images/PortIcon.svg");
+export const railroadCenterIcon = assetUrl(
+  "images/RailroadCenterIconWhite.svg",
+);
 export const samLauncherIcon = assetUrl("images/SamLauncherIconWhite.svg");
 export const defensePostIcon = assetUrl("images/ShieldIconWhite.svg");
 export const tollhouseIcon = assetUrl("images/TollhouseIconWhite.svg");

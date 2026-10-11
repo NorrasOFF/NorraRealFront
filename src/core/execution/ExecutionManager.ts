@@ -11,7 +11,6 @@ import { AvoidConquestExecution } from "./AvoidConquestExecution";
 import { BoatRetreatExecution } from "./BoatRetreatExecution";
 import { ConstructionExecution } from "./ConstructionExecution";
 import { CreateFleetExecution } from "./CreateFleetExecution";
-import { DeleteRailroadExecution } from "./DeleteRailroadExecution";
 import { DeleteUnitExecution } from "./DeleteUnitExecution";
 import { DestroyRailroadExecution } from "./DestroyRailroadExecution";
 import { DisableTrainStationExecution } from "./DisableTrainStationExecution";
@@ -151,8 +150,6 @@ export class Executor {
         return new DisableTrainStationExecution(player, intent.unitId);
       case "destroy_railroad":
         return new DestroyRailroadExecution(player, intent.tile);
-      case "delete_railroad":
-        return new DeleteRailroadExecution(player, intent.unitId);
       case "create_fleet":
         return new CreateFleetExecution(player, intent.unitIds);
       case "leave_fleet":

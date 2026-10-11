@@ -21,6 +21,7 @@ import {
   UT_FACTORY,
   UT_MISSILE_SILO,
   UT_PORT,
+  UT_RAILROAD_CENTER,
   UT_SAM_LAUNCHER,
   UT_TOLLHOUSE,
 } from "../../types";
@@ -55,6 +56,7 @@ export const STRUCTURE_ORDER = [
   UT_SAM_LAUNCHER,
   UT_MISSILE_SILO,
   UT_TOLLHOUSE,
+  UT_RAILROAD_CENTER,
 ] as const;
 
 export const ATLAS_COLS = STRUCTURE_ORDER.length;

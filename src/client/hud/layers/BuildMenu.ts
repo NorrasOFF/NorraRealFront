@@ -35,6 +35,7 @@ const missileSiloIcon = assetUrl("images/MissileSiloIconWhite.svg");
 const hydrogenBombIcon = assetUrl("images/MushroomCloudIconWhite.svg");
 const atomBombIcon = assetUrl("images/NukeIconWhite.svg");
 const portIcon = assetUrl("images/PortIcon.svg");
+const railroadCenterIcon = assetUrl("images/RailroadCenterIconWhite.svg");
 const samlauncherIcon = assetUrl("images/SamLauncherIconWhite.svg");
 const shieldIcon = assetUrl("images/ShieldIconWhite.svg");
 const tollhouseIcon = assetUrl("images/TollhouseIconWhite.svg");
@@ -138,6 +139,13 @@ export const buildTable: BuildItemDisplay[][] = [
       icon: tollhouseIcon,
       description: "build_menu.desc.tollhouse",
       key: "unit_type.tollhouse",
+      countable: true,
+    },
+    {
+      unitType: UnitType.RailroadCenter,
+      icon: railroadCenterIcon,
+      description: "build_menu.desc.railroad_center",
+      key: "unit_type.railroad_center",
       countable: true,
     },
   ],

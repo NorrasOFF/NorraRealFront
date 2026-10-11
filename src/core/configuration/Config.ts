@@ -238,6 +238,10 @@ const OVERTIME_DEFAULTS = {
   dropPercentPerMinute: 2,
 };
 
+// Railroad Center train-speed curve. Chosen so 10 effective centers give ~1.9x
+// and the cap of 2x is reached at ~14 (see `railroadCenterSpeedMultiplier`).
+const RAILROAD_CENTER_LOG_COEFF = 0.375;
+
 export class Config {
   private unitInfoCache = new Map<UnitType, UnitInfo>();
   constructor(
@@ -454,6 +458,32 @@ export class Config {
     return 120;
   }
 
+  /** Base tiles-per-tick train speed, before any Railroad Center boost. */
+  trainBaseSpeed(): number {
+    return 2;
+  }
+
+  /**
+   * Effective "centers" one Railroad Center contributes at the given upgrade
+   * level. Leveling a center is equivalent to building another one: a level-2
+   * center counts like two level-1 centers, level 3 like four, and so on.
+   */
+  railroadCenterBoostUnits(level: number): number {
+    return pow2(level - 1);
+  }
+
+  /**
+   * Train speed multiplier on a railroad whose two stops both belong to a
+   * nation owning `units` effective Railroad Centers. Logarithmic with
+   * diminishing returns, capped at 2x:
+   *   `min(2, 1 + 0.375 * ln(1 + units))`
+   * One center ≈ 1.26x, ten effective centers ≈ 1.90x, 2x at ~14.
+   */
+  railroadCenterSpeedMultiplier(units: number): number {
+    if (units <= 0) return 1;
+    return Math.min(2, 1 + RAILROAD_CENTER_LOG_COEFF * log(units + 1));
+  }
+
   /** Base Tollhouse interception radius: half the Factory's train range. */
   tollhouseBaseRange(): number {
     return Math.floor(this.trainStationMaxRange() / 2);
@@ -663,11 +693,14 @@ export class Config {
           upgradable: true,
         };
         break;
-      case UnitType.Railroad:
-        // Purely informational link between two own factories: free, no
-        // health, never constructed/upgraded and never rendered on the map.
+      case UnitType.RailroadCenter:
         info = {
-          cost: () => 0n,
+          cost: this.costWrapper(
+            (numUnits: number) => Math.min(1_000_000, pow2(numUnits) * 125_000),
+            UnitType.RailroadCenter,
+          ),
+          constructionDuration: this.instantBuild() ? 0 : 2 * 10,
+          upgradable: true,
         };
         break;
       default:

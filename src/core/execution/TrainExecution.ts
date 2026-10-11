@@ -12,7 +12,7 @@ import {
   UnitType,
 } from "../game/Game";
 import { TileRef } from "../game/GameMap";
-import { MotionPlanRecord } from "../game/MotionPlans";
+import { MotionPlanRecord, TRAIN_SPEED_SCALE } from "../game/MotionPlans";
 import { RailNetwork } from "../game/RailNetwork";
 import { getOrientedRailroad, OrientedRailroad } from "../game/Railroad";
 import { TrainStation } from "../game/TrainStation";
@@ -75,6 +75,13 @@ export class TrainExecution implements Execution {
   private stations: TrainStation[] = [];
   private currentRailroad: OrientedRailroad | null = null;
   private speed: number = 2;
+  /**
+   * Fractional remainder of the train's speed, in TRAIN_SPEED_SCALE units. A
+   * Railroad Center boost makes `speed` fractional; the remainder is carried
+   * here so `currentTile` stays a whole index. Mirrored exactly by the client
+   * motion-plan interpolation.
+   */
+  private speedAccumulator = 0;
   private _tradeStopsVisited: number = 0;
   private pathTiles: TileRef[] = [];
   private pathIndex: number = 0;
@@ -97,6 +104,7 @@ export class TrainExecution implements Execution {
 
   init(mg: Game, ticks: number): void {
     this.mg = mg;
+    this.speed = this.computeSpeed();
     const stations = this.railNetwork.findStationsPath(
       this.source,
       this.destination,
@@ -318,12 +326,55 @@ export class TrainExecution implements Execution {
     );
   }
 
+  /**
+   * Speed for this train's whole journey. A railroad's two stops are "of one
+   * nation" when both are owned by the same player; that nation's Railroad
+   * Centers then boost every train (own or foreign) crossing it. The boost is
+   * frozen at spawn, and endpoint-based: it applies to the route between the
+   * two stops, so a train whose source and destination belong to different
+   * players is unboosted.
+   */
+  private computeSpeed(): number {
+    const mg = this.mg!;
+    const base = mg.config().trainBaseSpeed();
+    const owner = this.source.unit.owner();
+    if (owner !== this.destination.unit.owner()) {
+      return base;
+    }
+    const units = this.railroadCenterBoostUnits(owner);
+    return base * mg.config().railroadCenterSpeedMultiplier(units);
+  }
+
+  private railroadCenterBoostUnits(owner: Player): number {
+    const config = this.mg!.config();
+    let units = 0;
+    for (const center of owner.units(UnitType.RailroadCenter)) {
+      if (!center.isActive()) continue;
+      units += config.railroadCenterBoostUnits(center.level());
+    }
+    return units;
+  }
+
+  /**
+   * Whole tiles to move this tick. `speed` may be fractional (Railroad Center
+   * boost); the fractional remainder is carried in an integer accumulator so
+   * `currentTile` stays a whole index. The client interpolates with the exact
+   * same integer math, so rendered and authoritative positions stay in sync.
+   */
+  private nextSpeedStep(): number {
+    this.speedAccumulator += Math.round(this.speed * TRAIN_SPEED_SCALE);
+    const step = Math.floor(this.speedAccumulator / TRAIN_SPEED_SCALE);
+    this.speedAccumulator -= step * TRAIN_SPEED_SCALE;
+    return step;
+  }
+
   private getNextTile(): TileRef | null {
     if (this.currentRailroad === null || !this.canTradeWithDestination()) {
       return null;
     }
-    this.saveTraversedTiles(this.currentTile, this.speed);
-    this.currentTile = this.currentTile + this.speed;
+    const step = this.nextSpeedStep();
+    this.saveTraversedTiles(this.currentTile, step);
+    this.currentTile = this.currentTile + step;
     const leftOver = this.currentTile - this.currentRailroad.getTiles().length;
     if (leftOver >= 0) {
       // Station reached, pick the next station
@@ -388,6 +439,7 @@ export class TrainExecution implements Execution {
           tile: this.destination.unit.tile(),
         },
         speed: this.speed,
+        speedAccumulator: this.speedAccumulator,
         tradeStopsVisited: this._tradeStopsVisited,
         pathTiles: [...this.pathTiles],
         pathIndex: this.pathIndex,
@@ -404,6 +456,7 @@ export class TrainExecution implements Execution {
     this.currentTile = data.currentTile;
     this.spacing = data.spacing;
     this.speed = data.speed;
+    this.speedAccumulator = data.speedAccumulator ?? 0;
     this._tradeStopsVisited = data.tradeStopsVisited;
     this.usedTiles = [...data.usedTiles];
     this.pathTiles = [...data.pathTiles];

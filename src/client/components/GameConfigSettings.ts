@@ -119,6 +119,10 @@ const unitOptions: { type: UnitType; translationKey: string }[] = [
   { type: UnitType.MIRV, translationKey: "unit_type.mirv" },
   { type: UnitType.Factory, translationKey: "unit_type.factory" },
   { type: UnitType.Tollhouse, translationKey: "unit_type.tollhouse" },
+  {
+    type: UnitType.RailroadCenter,
+    translationKey: "unit_type.railroad_center",
+  },
 ];
 
 const MAP_ICON = svg`<path

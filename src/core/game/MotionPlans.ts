@@ -5,6 +5,14 @@ export enum PackedMotionPlanKind {
   TrainRailPathSet = 2,
 }
 
+/**
+ * Fixed-point scale for a train's tiles-per-tick speed on the wire. A Railroad
+ * Center boost makes the speed fractional; the packed field is a u32, so the
+ * speed is multiplied by this and rounded. The client divides it back out and
+ * steps with the same integer accumulator as the core.
+ */
+export const TRAIN_SPEED_SCALE = 100;
+
 export interface GridPathPlan {
   kind: "grid";
   unitId: number;
@@ -93,7 +101,7 @@ export function packMotionPlans(
         out[offset++] = record.engineUnitId >>> 0;
         out[offset++] = record.planId >>> 0;
         out[offset++] = record.startTick >>> 0;
-        out[offset++] = record.speed >>> 0;
+        out[offset++] = Math.round(record.speed * TRAIN_SPEED_SCALE) >>> 0;
         out[offset++] = record.spacing >>> 0;
         out[offset++] = carCount >>> 0;
         out[offset++] = pathLen >>> 0;
@@ -171,7 +179,7 @@ export function unpackMotionPlans(packed: Uint32Array): MotionPlanRecord[] {
         const engineUnitId = packed[offset + 2] >>> 0;
         const planId = packed[offset + 3] >>> 0;
         const startTick = packed[offset + 4] >>> 0;
-        const speed = packed[offset + 5] >>> 0;
+        const speed = (packed[offset + 5] >>> 0) / TRAIN_SPEED_SCALE;
         const spacing = packed[offset + 6] >>> 0;
         const carCount = packed[offset + 7] >>> 0;
         const pathLen = packed[offset + 8] >>> 0;

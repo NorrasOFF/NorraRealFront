@@ -207,6 +207,10 @@ export class ConstructionExecution implements Execution {
       case UnitType.Tollhouse:
         // Tollhouses are passive; trade ships apply the toll themselves.
         break;
+      case UnitType.RailroadCenter:
+        // Railroad Centers are passive; TrainExecution reads them for the
+        // speed boost.
+        break;
       default:
         console.warn(
           `unit type ${this.constructionType} cannot be constructed`,
@@ -224,6 +228,7 @@ export class ConstructionExecution implements Execution {
       case UnitType.City:
       case UnitType.Factory:
       case UnitType.Tollhouse:
+      case UnitType.RailroadCenter:
         return true;
       default:
         return false;

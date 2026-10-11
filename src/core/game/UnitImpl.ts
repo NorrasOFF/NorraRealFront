@@ -160,6 +160,7 @@ export class UnitImpl implements Unit {
         case UnitType.Tollhouse:
         case UnitType.MissileShip:
         case UnitType.MissileDefenseShip:
+        case UnitType.RailroadCenter:
           this.mg.stats().unitBuild(_owner, this._type);
       }
     }
@@ -407,6 +408,7 @@ export class UnitImpl implements Unit {
       case UnitType.City:
       case UnitType.Factory:
       case UnitType.Tollhouse:
+      case UnitType.RailroadCenter:
         this.mg.stats().unitCapture(newOwner, this._type);
         this.mg.stats().unitLose(this._owner, this._type);
         break;
@@ -530,6 +532,7 @@ export class UnitImpl implements Unit {
         case UnitType.Warship:
         case UnitType.Factory:
         case UnitType.Tollhouse:
+        case UnitType.RailroadCenter:
           this.mg.stats().unitDestroy(destroyer, this._type);
           this.mg.stats().unitLose(this.owner(), this._type);
           break;

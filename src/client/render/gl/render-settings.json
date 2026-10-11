@@ -155,6 +155,10 @@
       "Tollhouse": {
         "scale": 1,
         "iconFill": 0.85
+      },
+      "Railroad Center": {
+        "scale": 1.08,
+        "iconFill": 0.85
       }
     },
     "highlightOutlineWidth": 0.04,
@@ -381,6 +385,10 @@
     "Missile Silo": {
       "radius": 10,
       "intensity": 0.9
+    },
+    "Railroad Center": {
+      "radius": 12,
+      "intensity": 1
     },
     "Transport": {
       "radius": 6,

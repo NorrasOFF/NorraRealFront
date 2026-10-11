@@ -131,6 +131,7 @@
       "mirv": "Huge explosion, only targets selected player",
       "missile_silo": "Used to launch nukes",
       "port": "Sends trade ships to generate gold",
+      "railroad_center": "Speeds up your trains on railroads between two stops",
       "sam_launcher": "Defends against incoming nukes",
       "tollhouse": "Takes a cut of trade ships passing nearby",
       "warship": "Captures trade ships, destroys ships and boats"
@@ -1846,10 +1847,6 @@
     "rate_label": "Toll rate",
     "universal_rate_label": "Minimum toll rate (all nations)"
   },
-  "railroad": {
-    "title": "Factory Rail Links",
-    "delete": "Delete rail link"
-  },
   "troubleshooting": {
     "battery": "Battery",
     "battery_level": "Battery Level",
@@ -1890,6 +1887,7 @@
     "missile_ship": "Missile Carrier",
     "missile_silo": "Missile Silo",
     "port": "Port",
+    "railroad_center": "Railroad Center",
     "sam_launcher": "SAM Launcher",
     "tollhouse": "Tollhouse",
     "warship": "Warship"
@@ -1942,6 +1940,8 @@
     "build_missile_silo_desc": "Build a Missile Silo under your cursor.",
     "build_port": "Build Port",
     "build_port_desc": "Build a Port under your cursor.",
+    "build_railroad_center": "Build Railroad Center",
+    "build_railroad_center_desc": "Build a Railroad Center under your cursor.",
     "build_sam_launcher": "Build SAM Launcher",
     "build_sam_launcher_desc": "Build a SAM Launcher under your cursor.",
     "build_tollhouse": "Build Tollhouse",

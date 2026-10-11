@@ -24,6 +24,7 @@ import {
   mirvIcon,
   missileSiloIcon,
   portIcon,
+  railroadCenterIcon,
   samLauncherIcon,
   tollhouseIcon,
   warshipIcon,
@@ -46,6 +47,7 @@ export class UnitDisplay extends LitElement implements Controller {
   private _missileShips = 0;
   private _missileDefenseShips = 0;
   private _tollhouses = 0;
+  private _railroadCenters = 0;
   private allDisabled = false;
   private _hoveredUnit: PlayerBuildableUnitType | null = null;
   @state()
@@ -144,6 +146,7 @@ export class UnitDisplay extends LitElement implements Controller {
       UnitType.MissileDefenseShip,
     );
     this._tollhouses = player.totalUnitLevels(UnitType.Tollhouse);
+    this._railroadCenters = player.totalUnitLevels(UnitType.RailroadCenter);
     this.requestUpdate();
   }
 
@@ -224,6 +227,13 @@ export class UnitDisplay extends LitElement implements Controller {
                 UnitType.Tollhouse,
                 "tollhouse",
                 this.keybinds["buildTollhouse"]?.key ?? "7",
+              )}
+              ${this.renderUnitItem(
+                railroadCenterIcon,
+                this._railroadCenters,
+                UnitType.RailroadCenter,
+                "railroad_center",
+                this.keybinds["buildRailroadCenter"]?.key ?? "8",
               )}
             </div>
           </div>

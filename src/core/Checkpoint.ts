@@ -217,6 +217,11 @@ export interface TrainExecutionCheckpoint {
   source: TrainStationRefCheckpoint;
   destination: TrainStationRefCheckpoint;
   speed: number;
+  /**
+   * Fractional remainder of `speed`, in TRAIN_SPEED_SCALE units. Optional for
+   * blobs written before fractional train speeds existed (always 0 there).
+   */
+  speedAccumulator?: number;
   tradeStopsVisited: number;
   pathTiles: TileRef[];
   pathIndex: number;
@@ -268,12 +273,6 @@ export interface PlayerCheckpoint {
    */
   borderTiles: TileRef[];
   unitIds: number[];
-  /**
-   * Persistent informational rail links between this player's own factories,
-   * as `[factoryAId, factoryBId, railroadUnitId]`. Optional for checkpoints
-   * written before the feature existed.
-   */
-  railroadLinks?: [number, number, number][];
   allianceIds: number[];
   outgoingAttackIds: string[];
   incomingAttackIds: string[];

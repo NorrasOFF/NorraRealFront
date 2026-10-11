@@ -213,10 +213,9 @@ export enum UnitType {
   Tollhouse = "Tollhouse",
   MissileShip = "Missile Ship",
   MissileDefenseShip = "Missile Defense Ship",
-  // Informational only: represents a persistent rail link between two of a
-  // player's own factories. Not buildable, has no health and is never rendered
-  // on the map; it only appears in the owner's own info menu.
-  Railroad = "Railroad",
+  // A buildable structure that boosts the speed of trains running on the
+  // railroads between two stops of the nation that owns it.
+  RailroadCenter = "Railroad Center",
 }
 
 export enum TrainType {
@@ -258,6 +257,7 @@ export const Structures = unitTypeGroup([
   UnitType.Port,
   UnitType.Factory,
   UnitType.Tollhouse,
+  UnitType.RailroadCenter,
 ] as const);
 
 export const BuildMenus = unitTypeGroup([
@@ -274,18 +274,6 @@ export type PlayerBuildableUnitType = (typeof PlayerBuildable.types)[number];
 
 export interface OwnerComp {
   owner: Player;
-}
-
-/**
- * A persistent informational link between two of a player's own factories that
- * are joined by rail. Keyed on each factory, the two entries share one
- * `unitId` (the `UnitType.Railroad` unit). The link survives the rail being
- * torn down and rebuilt; it is dropped when either factory dies or one of them
- * links to a different factory.
- */
-export interface RailroadLink {
-  partnerId: number;
-  unitId: number;
 }
 
 export type TrajectoryTile = {
@@ -361,10 +349,7 @@ export interface UnitParamsMap {
     patrolTile: TileRef;
   };
 
-  // Railroad: a persistent link whose `targetUnit` is the partner factory.
-  [UnitType.Railroad]: {
-    targetUnit?: Unit;
-  };
+  [UnitType.RailroadCenter]: Record<string, never>;
 }
 
 // Type helper to get params type for a specific unit type
@@ -748,11 +733,6 @@ export interface Player {
   unitsConstructed(type: UnitType): number;
   unitsOwned(type: UnitType): number;
 
-  // Railroad links between this player's own factories (see UnitType.Railroad).
-  railroadLinks(): ReadonlyMap<number, RailroadLink>;
-  railroadPartner(factoryId: number): number | undefined;
-  setRailroadLink(factoryA: number, factoryB: number, unitId: number): void;
-  removeRailroadLink(factoryId: number): void;
   buildableUnits(
     tile: TileRef | null,
     units?: readonly PlayerBuildableUnitType[],
