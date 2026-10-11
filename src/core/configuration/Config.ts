@@ -438,11 +438,13 @@ export class Config {
         baseGold = 35_000;
         break;
       case "team":
+        baseGold = 30_000;
+        break;
       case "other":
         baseGold = 25_000;
         break;
       case "self":
-        baseGold = 25_000;
+        baseGold = 30_000;
         break;
     }
     return toInt(baseGold * this.goldMultiplierFor(player));

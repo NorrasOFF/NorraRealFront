@@ -231,12 +231,12 @@ describe("Config.trainGold has no per-stop penalty", () => {
   });
 
   it("returns the full self base gold regardless of stops visited", () => {
-    expect(config.trainGold("self", mockPlayer)).toBe(25_000n);
+    expect(config.trainGold("self", mockPlayer)).toBe(30_000n);
   });
 
   it("returns the full other/team base gold regardless of stops visited", () => {
     expect(config.trainGold("other", mockPlayer)).toBe(25_000n);
-    expect(config.trainGold("team", mockPlayer)).toBe(25_000n);
+    expect(config.trainGold("team", mockPlayer)).toBe(30_000n);
   });
 
   it("returns the full ally base gold", () => {
