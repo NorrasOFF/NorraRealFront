@@ -14,7 +14,7 @@ export class TrainStationExecution implements Execution {
   private station: TrainStation | null = null;
   private numCars: number = 5;
   private lastSpawnTick: number = 0;
-  private ticksCooldown: number = 10; // Minimum cooldown between two trains
+  private ticksCooldown: number = 5; // Minimum cooldown between two trains (halved from 10)
   constructor(
     private unit: Unit,
     private spawnTrains?: boolean, // If set, the station will spawn trains
