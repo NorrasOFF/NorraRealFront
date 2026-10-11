@@ -169,7 +169,7 @@ export class GameMapImpl implements GameMap {
     waterVersion: number;
   } {
     return {
-      terrain: this.terrain.slice(),
+      terrain: new Uint8Array(this.terrain),
       state: this.state.slice(),
       numLandTiles: this.numLandTiles_,
       numTilesWithFallout: this._numTilesWithFallout,

@@ -135,6 +135,21 @@ describe("CheckpointCodec", () => {
     expect(Array.from(decoded!.map.terrain)).toEqual([7, 8]);
   });
 
+  it("round-trips a Node Buffer terrain (Buffer.toJSON must not drop it)", () => {
+    // A Node Buffer is a Uint8Array, but JSON.stringify calls its toJSON before
+    // the replacer, so the plain path used to encode `{type:"Buffer",data:[...]}`
+    // and decode to a plain object (terrain lost, restore then threw). The
+    // codec re-tags that shape, and exportMapState no longer hands out Buffers.
+    const original = sampleCheckpoint();
+    original.map.terrain = Buffer.from([
+      10, 20, 30, 40,
+    ]) as unknown as Uint8Array;
+    const decoded = decodeCheckpoint(encodeCheckpoint(original));
+    expect(decoded).toBeDefined();
+    expect(decoded!.map.terrain).toBeInstanceOf(Uint8Array);
+    expect(Array.from(decoded!.map.terrain)).toEqual([10, 20, 30, 40]);
+  });
+
   it("returns undefined for corrupt or non-checkpoint input", () => {
     expect(decodeCheckpoint("not json")).toBeUndefined();
     expect(decodeCheckpoint(JSON.stringify({ version: 999 }))).toBeUndefined();

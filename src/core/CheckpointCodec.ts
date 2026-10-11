@@ -153,6 +153,24 @@ function replacer(_key: string, value: unknown): unknown {
   if (typeof value === "bigint") {
     return { [BIGINT_TAG]: value.toString() };
   }
+  // A Node Buffer is a Uint8Array, but `JSON.stringify` calls
+  // `Buffer.prototype.toJSON` BEFORE the replacer, so the replacer receives
+  // `{ type: "Buffer", data: number[] }` and the `$u8`/`$ta` branches below
+  // never see the bytes. Re-tag that shape so a checkpoint captured in a Node
+  // process (tests, server tooling; map terrain is the large case) survives the
+  // plain tagged-JSON path instead of decoding to a plain object.
+  if (
+    value !== null &&
+    typeof value === "object" &&
+    (value as { type?: unknown }).type === "Buffer" &&
+    Array.isArray((value as { data?: unknown }).data)
+  ) {
+    return {
+      [U8_TAG]: bytesToBase64(
+        Uint8Array.from((value as { data: number[] }).data),
+      ),
+    };
+  }
   if (value instanceof Uint8Array) {
     return { [U8_TAG]: bytesToBase64(value) };
   }

@@ -152,6 +152,33 @@ describe("B2 rail checkpoints", () => {
     expect(actualHashes).toEqual(expectedHashes);
   });
 
+  test("restores a boosted (fractional-speed) train and replays the suffix identically", async () => {
+    const { game: original, alphaId } = await buildBase();
+    buildRailway(original, alphaId);
+    // Both stops are the player's, so the center boosts this train; its speed is
+    // fractional, exercising the wire/checkpoint scaling and the accumulator.
+    original.player(alphaId).buildUnit(UnitType.RailroadCenter, 5, {});
+
+    executeTicks(original, 3);
+    expect(original.units(UnitType.Train).length).toBeGreaterThan(0);
+
+    const checkpoint = original.checkpoint();
+    expect(checkpoint).toBeDefined();
+    const trainCp = checkpoint!.executions.find((e) => e.kind === "train");
+    expect(trainCp).toBeDefined();
+    expect((trainCp!.data as { speed: number }).speed).toBeGreaterThan(2);
+
+    const expectedHashes = drainHashes(original, 30);
+    expect(expectedHashes.length).toBeGreaterThan(0);
+
+    const { game: restored } = await buildBase();
+    restored.restoreFromCheckpoint(checkpoint!);
+    expect(restored.units(UnitType.Train).length).toBeGreaterThan(0);
+
+    const actualHashes = drainHashes(restored, 30);
+    expect(actualHashes).toEqual(expectedHashes);
+  });
+
   test("checkpoints a station execution's station and PRNG", async () => {
     const { game, alphaId } = await buildBase();
     const player = game.player(alphaId);

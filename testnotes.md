@@ -542,3 +542,43 @@ not called out before:
 - `tests/TranslationSystem.test.ts` — five unused keys
   (`error_modal.turnstile_error`, `events_display.attack_cancelled_retreat`,
   `main.clans`, `main.inventory`, `main.leaderboard`).
+
+## Node `Buffer` map terrain was lost through the plain checkpoint codec
+
+Found by the new `tests/core/RailroadCenterSaveResume.test.ts` (the first
+Railroad-Center test that round-trips a checkpoint through the REAL wire codec
+instead of restoring an in-memory `GameCheckpoint`).
+
+`tests/util/Setup.ts` passes `fs.readFileSync(...)` (a Node `Buffer`) straight
+to `genTerrainFromBin`, and `GameMapImpl` stores it as `this.terrain`. A `Buffer`
+is a `Uint8Array`, so the codec's `replacer` intends to tag it with `$u8` — but
+`JSON.stringify` invokes `Buffer.prototype.toJSON()` BEFORE the replacer, so the
+replacer saw `{ type: "Buffer", data: number[] }` and the plain tagged-JSON path
+encoded that object verbatim. On decode it stayed a plain object, so
+`importMapState` threw `map state buffer size mismatch: terrain undefined/...`
+(`state.terrain.length` was `undefined`). The gzip/binary path was unaffected:
+`buildBinaryParts` moves the terrain into the raw-byte section via
+`value instanceof Uint8Array`, before any JSON.
+
+Fixes:
+
+- `CheckpointCodec.replacer` re-tags the `{ type: "Buffer", data: [...] }` shape
+  as `$u8` base64, so any Node `Buffer` in a checkpoint survives the plain path.
+- `GameMapImpl.exportMapState` returns `new Uint8Array(this.terrain)` (a plain
+  copy) instead of `this.terrain.slice()` (which returns a `Buffer`). This is the
+  real map boundary and also avoids building a huge intermediate `data` array.
+
+Regression test: `CheckpointCodec` "round-trips a Node Buffer terrain".
+
+## Exhaustive Railroad Center save/resume test
+
+`tests/core/RailroadCenterSaveResume.test.ts` drives a long, multi-segment
+boosted train journey (stations 0/60/120, level-1 + level-2 centers), captures a
+checkpoint at 9 ticks spanning both segments, sends each through
+`encodeCheckpointWire`/`decodeCheckpointWire`, restores into a fresh game and
+compares the per-tick `GameImpl.hash()` for the whole suffix. It also appends a
+center and spawns a second (faster) train after some checkpoints, so earlier
+checkpoints must replay the spawn and later ones carry it in restored state. It
+asserts `speed`/`speedAccumulator` survive the wire exactly, that at least one
+mid-step accumulator is non-zero, and (separately) that a fractional motion-plan
+speed round-trips through `packMotionPlans`/`unpackMotionPlans`.
