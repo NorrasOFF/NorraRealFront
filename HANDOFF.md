@@ -20,8 +20,9 @@ Companion notes: `testnotes.md`.
   `hexfront` = `hexfront-dev/OpenFrontIO` (no write).
 - Fork base: `62e602e7a` (the Railroad Center commit). Work is pushed to
   **`origin/main`** (currently `3e258c8ce`).
-- NorrasOFF side: `norrasoff/main` is `fb14859f7` (PR #15 = `9b31b8789`, a revert
-  of PR #14; see §4). The fork and NorrasOFF diverge at `647ca65a4`.
+- NorrasOFF side: `norrasoff/main` was `fb14859f7` (PR #15 = `9b31b8789`, a revert
+  of PR #14; see §4); it now equals the fork at `61863234c`. The two diverged at
+  `647ca65a4`.
 
 ## 2. This session (fork): Railroad Center save/resume audit
 
@@ -96,24 +97,24 @@ NorrasOFF's revert) and only merges the notes: `testnotes.md` stays the fork's
 version (NorrasOFF merely deleted lines there) and `HANDOFF.md` is this combined
 document. This was done on the fork branch `merge/norrasoff-into-remus` (a merge
 of `norrasoff/main` into `origin/main`); the resulting tree equals `origin/main`
-except for this file.
+except for this file. It was **landed** on `NorrasOFF/NorraRealFront` `main` as a
+fast-forward (`fb14859f7..61863234c`); `origin/main` and `norrasoff/main` now both
+point at `61863234c`.
 
-### BLOCKER — cannot write to NorrasOFF/NorraRealFront (historical)
+### NorrasOFF write access (resolved)
 
-The Norrasoff token cannot write to `NorrasOFF/NorraRealFront`. Verified (HTTP
-403) for: git `push`, `POST /git/refs` (create branch), and `POST /pulls` (open
-PR). The Hexfront token writes the fork but is also 403 on NorrasOFF. The repo API
-reports `permissions.push = true` for the user, so it is the **token scope**, not
-repo membership: a fine-grained PAT with no `Contents: write` on that repo.
-
-To land a change, either grant `hexfront-dev` a token with **Contents: write**
-(and **Pull requests: write** to open a PR) on `NorrasOFF/NorraRealFront`, or
-push/merge from a machine that has it.
+Earlier the Norrasoff token could not write to `NorrasOFF/NorraRealFront` (HTTP
+403 on git `push`, `POST /git/refs`, and `POST /pulls`); the repo API's
+`permissions.push = true` reflects user membership, not the token scope. This was
+fixed by giving the fine-grained PAT **Contents: write** on
+`NorrasOFF/NorraRealFront` (the Hexfront token is still fork-only). The landing
+push then succeeded.
 
 ## 5. Open items / next steps
 
-- Land the merge (fork's `RailroadCenter` over NorrasOFF's PR #14 revert) on
-  `NorrasOFF/NorraRealFront` `main` once write access exists (§4).
+- DONE: the merge (fork's `RailroadCenter` over NorrasOFF's PR #14 revert) is
+  landed on `NorrasOFF/NorraRealFront` `main` (`61863234c`), so the fork and
+  NorrasOFF match. No open merge work.
 - The bug in §2 was pre-existing (not introduced by `62e602e7a`); it only
   reproduced because the new test uses the real wire codec. The browser client is
   unaffected (its terrain is a plain `Uint8Array`), but any Node-process
