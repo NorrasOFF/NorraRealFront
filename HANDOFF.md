@@ -1,4 +1,4 @@
-# Handoff — Railroad Center train boost: exhaustive save/resume audit + Node `Buffer` codec fix
+# Handoff — Railroad Center train boost + save/resume audit; landing on NorrasOFF (PR #14 revert)
 
 > Future sessions: this file holds the current handoff. Overwrite it rather than
 > appending; keep only the latest handoff. Write one only when the session leaves
@@ -11,17 +11,19 @@ Companion notes: `testnotes.md`.
 - Repo: `C:\Users\ai51940\OpenFrontIO`.
 - Tokens (all authenticate as **`hexfront-dev`**):
   - `H:\Documents\Hexfront-token.txt` — write to the fork (`origin`).
-  - `H:\Documents\Norrasoff-token.txt` — **read-only** (cannot push/PR NorrasOFF).
+  - `H:\Documents\Norrasoff-token.txt` — **read-only** on NorrasOFF (see §4/§5).
   - `H:\Documents\Fly.io-token.txt` — Fly deploy token (app `openfrontio`, org
     "Familjen Jacobsson"). `flyctl` at `C:\Users\ai51940\.fly\bin\flyctl.exe`;
     set `$env:FLY_API_TOKEN = (Get-Content -Raw ...).Trim()`.
 - Remotes: `origin` = `hexfront-dev/NorraRealFront-Remus-`,
   `norrasoff` = `NorrasOFF/NorraRealFront`, `upstream` = `openfrontio/OpenFrontIO`,
   `hexfront` = `hexfront-dev/OpenFrontIO` (no write).
-- Base: `62e602e7a` (the Railroad Center commit) on branch **`debug-pr14`**.
-  This session's work is pushed to **`origin/main`**.
+- Fork base: `62e602e7a` (the Railroad Center commit). Work is pushed to
+  **`origin/main`** (currently `3e258c8ce`).
+- NorrasOFF side: `norrasoff/main` is `fb14859f7` (PR #15 = `9b31b8789`, a revert
+  of PR #14; see §4). The fork and NorrasOFF diverge at `647ca65a4`.
 
-## 2. What changed this session
+## 2. This session (fork): Railroad Center save/resume audit
 
 Audited the Railroad Center train-speed boost (`TrainExecution.computeSpeed`,
 fractional `speed` + `speedAccumulator`, `TRAIN_SPEED_SCALE` wire scaling) for
@@ -55,7 +57,7 @@ checkpoint that goes through the plain wire codec on Node-built maps:
 - Also included: the previously-uncommitted `tests/core/CheckpointRail.test.ts`
   boosted-train case (single center, 30-tick suffix).
 
-## 3. Verification
+## 3. Verification (fork)
 
 - `npx tsc --noEmit` clean; `npm run lint` clean; prettier applied to touched
   files.
@@ -66,17 +68,60 @@ checkpoint that goes through the plain wire codec on Node-built maps:
 - New tests pass: `RailroadCenterSaveResume.test.ts` (5) and the added
   `CheckpointCodec` Buffer case.
 
-## 4. Open items / notes
+## 4. NorrasOFF side: PR #14 revert, and the fork↔NorrasOFF merge
 
-- The bug above was pre-existing (not introduced by `62e602e7a`); it only
+NorrasOFF's `main` (`fb14859f7`, PR #15 = `9b31b8789`) **reverted PR #14 "Nya
+täggrejer"** (merge `1d963cf20`, 6 commits from the fork: informational
+`Railroad` unit, defense-post drag upgrades, run-openfront e2e skill docs,
+railroad checkpoint test, handoff notes). `git revert -m 1 1d963cf20` was a clean,
+conflict-free revert: its tree equals the pre-merge base `96ce9a417`.
+
+The fork, meanwhile, **replaced** the reverted `UnitType.Railroad` feature with
+the new buildable `UnitType.RailroadCenter`. Because both branches edited the same
+lines, a merge is **not** auto-mergeable — a test merge reported content conflicts
+in:
+
+- `src/core/game/Game.ts` — `UnitType` enum tail, `UnitParamsMap` tail, `Player`
+  interface (NorrasOFF deletes the `Railroad` block; the fork replaces it with
+  `RailroadCenter`).
+- `src/core/configuration/Config.ts` — the unit-info `switch`
+  (`case UnitType.Railroad` deleted vs replaced by `case UnitType.RailroadCenter`
+  + cost constants).
+- `HANDOFF.md`, `testnotes.md` — both branches rewrote/edited the notes.
+
+NorrasOFF's `main` contains no work of its own beyond the revert of feature
+commits the fork still has, so it is strictly behind the fork. The resolution
+therefore takes the **fork's tree wholesale** (the `RailroadCenter` side over
+NorrasOFF's revert) and only merges the notes: `testnotes.md` stays the fork's
+version (NorrasOFF merely deleted lines there) and `HANDOFF.md` is this combined
+document. This was done on the fork branch `merge/norrasoff-into-remus` (a merge
+of `norrasoff/main` into `origin/main`); the resulting tree equals `origin/main`
+except for this file.
+
+### BLOCKER — cannot write to NorrasOFF/NorraRealFront (historical)
+
+The Norrasoff token cannot write to `NorrasOFF/NorraRealFront`. Verified (HTTP
+403) for: git `push`, `POST /git/refs` (create branch), and `POST /pulls` (open
+PR). The Hexfront token writes the fork but is also 403 on NorrasOFF. The repo API
+reports `permissions.push = true` for the user, so it is the **token scope**, not
+repo membership: a fine-grained PAT with no `Contents: write` on that repo.
+
+To land a change, either grant `hexfront-dev` a token with **Contents: write**
+(and **Pull requests: write** to open a PR) on `NorrasOFF/NorraRealFront`, or
+push/merge from a machine that has it.
+
+## 5. Open items / next steps
+
+- Land the merge (fork's `RailroadCenter` over NorrasOFF's PR #14 revert) on
+  `NorrasOFF/NorraRealFront` `main` once write access exists (§4).
+- The bug in §2 was pre-existing (not introduced by `62e602e7a`); it only
   reproduced because the new test uses the real wire codec. The browser client is
   unaffected (its terrain is a plain `Uint8Array`), but any Node-process
   checkpoint of a `setup`-built game was corrupt. `NodeGameMapLoader` already
   wrapped its reads in `new Uint8Array(...)`, which is why the gated
   `LateGameSaveResume`/`EndgameSaveResume` tests never caught it.
 - The Railroad Center boost is frozen at train spawn and endpoint-based (not
-  per-segment); see the previous handoff's §4 if per-segment is wanted. Nations
-  still do not build centers.
-- `origin/main` was force-pushed in the prior session (reverses the PR #14
-  revert). Confirm that is still the intended ship target before assuming it is
-  not.
+  per-segment); Nations still do not build centers.
+- `origin/main` was force-pushed in a prior session (reversed the PR #14 revert).
+  Confirm that is still the intended ship target before assuming it is not.
+- The pre-existing suite failures listed in `testnotes.md` still stand.
