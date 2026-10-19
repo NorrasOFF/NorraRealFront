@@ -595,16 +595,27 @@ Two changes to the buildable `UnitType.RailroadCenter`:
   center at the cap). `ConstructionExecution` already gates on `player.canBuild`,
   so the intent path is covered; the client `buildableUnits` ghost reads the same
   check. So 5 level-1 centers are allowed but a 6th (or any upgrade) is refused.
-- **Flat cost.** Every Railroad Center level now costs a flat `1_500_000` gold
+- **Flat cost.** Every Railroad Center level now costs a flat `2_000_000` gold
   (`RAILROAD_CENTER_COST`), replacing the `min(1M, 2^n*125k)` curve — the cost
-  function ignores `numUnits`, so build and each upgrade are 1.5M.
-- **Spawn throughput +15%/level.** `Config.railroadCenterSpawnMultiplier(total)`
-  = `1 + 0.15 * total` (`RAILROAD_CENTER_SPAWN_BONUS_PER_LEVEL`), where `total`
+  function ignores `numUnits`, so build and each upgrade are 2M.
+- **Spawn throughput +10%/level.** `Config.railroadCenterSpawnMultiplier(total)`
+  = `1 + 0.1 * total` (`RAILROAD_CENTER_SPAWN_BONUS_PER_LEVEL`), where `total`
   is the summed active Railroad Center levels owned by the station's player.
   `TrainStationExecution.shouldSpawnTrain` divides the base `trainSpawnRate` odds
   by this multiplier, so each center level raises the per-tick spawn chance by
-  ~1.15x. A maxed center is +75%. This is the lever that actually moves train
+  ~1.10x. A maxed center is +50%. This is the lever that actually moves train
   gold, since income = spawn rate × gold/stop (the speed buff does not).
+
+- **Captured centers are trimmed to the cap.** Capturing an enemy Railroad
+  Center bypasses the build/upgrade checks, so `PlayerImpl.captureUnit()` calls
+  `enforceRailroadCenterCap()`. Excess levels are removed from the newly
+  captured center first: if its level exceeds the excess it is downgraded
+  (`decreaseLevel`), otherwise the whole unit is deleted. Previously a player
+  at 5 levels could capture another level-5 center and hold 10 levels.
+- **Cap UI.** The Railroad Center card in the build menu and its hotbar icon
+  show a `current/5` badge at the bottom of the icon, and the hotbar icon fades
+  (`opacity-40`) once the player reaches the cap, so it cannot be selected for
+  a new build (the build menu already disables the card via `canBuild`).
 
 Note: the boost is owner-wide (like the speed boost is route/owner-based) and
 computed live from unit state, so it needs no new checkpoint field. It changes
@@ -612,7 +623,7 @@ the PRNG stream for factory stations, which is deterministic.
 
 Tests: `tests/core/executions/RailroadCenter.test.ts` (multiplier curve, the
 aggregate cap — 5 level-1 centers accepted, a 6th and any upgrade refused at the
-cap — the flat 1.5M cost, and the spawn-odds scaling observed through
+cap — the flat 2M cost, and the spawn-odds scaling observed through
 `shouldSpawnTrain`). This session also halved the train spawn cooldown (10→5),
 raised the destination level-weight coefficient (0.25→0.30) and the self/team
 train gold (25k→30k) — see those commits.

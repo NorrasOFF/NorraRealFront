@@ -1492,6 +1492,46 @@ export class PlayerImpl implements Player {
       throw new Error(`Cannot capture unit, ${this} already owns ${unit}`);
     }
     unit.setOwner(this);
+    if (unit.type() === UnitType.RailroadCenter) {
+      this.enforceRailroadCenterCap(unit);
+    }
+  }
+
+  /**
+   * Captures bypass the build/upgrade cap, so trim any excess Railroad Center
+   * levels immediately. The newly captured center is reduced first; if that is
+   * somehow not enough (e.g. an already-over-cap restored save), centers are
+   * trimmed by id for determinism.
+   */
+  private enforceRailroadCenterCap(preferred: Unit): void {
+    let excess =
+      this.unitsOwned(UnitType.RailroadCenter) -
+      this.mg.config().railroadCenterMaxTotalLevels();
+    if (excess <= 0) {
+      return;
+    }
+
+    const centers = this.units(UnitType.RailroadCenter)
+      .filter((u) => u.isActive())
+      .sort((a, b) => {
+        if (a === preferred) return -1;
+        if (b === preferred) return 1;
+        return a.id() - b.id();
+      });
+
+    for (const center of centers) {
+      if (excess <= 0) break;
+      const levels = center.isUnderConstruction() ? 1 : center.level();
+      if (excess >= levels) {
+        center.delete();
+        excess -= levels;
+      } else {
+        for (let i = 0; i < excess; i++) {
+          center.decreaseLevel();
+        }
+        excess = 0;
+      }
+    }
   }
 
   buildUnit<T extends UnitType>(
