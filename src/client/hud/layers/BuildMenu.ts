@@ -267,6 +267,34 @@ export class BuildMenu extends LitElement implements Controller {
       font-size: 40px;
       margin-bottom: 5px;
     }
+    .build-icon-wrap {
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 5px;
+    }
+    .build-cap-badge {
+      position: absolute;
+      bottom: 0;
+      left: 50%;
+      transform: translateX(-50%);
+      background-color: #1e1e1e;
+      border: 1px solid #666;
+      border-radius: 9999px;
+      color: white;
+      font-size: 10px;
+      line-height: 1;
+      padding: 1px 5px;
+      pointer-events: none;
+      white-space: nowrap;
+      transition: all 0.3s ease;
+    }
+    .build-button:disabled .build-cap-badge {
+      background-color: #1a1a1a;
+      border-color: #333;
+      color: #aaa;
+    }
     .build-name {
       font-size: 14px;
       font-weight: bold;
@@ -380,6 +408,10 @@ export class BuildMenu extends LitElement implements Controller {
         width: 10px;
         height: 10px;
       }
+      .build-cap-badge {
+        font-size: 8px;
+        padding: 0 3px;
+      }
     }
   `;
 
@@ -408,8 +440,17 @@ export class BuildMenu extends LitElement implements Controller {
     if (!player) {
       return "?";
     }
-
+    if (item.unitType === UnitType.RailroadCenter) {
+      return this.railroadCenterLevels().toString();
+    }
     return player.totalUnitLevels(item.unitType).toString();
+  }
+
+  private railroadCenterLevels(): number {
+    return (this.game?.myPlayer()?.units(UnitType.RailroadCenter) ?? []).reduce(
+      (total, unit) => total + (unit.isUnderConstruction() ? 1 : unit.level()),
+      0,
+    );
   }
 
   public sendBuildOrUpgrade(buildableUnit: BuildableUnit, tile: TileRef): void {
@@ -452,6 +493,8 @@ export class BuildMenu extends LitElement implements Controller {
                 const enabled =
                   buildableUnit.canBuild !== false ||
                   buildableUnit.canUpgrade !== false;
+                const isRailroadCenter =
+                  item.unitType === UnitType.RailroadCenter;
                 return html`
                   <button
                     class="build-button"
@@ -462,13 +505,22 @@ export class BuildMenu extends LitElement implements Controller {
                       ? translateText("build_menu.not_enough_money")
                       : ""}
                   >
-                    <img
-                      src=${item.icon}
-                      alt="${item.unitType}"
-                      width="40"
-                      height="40"
-                      draggable="false"
-                    />
+                    <div class="build-icon-wrap">
+                      <img
+                        src=${item.icon}
+                        alt="${item.unitType}"
+                        width="40"
+                        height="40"
+                        draggable="false"
+                      />
+                      ${isRailroadCenter
+                        ? html`<span class="build-cap-badge" translate="no"
+                            >${this.count(item)}/${this.game
+                              ?.config()
+                              ?.railroadCenterMaxTotalLevels() ?? 5}</span
+                          >`
+                        : ""}
+                    </div>
                     <span class="build-name"
                       >${item.key && translateText(item.key)}</span
                     >
@@ -489,7 +541,7 @@ export class BuildMenu extends LitElement implements Controller {
                         draggable="false"
                       />
                     </span>
-                    ${item.countable
+                    ${item.countable && !isRailroadCenter
                       ? html`<div class="build-count-chip">
                           <span class="build-count">${this.count(item)}</span>
                         </div>`

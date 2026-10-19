@@ -104,6 +104,13 @@ export class UnitDisplay extends LitElement implements Controller {
     return 0n;
   }
 
+  private railroadCenterLevels(): number {
+    return (this.game?.myPlayer()?.units(UnitType.RailroadCenter) ?? []).reduce(
+      (total, unit) => total + (unit.isUnderConstruction() ? 1 : unit.level()),
+      0,
+    );
+  }
+
   private canBuild(item: UnitType): boolean {
     if (this.game?.config().isUnitDisabled(item)) return false;
     const player = this.game?.myPlayer();
@@ -122,6 +129,12 @@ export class UnitDisplay extends LitElement implements Controller {
         return (
           this.cost(item) <= (player?.gold() ?? 0n) &&
           (player?.units(UnitType.Port).length ?? 0) > 0
+        );
+      case UnitType.RailroadCenter:
+        return (
+          this.cost(item) <= (player?.gold() ?? 0n) &&
+          this.railroadCenterLevels() <
+            this.game.config().railroadCenterMaxTotalLevels()
         );
       default:
         return this.cost(item) <= (player?.gold() ?? 0n);
@@ -146,7 +159,7 @@ export class UnitDisplay extends LitElement implements Controller {
       UnitType.MissileDefenseShip,
     );
     this._tollhouses = player.totalUnitLevels(UnitType.Tollhouse);
-    this._railroadCenters = player.totalUnitLevels(UnitType.RailroadCenter);
+    this._railroadCenters = this.railroadCenterLevels();
     this.requestUpdate();
   }
 
@@ -407,13 +420,24 @@ export class UnitDisplay extends LitElement implements Controller {
             ${displayHotkey}
           </div>`}
           <div class="flex items-center gap-0.5 pt-0.5">
-            <img
-              src=${icon}
-              alt=${structureKey}
-              class="align-middle size-5"
-              draggable="false"
-            />
-            ${number !== null
+            <div class="relative flex items-center justify-center">
+              <img
+                src=${icon}
+                alt=${structureKey}
+                class="align-middle size-5"
+                draggable="false"
+              />
+              ${unitType === UnitType.RailroadCenter
+                ? html`<span
+                    class="absolute bottom-0 left-1/2 -translate-x-1/2 rounded-sm border border-slate-500 bg-gray-900/90 px-0.5 text-[8px] leading-none text-white"
+                    translate="no"
+                    >${number ?? 0}/${this.game
+                      .config()
+                      .railroadCenterMaxTotalLevels()}</span
+                  >`
+                : null}
+            </div>
+            ${number !== null && unitType !== UnitType.RailroadCenter
               ? html`<span class="shrink-0 whitespace-nowrap text-xs"
                   >${renderNumber(number)}</span
                 >`

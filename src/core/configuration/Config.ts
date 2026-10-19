@@ -243,12 +243,12 @@ const OVERTIME_DEFAULTS = {
 const RAILROAD_CENTER_LOG_COEFF = 0.375;
 
 // Spawn-throughput bonus a Railroad Center grants its owner's factories: each
-// total center level raises the effective train spawn chance by +15%.
-const RAILROAD_CENTER_SPAWN_BONUS_PER_LEVEL = 0.15;
+// total center level raises the effective train spawn chance by +10%.
+const RAILROAD_CENTER_SPAWN_BONUS_PER_LEVEL = 0.1;
 
 // Flat gold cost of one Railroad Center level (build or upgrade). A player may
 // hold at most RAILROAD_CENTER_MAX_TOTAL_LEVELS summed levels.
-const RAILROAD_CENTER_COST = 1_500_000;
+const RAILROAD_CENTER_COST = 2_000_000;
 
 // Highest summed Railroad Center levels a single player may have (across all
 // their centers).
@@ -500,9 +500,9 @@ export class Config {
 
   /**
    * Train spawn-throughput multiplier granted by `totalLevels` summed Railroad
-   * Center levels owned by the station's player: `1 + 0.15 * totalLevels`.
+   * Center levels owned by the station's player: `1 + 0.1 * totalLevels`.
    * Applied to a factory station's spawn odds, so each center level raises the
-   * effective number of trains on the rails by ~15%.
+   * effective number of trains on the rails by ~10%.
    */
   railroadCenterSpawnMultiplier(totalLevels: number): number {
     if (totalLevels <= 0) return 1;

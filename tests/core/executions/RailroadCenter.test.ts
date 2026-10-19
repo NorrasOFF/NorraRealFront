@@ -143,12 +143,12 @@ describe("RailroadCenter speed boost", () => {
     ).toBe((exec as unknown as { speedAccumulator: number }).speedAccumulator);
   });
 
-  it("spawn multiplier rises +15% per center level", async () => {
+  it("spawn multiplier rises +10% per center level", async () => {
     const game = await setup("plains", {}, []);
     const config = game.config();
     expect(config.railroadCenterSpawnMultiplier(0)).toBe(1);
-    expect(config.railroadCenterSpawnMultiplier(1)).toBeCloseTo(1.15, 6);
-    expect(config.railroadCenterSpawnMultiplier(5)).toBeCloseTo(1.75, 6);
+    expect(config.railroadCenterSpawnMultiplier(1)).toBeCloseTo(1.1, 6);
+    expect(config.railroadCenterSpawnMultiplier(5)).toBeCloseTo(1.5, 6);
   });
 
   it("caps a player's summed Railroad Center levels at 5, for build and upgrade", async () => {
@@ -177,7 +177,7 @@ describe("RailroadCenter speed boost", () => {
     expect(player.canUpgradeUnit(existing)).toBe(false);
   });
 
-  it("charges a flat 1.5M gold per Railroad Center level", async () => {
+  it("charges a flat 2M gold per Railroad Center level", async () => {
     const game = await setup("plains", { instantBuild: true }, [
       new PlayerInfo("p1", PlayerType.Human, null, "p1"),
     ]);
@@ -185,11 +185,11 @@ describe("RailroadCenter speed boost", () => {
     [0, 1, 2, 3, 4].forEach((t) => player.conquer(t));
     const cost = () =>
       game.config().unitInfo(UnitType.RailroadCenter).cost(game, player);
-    expect(cost()).toBe(1_500_000n);
+    expect(cost()).toBe(2_000_000n);
     player.buildUnit(UnitType.RailroadCenter, 4, {});
-    expect(cost()).toBe(1_500_000n);
+    expect(cost()).toBe(2_000_000n);
     player.units(UnitType.RailroadCenter)[0].increaseLevel();
-    expect(cost()).toBe(1_500_000n);
+    expect(cost()).toBe(2_000_000n);
   });
 
   it("scales factory spawn odds by the owner's center levels", async () => {
@@ -230,7 +230,60 @@ describe("RailroadCenter speed boost", () => {
     const boosted = await spawnOdds(5);
     // Factory level 1 -> one roll, at round(trainSpawnRate(1) / boost).
     expect(base).toEqual([165]);
-    expect(boosted).toEqual([Math.round(165 / 1.75)]);
+    expect(boosted).toEqual([Math.round(165 / 1.5)]);
     expect(boosted[0]).toBeLessThan(base[0]);
+  });
+
+  it("trims a captured center's levels down to the 5-level cap", async () => {
+    const game = await setup(
+      "plains",
+      { instantBuild: true, infiniteGold: true },
+      [
+        new PlayerInfo("p1", PlayerType.Human, null, "p1"),
+        new PlayerInfo("p2", PlayerType.Human, null, "p2"),
+      ],
+    );
+    const p1 = game.player("p1")!;
+    const p2 = game.player("p2")!;
+    [0, 20, 40, 60].forEach((y) =>
+      p1.buildUnit(UnitType.RailroadCenter, game.ref(0, y), {}),
+    );
+    const captured = p2.buildUnit(UnitType.RailroadCenter, game.ref(0, 90), {});
+    captured.increaseLevel();
+    captured.increaseLevel();
+    expect(captured.level()).toBe(3);
+
+    p1.captureUnit(captured);
+
+    expect(p1.unitsOwned(UnitType.RailroadCenter)).toBe(5);
+    expect(captured.owner()).toBe(p1);
+    expect(captured.level()).toBe(1);
+    expect(p2.unitsOwned(UnitType.RailroadCenter)).toBe(0);
+  });
+
+  it("deletes a captured center that cannot fit under the cap", async () => {
+    const game = await setup(
+      "plains",
+      { instantBuild: true, infiniteGold: true },
+      [
+        new PlayerInfo("p1", PlayerType.Human, null, "p1"),
+        new PlayerInfo("p2", PlayerType.Human, null, "p2"),
+      ],
+    );
+    const p1 = game.player("p1")!;
+    const p2 = game.player("p2")!;
+    [0, 20, 40, 60, 80].forEach((y) =>
+      p1.buildUnit(UnitType.RailroadCenter, game.ref(0, y), {}),
+    );
+    const captured = p2.buildUnit(UnitType.RailroadCenter, game.ref(0, 90), {});
+    [1, 2, 3, 4].forEach(() => captured.increaseLevel());
+    expect(captured.level()).toBe(5);
+
+    p1.captureUnit(captured);
+
+    expect(p1.unitsOwned(UnitType.RailroadCenter)).toBe(5);
+    expect(captured.isActive()).toBe(false);
+    expect(p1.units(UnitType.RailroadCenter)).toHaveLength(5);
+    expect(p2.unitsOwned(UnitType.RailroadCenter)).toBe(0);
   });
 });
