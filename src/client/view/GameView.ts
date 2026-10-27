@@ -654,7 +654,8 @@ export class GameView implements GameMap {
       tick: tick,
       allianceDuration: this._config.allianceDuration(),
       isTransitiveTarget: (sid) =>
-        this._myPlayer?.hasTransitiveTarget(sid) ?? false,
+        (this._markedPlayers?.has(sid) ?? false) ||
+        (this._myPlayer?.hasTransitiveTarget(sid) ?? false),
       doomsdayClockWarnTicks:
         this._config.doomsdayClockConfig().warnSeconds * 10,
     });
@@ -1417,7 +1418,36 @@ export class GameView implements GameMap {
     return this._gameID;
   }
 
+  private _markedPlayers: ReadonlySet<number> | null = null;
+
   focusedPlayer(): PlayerView | null {
     return this.myPlayer();
+  }
+
+  /**
+   * Extra smallIDs drawn with the target crosshair by the name pass, on top
+   * of the player's real transitive targets (e.g. the tutorial pointing at
+   * capturable tribes). Null when nothing is requested.
+   */
+  setMarkedPlayers(ids: ReadonlySet<number> | null): void {
+    this._markedPlayers = ids;
+  }
+
+  markedPlayers(): ReadonlySet<number> | null {
+    return this._markedPlayers;
+  }
+
+  private _ownSpawnRing = false;
+
+  /**
+   * Keep the local player's spawn-phase ring drawn after the phase ends
+   * (the tutorial uses it to show a new player where their territory is).
+   */
+  setOwnSpawnRing(show: boolean): void {
+    this._ownSpawnRing = show;
+  }
+
+  ownSpawnRing(): boolean {
+    return this._ownSpawnRing;
   }
 }

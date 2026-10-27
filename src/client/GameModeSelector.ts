@@ -39,12 +39,19 @@ import { SinglePlayerModal } from "./SinglePlayerModal";
 import { UsernameInput } from "./UsernameInput";
 import {
   calculateServerTimeOffset,
+  getGamesPlayed,
   getSecondsUntilServerTimestamp,
   renderDuration,
   translateText,
 } from "./Utils";
 
 const CARD_BG = "bg-surface";
+/** Tutorial card: the panel's gold, dark text for contrast. */
+const TUTORIAL_ACTION =
+  "bg-cyber-yellow hover:bg-yellow-300 active:bg-cyber-yellow/80 !text-gray-900 hover:scale-y-105 hover:scale-x-[1.01]";
+
+/** The Tutorial card shows beside Solo until the player has played this many games. */
+const TUTORIAL_CARD_MAX_GAMES = 5;
 
 /**
  * Whether a multiplayer entry point should refuse to act. Exported for tests
@@ -238,21 +245,32 @@ export class GameModeSelector extends LitElement {
 
     return html`
       <div class="flex flex-col gap-4 w-full px-4 sm:px-0 mx-auto pb-4 sm:pb-0">
-        <!-- Solo + detailed view: mobile only, top. The lobby browser is one
-             column wide, matching Join Lobby below it. -->
-        <div class="sm:hidden grid grid-cols-3 gap-4 h-14">
-          <div class="col-span-2">
+        <!-- Solo + tutorial + detailed view: mobile only, top. The lobby
+             browser is one column wide, matching Join Lobby below it. -->
+        <div class="sm:hidden flex gap-4 h-14">
+          <div class="flex-[2]">
             ${this.renderSmallActionCard(
               translateText("main.solo"),
               this.openSinglePlayerModal,
               "bg-malibu-blue hover:bg-aquarius active:bg-malibu-blue/80 hover:scale-y-105 hover:scale-x-[1.01]",
             )}
           </div>
-          ${this.renderSmallActionCard(
-            translateText("main.detailed_view"),
-            this.openDetailedView,
-            "bg-surface hover:brightness-[1.08] active:brightness-[0.95] hover:scale-105 hover:shadow-[var(--shadow-action-card-hover)]",
-          )}
+          ${getGamesPlayed() < TUTORIAL_CARD_MAX_GAMES
+            ? html`<div class="flex-1">
+                ${this.renderSmallActionCard(
+                  translateText("main.tutorial"),
+                  this.startTutorial,
+                  TUTORIAL_ACTION,
+                )}
+              </div>`
+            : nothing}
+          <div class="flex-1">
+            ${this.renderSmallActionCard(
+              translateText("main.detailed_view"),
+              this.openDetailedView,
+              "bg-surface hover:brightness-[1.08] active:brightness-[0.95] hover:scale-105 hover:shadow-[var(--shadow-action-card-hover)]",
+            )}
+          </div>
         </div>
         <!-- Create/ranked/join: mobile only, below solo -->
         <div class="sm:hidden grid grid-cols-4 gap-4 h-14">
@@ -447,6 +465,12 @@ export class GameModeSelector extends LitElement {
   private openSaves = () => {
     if (!this.validateUsername()) return;
     (document.querySelector("saves-modal") as SavesModal)?.open();
+  };
+
+  // Handled in Main, which also serves the help page's tutorial button.
+  private startTutorial = () => {
+    if (!this.validateUsername()) return;
+    document.dispatchEvent(new CustomEvent("start-tutorial"));
   };
 
   private openHostLobby = () => {

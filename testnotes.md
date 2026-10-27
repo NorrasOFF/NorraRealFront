@@ -536,9 +536,10 @@ only new failure from this work was `tests/client/PlayerStatsTable.test.ts`
 (now fixed). Everything else was already failing on the clean tip, including two
 not called out before:
 
-- `tests/EnJsonSorted.test.ts` — `en.json` has `"unit_type"` before
-  `"unit_display"` and the `user_setting.build_missile_carrier*` /
-  `build_aac_carrier*` keys out of alphabetical order on the clean tip.
+- `tests/EnJsonSorted.test.ts` — **resolved in the v34/tutorial/maps session**:
+  `"unit_display"` now precedes `"unit_type"`, and the
+  `build_aac_carrier*` / `build_missile_carrier*` / `build_units_caps_lock_hint`
+  keys are in alphabetical order. The test passes again.
 - `tests/TranslationSystem.test.ts` — five unused keys
   (`error_modal.turnstile_error`, `events_display.attack_cancelled_retreat`,
   `main.clans`, `main.inventory`, `main.leaderboard`).
@@ -627,3 +628,71 @@ cap — the flat 2M cost, and the spawn-odds scaling observed through
 `shouldSpawnTrain`). This session also halved the train spawn cooldown (10→5),
 raised the destination level-weight coefficient (0.25→0.30) and the self/team
 train gold (25k→30k) — see those commits.
+
+## v34 targeted backports
+
+The full upstream `v34` merge was tested and aborted: 32 conflicted files,
+including 10 hunks in `GameServer.ts`, 6 in `Schemas.ts`, and two generated
+attack snapshots. Most conflicts were the fork's intentional removal of
+Steam/store/ads/public-lobby paths, so the branch is not mergeable wholesale.
+
+Three compatible v34 changes were backported instead:
+
+- **Team win threshold:** both FFA and team games now use 80%
+  (`PERCENT_TILES_OWNED_TO_WIN`). `WinCheckExecution.hasWon()` also treats a
+  `null` max timer as “no timer”, fixing lobbies that declared a winner as soon
+  as the timer was disabled. Nation MIRV victory-denial uses one whole-percent
+  ladder for both modes.
+- **Spawn phase:** non-random multiplayer spawns now last 200 ticks (20s)
+  instead of 300 (30s). Random spawn stays at 150 ticks; singleplayer is
+  unchanged.
+- **Empty attacks:** `AttackExecution.init` retreats immediately when
+  `toConquer` is empty. This closes the exploit where repeated attacks at
+  non-bordered targets kept troop regen at its peak and refunded past
+  `maxTroops`.
+
+## In-game tutorial (v34)
+
+Ported the old-layout v34 tutorial panel (`73c82be62`): `Tutorial.ts`,
+`TutorialPanel.ts`, play-page card, Help Modal entry point, `Main` event
+wiring, HUD highlights, spawn-ring/marked-player rendering, tutorial CSS, and
+`UserSettings.tutorialDismissed()`. The tutorial starts only when
+`tutorialDismissed()` is false and the game is not resumed from a save.
+
+## Upstream main maps
+
+Added the 17 maps present in upstream `main` but missing from the fork:
+`babelmandebstrait`, `benelux`, `brainrot`, `canaryislands`, `capecod`,
+`capeofgoodhope`, `centralamerica`, `channelislands`, `gulfofmexico`,
+`hornofafrica`, `madagascar`, `newzealand`, `ommatrypta`, `pulicatlake`,
+`qingchina`, `riodejaneiro`, `vancouverisland`.
+
+Implementation notes:
+
+- Runtime assets copied to `resources/maps/<map>/`; source assets copied to
+  `map-generator/assets/maps/<map>/`.
+- 43 missing nation flags copied into `resources/flags/`.
+- `Maps.gen.ts` entries use `multiplayerFrequency: 5`, per-mode frequencies
+  `-1`, no featured rank. `en.json` map names added.
+- `brainrot` and `ommatrypta` layer WebP files are supported by a new
+  `.png` → `.webp` fallback in both `BinaryLoaderGameMapLoader` and
+  `FetchGameMapLoader`. PNG copies are also shipped so the existing layer tests
+  pass.
+- Fork custom maps `eightislands`, `sixislands`, and `fourislands` had stale
+  manifests; they were resynced with their `info.json`, which lets
+  `tests/MapConsistency.test.ts` pass.
+- `resources/lang/en.json` was sorted so `tests/EnJsonSorted.test.ts` passes.
+
+## Verification for this session
+
+- `npx tsc --noEmit` clean.
+- `npm run lint` clean.
+- Tutorial/map tests: 61 passed
+  (`Tutorial`, `MapConsistency`, `MapManifestFlags`, `MapLayers`,
+  `EnJsonSorted`).
+- `tests/core`: 519 passed, 1 known pre-existing failure
+  (`SAMLauncherExecution` dynamic range).
+- `node e2e/run.mjs --map Benelux --bots 10` completed SMOKE OK; the new map
+  loaded and territory grew.
+- `UserSettings.test.ts` still fails only because this Node setup lacks a
+  `localStorage` implementation (documented environment-only failure).

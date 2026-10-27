@@ -1,4 +1,4 @@
-# Handoff — Railroad Center train boost + save/resume audit; landing on NorrasOFF (PR #14 revert)
+# Handoff — v34 backports, tutorial, and upstream maps
 
 > Future sessions: this file holds the current handoff. Overwrite it rather than
 > appending; keep only the latest handoff. Write one only when the session leaves
@@ -11,118 +11,99 @@ Companion notes: `testnotes.md`.
 - Repo: `C:\Users\ai51940\OpenFrontIO`.
 - Tokens (all authenticate as **`hexfront-dev`**):
   - `H:\Documents\Hexfront-token.txt` — write to the fork (`origin`).
-  - `H:\Documents\Norrasoff-token.txt` — **read-only** on NorrasOFF (see §4/§5).
-  - `H:\Documents\Fly.io-token.txt` — Fly deploy token (app `openfrontio`, org
-    "Familjen Jacobsson"). `flyctl` at `C:\Users\ai51940\.fly\bin\flyctl.exe`;
-    set `$env:FLY_API_TOKEN = (Get-Content -Raw ...).Trim()`.
+  - `H:\Documents\Norrasoff-token.txt` — read-only on NorrasOFF.
+  - `H:\Documents\Fly.io-token.txt` — Fly deploy token (app `openfrontio`).
 - Remotes: `origin` = `hexfront-dev/NorraRealFront-Remus-`,
   `norrasoff` = `NorrasOFF/NorraRealFront`, `upstream` = `openfrontio/OpenFrontIO`,
-  `hexfront` = `hexfront-dev/OpenFrontIO` (no write).
-- Fork base: `62e602e7a` (the Railroad Center commit). Work is pushed to
-  **`origin/main`** (currently `3e258c8ce`).
-- NorrasOFF side: `norrasoff/main` was `fb14859f7` (PR #15 = `9b31b8789`, a revert
-  of PR #14; see §4); it now equals the fork at `61863234c`. The two diverged at
-  `647ca65a4`.
+  `hexfront` = `hexfront-dev/OpenFrontIO`.
+- Current work branch: `upstream-v34-backports`.
+- Latest local commits:
+  - `c962acdcd` — targeted v34 backports (team win threshold, 20s spawn phase,
+    reject empty attacks).
+  - `e5464e855` — upstream v34 tutorial + 17 upstream maps.
+- The full `v34` merge was tested and **aborted**. It conflicted in 32 files
+  (81 code/test hunks plus two generated attack snapshots). Most conflicts were
+  the fork’s intentional Steam/store/ads/public-lobby removals. Do not retry a
+  wholesale `v34` merge without a dedicated integration session.
 
-## 2. This session (fork): Railroad Center save/resume audit
+## 2. What landed this session
 
-Audited the Railroad Center train-speed boost (`TrainExecution.computeSpeed`,
-fractional `speed` + `speedAccumulator`, `TRAIN_SPEED_SCALE` wire scaling) for
-save/resume regressions and added an exhaustive test. The audit found one real
-save/resume bug **not** caused by the Railroad Center work but exposed by any
-checkpoint that goes through the plain wire codec on Node-built maps:
+### Targeted v34 backports
 
-- **Node `Buffer` map terrain was dropped by the plain checkpoint codec.**
-  `tests/util/Setup.ts` feeds a `Buffer` to `genTerrainFromBin`; `JSON.stringify`
-  calls `Buffer.prototype.toJSON()` before the codec's `replacer`, which therefore
-  saw `{ type: "Buffer", data: [...] }` and encoded that object. Decode produced a
-  plain object and `importMapState` threw
-  `map state buffer size mismatch: terrain undefined/...`. The gzip/binary path
-  was unaffected (it moves typed arrays to raw bytes before JSON).
-  - Fix 1: `CheckpointCodec.replacer` re-tags the `{ type:"Buffer", data:[] }`
-    shape as `$u8` base64.
-  - Fix 2: `GameMapImpl.exportMapState` returns `new Uint8Array(this.terrain)`
-    (a plain copy) instead of `this.terrain.slice()` (which returns a `Buffer`).
-  - Regression test: `tests/core/CheckpointCodec.test.ts` "round-trips a Node
-    Buffer terrain".
+- Team games now use the same **80% win threshold** as FFA.
+- `WinCheckExecution` treats a `null` max timer as “no timer”, fixing lobbies
+  that declared a winner immediately with the timer disabled.
+- Multiplayer spawn phase shortened from **300 ticks (30s) to 200 ticks (20s)**.
+- `AttackExecution` now rejects an attack that has nothing to conquer, closing
+  the repeated non-border attack/troop-cap exploit.
 
-- **New exhaustive test**: `tests/core/RailroadCenterSaveResume.test.ts`. Long
-  multi-segment boosted journey (stations 0/60/120; level-1 + level-2 centers),
-  checkpoints at 9 ticks across both segments, each round-tripped through
-  `encodeCheckpointWire`/`decodeCheckpointWire`, restored into a fresh game, and
-  compared by per-tick `GameImpl.hash()` for the whole suffix. Adds a center and a
-  second (faster) train after some checkpoints so early checkpoints must replay
-  the spawn and later ones carry it. Asserts `speed`/`speedAccumulator` survive
-  the wire exactly and that a mid-step accumulator is non-zero; plus a
-  `packMotionPlans`/`unpackMotionPlans` fractional-speed round-trip.
-- Also included: the previously-uncommitted `tests/core/CheckpointRail.test.ts`
-  boosted-train case (single center, 30-tick suffix).
+### Tutorial
 
-## 3. Verification (fork)
+Ported the old-layout `v34` tutorial (`73c82be62`):
 
-- `npx tsc --noEmit` clean; `npm run lint` clean; prettier applied to touched
-  files.
-- `tests/core` + `tests/zbin`: only the documented pre-existing
-  `SAMLauncherExecution` dynamic-range failure (see `testnotes.md`).
-- `tests/server`: only the 3 documented pre-existing failures
-  (`GameServerWire`, `HostedLobbyListing`, `MapPlaylistOvertime`).
-- New tests pass: `RailroadCenterSaveResume.test.ts` (5) and the added
-  `CheckpointCodec` Buffer case.
+- `src/client/hud/Tutorial.ts`
+- `src/client/hud/layers/TutorialPanel.ts`
+- `tests/Tutorial.test.ts`
+- Tutorial card on the play page, Help Modal entry point, Main event wiring,
+  HUD highlights, spawn ring/marked-player rendering, tutorial CSS, and
+  `UserSettings.tutorialDismissed()`.
 
-## 4. NorrasOFF side: PR #14 revert, and the fork↔NorrasOFF merge
+### Maps
 
-NorrasOFF's `main` (`fb14859f7`, PR #15 = `9b31b8789`) **reverted PR #14 "Nya
-täggrejer"** (merge `1d963cf20`, 6 commits from the fork: informational
-`Railroad` unit, defense-post drag upgrades, run-openfront e2e skill docs,
-railroad checkpoint test, handoff notes). `git revert -m 1 1d963cf20` was a clean,
-conflict-free revert: its tree equals the pre-merge base `96ce9a417`.
+Added all 17 maps present in upstream `main` but missing from the fork:
 
-The fork, meanwhile, **replaced** the reverted `UnitType.Railroad` feature with
-the new buildable `UnitType.RailroadCenter`. Because both branches edited the same
-lines, a merge is **not** auto-mergeable — a test merge reported content conflicts
-in:
+`babelmandebstrait`, `benelux`, `brainrot`, `canaryislands`, `capecod`,
+`capeofgoodhope`, `centralamerica`, `channelislands`, `gulfofmexico`,
+`hornofafrica`, `madagascar`, `newzealand`, `ommatrypta`, `pulicatlake`,
+`qingchina`, `riodejaneiro`, `vancouverisland`.
 
-- `src/core/game/Game.ts` — `UnitType` enum tail, `UnitParamsMap` tail, `Player`
-  interface (NorrasOFF deletes the `Railroad` block; the fork replaces it with
-  `RailroadCenter`).
-- `src/core/configuration/Config.ts` — the unit-info `switch`
-  (`case UnitType.Railroad` deleted vs replaced by `case UnitType.RailroadCenter`
-  + cost constants).
-- `HANDOFF.md`, `testnotes.md` — both branches rewrote/edited the notes.
+Also included:
 
-NorrasOFF's `main` contains no work of its own beyond the revert of feature
-commits the fork still has, so it is strictly behind the fork. The resolution
-therefore takes the **fork's tree wholesale** (the `RailroadCenter` side over
-NorrasOFF's revert) and only merges the notes: `testnotes.md` stays the fork's
-version (NorrasOFF merely deleted lines there) and `HANDOFF.md` is this combined
-document. This was done on the fork branch `merge/norrasoff-into-remus` (a merge
-of `norrasoff/main` into `origin/main`); the resulting tree equals `origin/main`
-except for this file. It was **landed** on `NorrasOFF/NorraRealFront` `main` as a
-fast-forward (`fb14859f7..61863234c`); `origin/main` and `norrasoff/main` now both
-point at `61863234c`.
+- Runtime map assets under `resources/maps/<map>/`.
+- Source assets under `map-generator/assets/maps/<map>/`.
+- 43 missing nation flag SVGs in `resources/flags/`.
+- `Maps.gen.ts` enum/list entries and `en.json` map names.
+- `map_layers` names for `brland`, `eyeland`, and `eyewater`.
+- WebP layer fallback in both `BinaryLoaderGameMapLoader` and
+  `FetchGameMapLoader` (new maps ship layer WebP; PNG is still preferred).
+- Fork custom map manifests (`eightislands`, `sixislands`, `fourislands`) synced
+  with their `info.json`, and `en.json` ordering fixed so the sorted-key test
+  now passes.
 
-### NorrasOFF write access (resolved)
+All new maps use `multiplayerFrequency: 5`, `ffaFrequency/teamFrequency/
+specialFrequency: -1`, and no featured rank. `npm run gen-maps` was **not** run.
+If it is run later, the new `info.json` files already include
+`multiplayer_frequency: 5`, so it should reproduce the current entries.
 
-Earlier the Norrasoff token could not write to `NorrasOFF/NorraRealFront` (HTTP
-403 on git `push`, `POST /git/refs`, and `POST /pulls`); the repo API's
-`permissions.push = true` reflects user membership, not the token scope. This was
-fixed by giving the fine-grained PAT **Contents: write** on
-`NorrasOFF/NorraRealFront` (the Hexfront token is still fork-only). The landing
-push then succeeded.
+## 3. Verification
 
-## 5. Open items / next steps
+- `npx tsc --noEmit` — clean.
+- `npm run lint` — clean.
+- Targeted tutorial/map tests: **61 passed**
+  (`Tutorial`, `MapConsistency`, `MapManifestFlags`, `MapLayers`,
+  `EnJsonSorted`).
+- `tests/core`: **519 passed, 1 failed** — the documented pre-existing
+  `SAMLauncherExecution` dynamic-range failure.
+- `node e2e/run.mjs --map Benelux --bots 10` — **SMOKE OK**. The new map loaded,
+  the game spawned, territory grew, and the radial menu opened. Artifacts are in
+  `e2e/artifacts/`.
+- `tests/UserSettings.test.ts` still has the documented environment-only
+  `localStorage` failures under this Node setup.
 
-- DONE: the merge (fork's `RailroadCenter` over NorrasOFF's PR #14 revert) is
-  landed on `NorrasOFF/NorraRealFront` `main` (`61863234c`), so the fork and
-  NorrasOFF match. No open merge work.
-- The bug in §2 was pre-existing (not introduced by `62e602e7a`); it only
-  reproduced because the new test uses the real wire codec. The browser client is
-  unaffected (its terrain is a plain `Uint8Array`), but any Node-process
-  checkpoint of a `setup`-built game was corrupt. `NodeGameMapLoader` already
-  wrapped its reads in `new Uint8Array(...)`, which is why the gated
-  `LateGameSaveResume`/`EndgameSaveResume` tests never caught it.
-- The Railroad Center boost is frozen at train spawn and endpoint-based (not
-  per-segment); Nations still do not build centers.
-- `origin/main` was force-pushed in a prior session (reversed the PR #14 revert).
-  Confirm that is still the intended ship target before assuming it is not.
-- The pre-existing suite failures listed in `testnotes.md` still stand.
+## 4. Open items
+
+- Ship target is **`origin/main`**. At the time this handoff was written the
+  work was on `upstream-v34-backports`; verify the remote tip against the local
+  commits below before assuming it has not been pushed.
+- The full `v34` / `main` merge remains undone. Keep using targeted backports.
+- The tutorial is the v34 version, not the newer main tutorial with
+  `KeyboardLayout`/AZERTY labels and later finish touches.
+- Tutorial steps do not yet mention fork-only units (MissileShip,
+  MissileDefenseShip, Tollhouse, RailroadCenter) or the fork’s custom train
+  economy; extend `TUTORIAL_STEPS` if desired.
+- New maps currently have no featured ranks and all use frequency 5. Adjust
+  `Maps.gen.ts`/`info.json` if the fork wants a curated rotation.
+- `resources/maps/brainrot` and `ommatrypta` ship both WebP layers (upstream)
+  and PNG copies (fork tests). Keep both unless the layer test/loader is changed.
+- Existing known failures remain: SAM dynamic range, localStorage-dependent
+  client tests, and the three server suite failures listed in `testnotes.md`.
