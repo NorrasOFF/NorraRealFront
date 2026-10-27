@@ -234,6 +234,16 @@ export class AttackExecution implements Execution {
       }
     }
 
+    // Nothing next to the owner to conquer (no wilderness around them, or a
+    // target they don't border): the attack doesn't happen. Held until the
+    // next tick, the troops would sit out the regen step and come back free,
+    // so one such attack per tick kept regen at its peak rate and refunded
+    // past maxTroops.
+    if (this.toConquer.size() === 0) {
+      this.retreat();
+      return;
+    }
+
     if (this.target.isPlayer()) {
       const difficulty = this.mg.config().gameConfig().difficulty;
       let relationChange: number;
