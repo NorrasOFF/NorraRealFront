@@ -245,8 +245,8 @@ export class GameModeSelector extends LitElement {
 
     return html`
       <div class="flex flex-col gap-4 w-full px-4 sm:px-0 mx-auto pb-4 sm:pb-0">
-        <!-- Solo + tutorial + detailed view: mobile only, top. The lobby
-             browser is one column wide, matching Join Lobby below it. -->
+        <!-- Solo + tutorial: mobile only, top. The lobby browser is one
+             column wide, matching Join Lobby below it. -->
         <div class="sm:hidden flex gap-4 h-14">
           <div class="flex-[2]">
             ${this.renderSmallActionCard(
@@ -264,13 +264,6 @@ export class GameModeSelector extends LitElement {
                 )}
               </div>`
             : nothing}
-          <div class="flex-1">
-            ${this.renderSmallActionCard(
-              translateText("main.detailed_view"),
-              this.openDetailedView,
-              "bg-surface hover:brightness-[1.08] active:brightness-[0.95] hover:scale-105 hover:shadow-[var(--shadow-action-card-hover)]",
-            )}
-          </div>
         </div>
         <!-- Create/ranked/join: mobile only, below solo -->
         <div class="sm:hidden grid grid-cols-4 gap-4 h-14">
@@ -355,20 +348,13 @@ export class GameModeSelector extends LitElement {
               </div>
             </div>`}
 
-        <!-- Solo + detailed view, desktop only. Solo spans two columns; the
-             lobby browser is one, the same width as Join Lobby below it. -->
-        <div class="hidden sm:grid grid-cols-3 gap-4 h-14">
-          <div class="col-span-2">
-            ${this.renderSmallActionCard(
-              translateText("main.solo"),
-              this.openSinglePlayerModal,
-              "bg-malibu-blue hover:bg-aquarius active:bg-malibu-blue/80 hover:scale-y-105 hover:scale-x-[1.01]",
-            )}
-          </div>
+        <!-- Solo, desktop only. Full width so it lines up with the Load
+             button at the end of the row below. -->
+        <div class="hidden sm:block h-14">
           ${this.renderSmallActionCard(
-            translateText("main.detailed_view"),
-            this.openDetailedView,
-            "bg-surface hover:brightness-[1.08] active:brightness-[0.95] hover:scale-105 hover:shadow-[var(--shadow-action-card-hover)]",
+            translateText("main.solo"),
+            this.openSinglePlayerModal,
+            "bg-malibu-blue hover:bg-aquarius active:bg-malibu-blue/80 hover:scale-y-105 hover:scale-x-[1.01]",
           )}
         </div>
         <!-- Bottom row: create + ranked + join (desktop only) -->
@@ -448,11 +434,6 @@ export class GameModeSelector extends LitElement {
     if (this.blockedByUpdate()) return;
     if (!this.validateUsername()) return;
     window.showPage?.("page-ranked");
-  };
-
-  private openDetailedView = () => {
-    if (!this.validateUsername()) return;
-    window.showPage?.("page-detailed-view");
   };
 
   private openSinglePlayerModal = () => {
