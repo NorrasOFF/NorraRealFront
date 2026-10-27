@@ -3,9 +3,14 @@ primary_region = 'ams'
 
 [build]
 
+[[mounts]]
+  source = "openfront_auth"
+  destination = "/data"
+
 [env]
   GAME_ENV = "dev"
   LOCAL_AUTH = "1"
+  AUTH_DIR = "/data/auth"
   DOMAIN = "openfrontio.fly.dev"
   SUBDOMAIN = "main"
   NUM_WORKERS = "1"

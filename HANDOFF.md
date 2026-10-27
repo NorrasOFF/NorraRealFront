@@ -86,13 +86,24 @@ call failed. This session adds a local identity provider inside the game server.
 - Known environment-only failures unchanged: `Api.test` localStorage fallback,
   `TranslationSystem` unused keys, `UserSettings`/client localStorage tests.
 
+### Fly volume (mounted 2026-10-27)
+
+- Volume `openfront_auth` (`vol_r1j7g8n6qx5y8nwr`), 1 GB, `ams`, attached to
+  machine `8576399c13e748`; mounted at `/data`; `AUTH_DIR=/data/auth`.
+- Live deploy verified: `https://openfrontio.fly.dev` serves
+  `localAuth: true`, `apiBase: https://openfrontio.fly.dev/api`, JWKS is
+  EdDSA, `/api/users/@me` and bogus login return 401.
+- Persistence verified with a marker file across a machine restart. `/data/auth`
+  contains `jwt-key.json` (0600, node-owned). Accounts will be written there.
+- Deployment was run manually from the local working tree; the GitHub
+  autodeploy source must contain the same commits or a later autodeploy will
+  roll the app back.
+
 ## 4. Open items
 
-- **No Fly volume is mounted yet.** Accounts and the JWT key reset on every
-  restart/redeploy. When ready:
-  `fly volumes create openfront_auth -a openfrontio -s 1`, add
-  `[mounts] source="openfront_auth" destination="/data"` and
-  `AUTH_DIR="/data/auth"`. A 1 GB volume is ~$0.15/month.
+- Confirm the GitHub autodeploy source/branch is `origin/main` of
+  `hexfront-dev/NorraRealFront-Remus-`; this session pushed there. If it watches
+  a different repo, push/cherry-pick the login + `fly.toml` commits there too.
 - No password reset, email verification, account deletion, or username-change
   endpoint. `PUT /users/@me/username` and the nav "Change username" flow will
   fail for local accounts.
