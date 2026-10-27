@@ -9,6 +9,8 @@ import {
   discordLogin,
   googleLogin,
   linkGoogle,
+  localLogin,
+  localRegister,
   logOut,
   reauthAfterCrazyGamesChange,
   sendMagicLink,
@@ -67,6 +69,10 @@ export class AccountModal extends BaseModal {
   // One-shot outcome of a rejected sign-in, read from the `login=` router
   // arg on open. Reassigned on every open, so reopening clears it.
   @state() private loginError: LoginResult | undefined;
+  @state() private localUsername = "";
+  @state() private localPassword = "";
+  @state() private localAuthError = "";
+  @state() private localAuthBusy = false;
 
   private userMeResponse: UserMeResponse | null = null;
   private statsTree: PlayerStatsTree | null = null;
@@ -157,6 +163,13 @@ export class AccountModal extends BaseModal {
     if (this.isLoadingUser || !this.isLinkedAccount()) {
       return {};
     }
+    if (ClientEnv.localAuth()) {
+      return {
+        tabs: [
+          { key: "account", label: translateText("account_modal.tab_account") },
+        ],
+      };
+    }
     return {
       tabs: [
         { key: "account", label: translateText("account_modal.tab_account") },
@@ -175,9 +188,11 @@ export class AccountModal extends BaseModal {
     }
     if (!this.isLinkedAccount()) {
       return html`<div class="custom-scrollbar mr-1">
-        ${crazyGamesSDK.isOnCrazyGames()
-          ? this.renderCrazyGamesSignIn()
-          : this.renderLoginOptions()}
+        ${ClientEnv.localAuth()
+          ? this.renderLocalAuth()
+          : crazyGamesSDK.isOnCrazyGames()
+            ? this.renderCrazyGamesSignIn()
+            : this.renderLoginOptions()}
       </div>`;
     }
     return html`
@@ -443,6 +458,26 @@ export class AccountModal extends BaseModal {
 
   private renderLoggedInAs(): TemplateResult {
     const me = this.userMeResponse?.user;
+    if (ClientEnv.localAuth()) {
+      const accountName =
+        me?.email ?? this.userMeResponse?.player?.username ?? "";
+      return html`
+        <div class="flex flex-col items-center gap-3 w-full">
+          <div class="text-white text-lg font-medium">
+            ${translateText("account_modal.linked_account", {
+              account_name: accountName,
+            })}
+          </div>
+          ${this.renderCurrency()}
+          <button
+            @click=${this.handleLogout}
+            class="text-xs font-bold text-white/40 hover:text-red-400 transition-colors uppercase tracking-widest"
+          >
+            ${translateText("nav_account_menu.log_out")}
+          </button>
+        </div>
+      `;
+    }
     if (me?.discord) {
       return html`
         <div class="flex flex-col items-center gap-3 w-full">
@@ -589,6 +624,98 @@ export class AccountModal extends BaseModal {
         </button>
       </div>
     `;
+  }
+
+  private renderLocalAuth() {
+    return html`
+      <div class="flex items-center justify-center p-6 min-h-full">
+        <div
+          class="w-full max-w-md bg-white/5 rounded-2xl border border-white/10 p-8"
+        >
+          <div class="text-center mb-6">
+            <p class="text-white/50 text-sm font-medium">
+              ${translateText("account_modal.local_sign_in_desc")}
+            </p>
+          </div>
+
+          ${this.localAuthError
+            ? html`<div
+                class="mb-6 rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-200"
+              >
+                ${this.localAuthError}
+              </div>`
+            : null}
+
+          <div class="space-y-4">
+            <input
+              type="text"
+              autocomplete="username"
+              .value=${this.localUsername}
+              @input=${this.handleLocalUsername}
+              placeholder=${translateText(
+                "account_modal.local_username_placeholder",
+              )}
+              class="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white placeholder-white/20 focus:outline-none focus:ring-2 focus:ring-malibu-blue/50 focus:border-malibu-blue/50 transition-all font-medium hover:bg-white/10"
+            />
+            <input
+              type="password"
+              autocomplete="current-password"
+              .value=${this.localPassword}
+              @input=${this.handleLocalPassword}
+              @keydown=${this.handleLocalKeydown}
+              placeholder=${translateText(
+                "account_modal.local_password_placeholder",
+              )}
+              class="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white placeholder-white/20 focus:outline-none focus:ring-2 focus:ring-malibu-blue/50 focus:border-malibu-blue/50 transition-all font-medium hover:bg-white/10"
+            />
+            <o-button
+              variant="primary"
+              width="block"
+              size="md"
+              translationKey="main.sign_in"
+              ?disable=${this.localAuthBusy}
+              @click=${() => this.handleLocalAuth("login")}
+            ></o-button>
+            <o-button
+              variant="secondary"
+              width="block"
+              size="md"
+              translationKey="account_modal.local_create_account"
+              ?disable=${this.localAuthBusy}
+              @click=${() => this.handleLocalAuth("register")}
+            ></o-button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  private handleLocalUsername(e: Event) {
+    this.localUsername = (e.target as HTMLInputElement).value;
+  }
+
+  private handleLocalPassword(e: Event) {
+    this.localPassword = (e.target as HTMLInputElement).value;
+  }
+
+  private handleLocalKeydown(e: KeyboardEvent) {
+    if (e.key === "Enter") void this.handleLocalAuth("login");
+  }
+
+  private async handleLocalAuth(mode: "login" | "register") {
+    if (this.localAuthBusy) return;
+    this.localAuthBusy = true;
+    this.localAuthError = "";
+    const result =
+      mode === "login"
+        ? await localLogin(this.localUsername, this.localPassword)
+        : await localRegister(this.localUsername, this.localPassword);
+    if (result.ok) {
+      window.location.reload();
+      return;
+    }
+    this.localAuthError = translateText(`account_modal.local_${result.code}`);
+    this.localAuthBusy = false;
   }
 
   private renderLoginOptions() {

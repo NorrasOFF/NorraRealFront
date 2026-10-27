@@ -791,7 +791,7 @@ export async function startWorker() {
         // API. Runs before the rejoin attempt so a pre-start identity
         // change on refresh is screened before it is applied.
         let verifySkipped = false;
-        if (ServerEnv.env() !== GameEnv.Dev) {
+        if (ServerEnv.env() !== GameEnv.Dev && !ServerEnv.localAuthEnabled()) {
           const game = gm.game(clientMsg.gameID);
           const stored = game?.storedIdentity(persistentId) ?? null;
           const isReadmit = game?.wasAdmitted(persistentId) ?? false;

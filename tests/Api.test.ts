@@ -2,7 +2,10 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { getApiBase, getAudience } from "../src/client/Api";
 import { ClientEnv } from "../src/client/ClientEnv";
 
-function setConfig(jwtAudience: string) {
+function setConfig(
+  jwtAudience: string,
+  extra: { localAuth?: boolean; apiBase?: string } = {},
+) {
   (window as any).BOOTSTRAP_CONFIG = {
     gameEnv: "prod",
     numWorkers: 1,
@@ -10,6 +13,7 @@ function setConfig(jwtAudience: string) {
     jwtAudience,
     instanceId: "desktop",
     gitCommit: "test",
+    ...extra,
   };
   ClientEnv.reset();
 }
@@ -49,6 +53,29 @@ describe("getAudience / getApiBase from BOOTSTRAP_CONFIG", () => {
   it("returns the configured audience (prod)", () => {
     setConfig("openfront.io");
     expect(getAudience()).toBe("openfront.io");
+    expect(getApiBase()).toBe("https://api.openfront.io");
+  });
+});
+
+describe("getApiBase local auth", () => {
+  beforeEach(() => ClientEnv.reset());
+
+  it("uses the injected local auth base", () => {
+    setConfig("openfront.io", {
+      localAuth: true,
+      apiBase: "https://openfrontio.fly.dev/api",
+    });
+    expect(getApiBase()).toBe("https://openfrontio.fly.dev/api");
+    expect(ClientEnv.jwtIssuer()).toBe("https://openfrontio.fly.dev/api");
+  });
+
+  it("falls back to the document origin plus /api", () => {
+    setConfig("openfront.io", { localAuth: true });
+    expect(getApiBase()).toBe(`${window.location.origin}/api`);
+  });
+
+  it("keeps the upstream API base when local auth is off", () => {
+    setConfig("openfront.io");
     expect(getApiBase()).toBe("https://api.openfront.io");
   });
 });

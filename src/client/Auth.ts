@@ -47,6 +47,79 @@ export function googleLogin() {
   window.location.href = `${getApiBase()}/auth/login/google?redirect_uri=${redirectUri}`;
 }
 
+export type LocalAuthResult =
+  | { ok: true }
+  | {
+      ok: false;
+      code:
+        | "invalid_username"
+        | "invalid_password"
+        | "username_taken"
+        | "invalid_credentials"
+        | "rate_limited"
+        | "failed";
+    };
+
+async function localAuthRequest(
+  path: string,
+  username: string,
+  password: string,
+): Promise<LocalAuthResult> {
+  try {
+    const response = await fetch(`${getApiBase()}${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ username, password }),
+    });
+    const body = (await response.json().catch(() => null)) as {
+      jwt?: unknown;
+      expiresIn?: unknown;
+      error?: unknown;
+    } | null;
+    if (response.ok && typeof body?.jwt === "string") {
+      __jwt = body.jwt;
+      __expiresAt =
+        Date.now() +
+        (typeof body.expiresIn === "number" ? body.expiresIn : 900) * 1000;
+      return { ok: true };
+    }
+    if (response.status === 429) {
+      return { ok: false, code: "rate_limited" };
+    }
+    if (response.status === 409) {
+      return { ok: false, code: "username_taken" };
+    }
+    if (response.status === 401) {
+      return { ok: false, code: "invalid_credentials" };
+    }
+    switch (body?.error) {
+      case "invalid_username":
+      case "invalid_password":
+        return { ok: false, code: body.error };
+      default:
+        return { ok: false, code: "failed" };
+    }
+  } catch (error) {
+    console.error("local auth request failed", error);
+    return { ok: false, code: "failed" };
+  }
+}
+
+export function localLogin(
+  username: string,
+  password: string,
+): Promise<LocalAuthResult> {
+  return localAuthRequest("/auth/login", username, password);
+}
+
+export function localRegister(
+  username: string,
+  password: string,
+): Promise<LocalAuthResult> {
+  return localAuthRequest("/auth/register", username, password);
+}
+
 // Link a Google account to the currently logged-in player. Unlike login this is
 // an authenticated request, so we fetch the Google authorize URL with the
 // Bearer token (a top-level navigation can't carry it) and then navigate to it.

@@ -240,7 +240,7 @@ export class WinModal extends LitElement implements Controller {
           ${translateText("win_modal.discord_description")}
         </p>
         <a
-          href="https://discord.com/invite/openfront"
+          href="https://discord.gg/SJSyRbVA"
           target="_blank"
           rel="noopener noreferrer"
           class="inline-block px-6 py-3 bg-indigo-600 text-white rounded-sm font-semibold transition-all duration-200 hover:bg-indigo-700 hover:-translate-y-px no-underline"
