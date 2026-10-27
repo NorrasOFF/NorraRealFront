@@ -412,15 +412,15 @@ export class TutorialPanel extends LitElement implements Controller {
     if (!this.active) return nothing;
     return html`
       <div
-        class="pointer-events-auto w-full sm:rounded-lg bg-gray-800/92 backdrop-blur-sm shadow-lg text-white text-base p-2 sm:mb-1"
+        class="pointer-events-auto w-full sm:mx-auto sm:max-w-[26rem] sm:rounded-lg bg-gray-800/92 backdrop-blur-sm shadow-lg text-white text-sm p-2 sm:mb-1"
         @contextmenu=${(e: MouseEvent) => e.preventDefault()}
       >
         <div class="flex items-center justify-between gap-2 mb-1">
           <span
-            class="font-bold text-cyber-yellow uppercase tracking-wide text-sm"
+            class="font-bold text-cyber-yellow uppercase tracking-wide text-xs"
             >${translateText("tutorial.title")}</span
           >
-          <span class="flex items-center gap-2 text-sm text-gray-300">
+          <span class="flex items-center gap-2 text-xs text-gray-300">
             ${this.confirmingClose ? nothing : this.renderHeaderActions()}
             ${this.ctx && !this.progress.finished()
               ? translateText("tutorial.step_counter", {
@@ -429,7 +429,7 @@ export class TutorialPanel extends LitElement implements Controller {
                 })
               : nothing}
             <button
-              class="text-gray-400 hover:text-white text-base leading-none px-1"
+              class="text-gray-400 hover:text-white text-sm leading-none px-1"
               title=${translateText("tutorial.close")}
               aria-label=${translateText("tutorial.close")}
               @click=${() => (this.confirmingClose = !this.confirmingClose)}
@@ -511,7 +511,7 @@ export class TutorialPanel extends LitElement implements Controller {
           ? nothing
           : html`<span class="shrink-0">${done ? "✓" : "•"}</span>`}
         ${step.bullets
-          ? html`<ul class="list-disc ml-4 flex flex-col gap-1">
+          ? html`<ul class="list-disc ml-4 flex flex-col gap-0.5">
               ${step.bullets.map(
                 (b) => html`<li>${translateText(`tutorial.step.${b}`)}</li>`,
               )}
