@@ -7,6 +7,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { GameEnv } from "../core/configuration/Config";
 import { getDescriptor } from "./DesktopRelease";
+import { initLocalAuth, registerLocalAuthRoutes } from "./LocalAuth";
 import { logger } from "./Logger";
 import { MapPlaylist } from "./MapPlaylist";
 import { MasterLobbyService } from "./MasterLobbyService";
@@ -119,6 +120,10 @@ export async function startMaster() {
 
   log.info(`Primary ${process.pid} is running`);
   log.info(`Setting up ${ServerEnv.numWorkers()} workers...`);
+
+  await initLocalAuth();
+  registerLocalAuthRoutes(app);
+  registerSpaFallback();
 
   lobbyService = new MasterLobbyService(playlist, log);
 
@@ -235,16 +240,18 @@ function isAssetRequest(pathname: string): boolean {
 }
 
 // SPA fallback route
-app.get("/{*splat}", async function (req, res) {
-  if (isAssetRequest(req.path)) {
-    res.status(404).type("text/plain").send("Asset not found");
-    return;
-  }
-  try {
-    const htmlPath = path.join(__dirname, "../../static/index.html");
-    await renderAppShell(res, htmlPath);
-  } catch (error) {
-    log.error("Error rendering SPA fallback:", error);
-    res.status(500).send("Internal Server Error");
-  }
-});
+function registerSpaFallback(): void {
+  app.get("/{*splat}", async function (req, res) {
+    if (isAssetRequest(req.path)) {
+      res.status(404).type("text/plain").send("Asset not found");
+      return;
+    }
+    try {
+      const htmlPath = path.join(__dirname, "../../static/index.html");
+      await renderAppShell(res, htmlPath);
+    } catch (error) {
+      log.error("Error rendering SPA fallback:", error);
+      res.status(500).send("Internal Server Error");
+    }
+  });
+}

@@ -80,6 +80,18 @@ describe("ServerEnv.jwtIssuer", () => {
     vi.stubEnv("DOMAIN", "openfront.io");
     expect(ServerEnv.jwtIssuer()).toBe("https://api.openfront.io");
   });
+
+  test("uses the local auth base when local auth is enabled", () => {
+    vi.stubEnv("LOCAL_AUTH", "1");
+    vi.stubEnv("LOCAL_AUTH_BASE", "https://openfrontio.fly.dev/api");
+    expect(ServerEnv.jwtIssuer()).toBe("https://openfrontio.fly.dev/api");
+  });
+
+  test("derives the local auth base from DOMAIN", () => {
+    vi.stubEnv("LOCAL_AUTH", "1");
+    vi.stubEnv("DOMAIN", "openfrontio.fly.dev");
+    expect(ServerEnv.jwtIssuer()).toBe("https://openfrontio.fly.dev/api");
+  });
 });
 
 describe("ServerEnv.allowedFlares", () => {

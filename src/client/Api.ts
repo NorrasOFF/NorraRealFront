@@ -1336,6 +1336,12 @@ export async function fetchGameSeats(gameID: string): Promise<ResumableSeat[]> {
 }
 
 export function getApiBase() {
+  if (ClientEnv.localAuth()) {
+    const base = ClientEnv.localAuthApiBase();
+    if (base) return base.replace(/\/+$/, "");
+    return `${window.location.origin}/api`;
+  }
+
   const domainname = getAudience();
 
   if (domainname === "localhost") {

@@ -8,6 +8,7 @@ import {
 } from "../core/ApiSchemas";
 import { GameEnv } from "../core/configuration/Config";
 import { PersistentIdSchema } from "../core/Schemas";
+import { getLocalAuth, isLocalAuthEnabled } from "./LocalAuth";
 import { ServerEnv } from "./ServerEnv";
 
 type TokenVerificationResult =
@@ -30,6 +31,17 @@ export async function verifyClientToken(
         message: "persistent ID not allowed in production",
       };
     }
+  }
+  if (isLocalAuthEnabled()) {
+    const local = await getLocalAuth().verifyToken(token);
+    if (!local.ok) {
+      return { type: "error", message: local.error };
+    }
+    return {
+      type: "success",
+      persistentId: local.claims.sub,
+      claims: local.claims,
+    };
   }
   try {
     const issuer = ServerEnv.jwtIssuer();
@@ -68,6 +80,13 @@ export async function getUserMe(
   | { type: "success"; response: UserMeResponse }
   | { type: "error"; message: string }
 > {
+  if (isLocalAuthEnabled()) {
+    const local = await getLocalAuth().userMeFromToken(token);
+    if (!local.ok) {
+      return { type: "error", message: local.error };
+    }
+    return { type: "success", response: local.response };
+  }
   try {
     // Get the user object
     const response = await fetch(ServerEnv.jwtIssuer() + "/users/@me", {

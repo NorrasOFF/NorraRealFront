@@ -5,6 +5,7 @@ primary_region = 'ams'
 
 [env]
   GAME_ENV = "dev"
+  LOCAL_AUTH = "1"
   DOMAIN = "openfrontio.fly.dev"
   SUBDOMAIN = "main"
   NUM_WORKERS = "1"

@@ -4,6 +4,7 @@ import { z } from "zod";
 import { GameEnv, parseGameEnv } from "../core/configuration/Config";
 import { GameID } from "../core/Schemas";
 import { generateID, simpleHash } from "../core/Util";
+import { getLocalAuth, isLocalAuthEnabled, localAuthBase } from "./LocalAuth";
 
 const JwksSchema = z.object({
   keys: z
@@ -84,7 +85,17 @@ export class ServerEnv {
   static cdnBase(): string {
     return process.env.CDN_BASE ?? "";
   }
+  static localAuthEnabled(): boolean {
+    return isLocalAuthEnabled();
+  }
+  static localAuthBase(): string {
+    return localAuthBase();
+  }
+  static localAuthDir(): string {
+    return process.env.AUTH_DIR ?? path.join(process.cwd(), "auth-data");
+  }
   static jwtIssuer(): string {
+    if (ServerEnv.localAuthEnabled()) return ServerEnv.localAuthBase();
     const audience = ServerEnv.jwtAudience();
     return audience === "localhost"
       ? "http://localhost:8787"
@@ -92,6 +103,10 @@ export class ServerEnv {
   }
   static async jwkPublicKey(): Promise<JWK> {
     if (ServerEnv.publicKey) return ServerEnv.publicKey;
+    if (ServerEnv.localAuthEnabled()) {
+      ServerEnv.publicKey = await getLocalAuth().publicJwk();
+      return ServerEnv.publicKey;
+    }
     const jwksUrl = ServerEnv.jwtIssuer() + "/.well-known/jwks.json";
     console.log(`Fetching JWKS from ${jwksUrl}`);
     const response = await fetch(jwksUrl);

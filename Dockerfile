@@ -103,6 +103,11 @@ mkdir -p "$SAVE_DIR"
 chown -R node:node "$SAVE_DIR" 2>/dev/null || true
 echo "resumable saves directory: $SAVE_DIR"
 
+AUTH_DIR="${AUTH_DIR:-/usr/src/app/auth-data}"
+mkdir -p "$AUTH_DIR"
+chown -R node:node "$AUTH_DIR" 2>/dev/null || true
+echo "local auth directory: $AUTH_DIR"
+
 if [ "$DOMAIN" = openfront.dev ] && [ "$SUBDOMAIN" != main ]; then
     exec timeout 25h /usr/bin/supervisord -c /etc/supervisor/conf.d/supervisord.conf
 else

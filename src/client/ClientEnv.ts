@@ -45,6 +45,8 @@ export class ClientEnv {
       // Optional: only the desktop app injects an explicit game-server host.
       // Absent on the web build (falls back to same-origin window.location).
       serverHost: bc.serverHost,
+      localAuth: bc.localAuth === true,
+      apiBase: bc.apiBase,
     };
     return ClientEnv.values;
   }
@@ -65,6 +67,14 @@ export class ClientEnv {
   static jwtAudience(): string {
     return ClientEnv.get().jwtAudience;
   }
+  static localAuth(): boolean {
+    if (typeof window === "undefined") return false;
+    return window.BOOTSTRAP_CONFIG?.localAuth === true;
+  }
+  static localAuthApiBase(): string | undefined {
+    if (typeof window === "undefined") return undefined;
+    return window.BOOTSTRAP_CONFIG?.apiBase;
+  }
   static instanceId(): string {
     return ClientEnv.get().instanceId;
   }
@@ -72,6 +82,10 @@ export class ClientEnv {
     return ClientEnv.get().gitCommit;
   }
   static jwtIssuer(): string {
+    if (ClientEnv.localAuth()) {
+      const base = ClientEnv.localAuthApiBase();
+      return base ? base.replace(/\/+$/, "") : `${window.location.origin}/api`;
+    }
     const audience = ClientEnv.jwtAudience();
     return audience === "localhost"
       ? "http://localhost:8787"
@@ -210,4 +224,6 @@ export interface ClientEnvValues {
   instanceId: string;
   gitCommit: string;
   serverHost?: string;
+  localAuth: boolean;
+  apiBase?: string;
 }

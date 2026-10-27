@@ -29,6 +29,9 @@ e2e/artifacts/
 # Resumable private-lobby saves (server filesystem store; see SAVE_DIR)
 saves/
 
+# Local username/password accounts and JWT key (see AUTH_DIR)
+auth-data/
+
 # Locally built Go binary (gen-maps uses `go run .`)
 map-generator/map-generator
 map-generator/map-generator.exe

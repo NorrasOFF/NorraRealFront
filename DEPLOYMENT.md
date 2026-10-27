@@ -29,16 +29,19 @@ There is NO GitHub Actions workflow for deployment. It was removed because it re
 
 These settings MUST be correct or the app breaks:
 
-| Setting              | Correct Value                 | Why                                                                      |
-| -------------------- | ----------------------------- | ------------------------------------------------------------------------ |
-| `internal_port`      | `80`                          | Nginx listens on 80. Fly.io default is 8080 — this breaks routing        |
-| `GAME_ENV`           | `dev`                         | `prod`/`staging` require the closed-source API for auth                  |
-| `CDN_BASE`           | `https://openfrontio.fly.dev` | Web Workers need absolute URLs to fetch map data                         |
-| `NUM_WORKERS`        | `1`                           | Must be set or server crashes                                            |
-| `TURNSTILE_SITE_KEY` | `disabled`                    | Must be set or server crashes                                            |
-| `DOMAIN`             | `openfrontio.fly.dev`         | Used for JWT audience                                                    |
-| `SUBDOMAIN`          | `main`                        | Used for routing                                                         |
-| `SAVE_DIR`           | a mounted volume path         | Resumable private-lobby saves; unmounted, they are lost on every restart |
+| Setting              | Correct Value                 | Why                                                                          |
+| -------------------- | ----------------------------- | ---------------------------------------------------------------------------- |
+| `internal_port`      | `80`                          | Nginx listens on 80. Fly.io default is 8080 — this breaks routing            |
+| `GAME_ENV`           | `dev`                         | `prod`/`staging` require the closed-source API for auth                      |
+| `CDN_BASE`           | `https://openfrontio.fly.dev` | Web Workers need absolute URLs to fetch map data                             |
+| `NUM_WORKERS`        | `1`                           | Must be set or server crashes                                                |
+| `TURNSTILE_SITE_KEY` | `disabled`                    | Must be set or server crashes                                                |
+| `DOMAIN`             | `openfrontio.fly.dev`         | Used for JWT audience                                                        |
+| `SUBDOMAIN`          | `main`                        | Used for routing                                                             |
+| `SAVE_DIR`           | a mounted volume path         | Resumable private-lobby saves; unmounted, they are lost on every restart     |
+| `LOCAL_AUTH`         | `1`                           | Enables self-hosted username/password accounts                               |
+| `AUTH_DIR`           | a mounted volume path         | Account + JWT key storage; unmounted, accounts reset on restart              |
+| `LOCAL_AUTH_BASE`    | optional                      | Overrides the local auth issuer/API base (defaults to `https://$DOMAIN/api`) |
 
 ## Resumable saves (SAVE_DIR)
 
@@ -64,6 +67,33 @@ saves per creator, 30 days of age, and a 2 GiB per-worker byte budget (oldest
 removed first). A full disk is handled gracefully — a torn history append is
 rolled back and the save stays at its last consistent point.
 
+## Local accounts (LOCAL_AUTH)
+
+`LOCAL_AUTH=1` enables self-hosted username/password registration and login in
+the game server itself, so the closed-source `api.<DOMAIN>` service is not
+needed for identity. Accounts and the Ed25519 JWT signing key live in
+`AUTH_DIR` (default `./auth-data`, `/usr/src/app/auth-data` in Docker).
+
+**Without a mounted volume at `AUTH_DIR`, accounts and sessions reset on every
+restart or redeploy.** To keep them:
+
+```bash
+fly volumes create openfront_auth -a openfrontio -s 1
+```
+
+```toml
+[mounts]
+  source = "openfront_auth"
+  destination = "/data"
+
+[env]
+  AUTH_DIR = "/data/auth"
+```
+
+`LOCAL_AUTH_BASE` is optional. It defaults to `https://$DOMAIN/api` (or
+`http://localhost:9000/api` when `DOMAIN=localhost`) and must match the public
+origin the browser uses, because it is the JWT issuer.
+
 ## The Correct fly.toml
 
 ```toml
@@ -74,6 +104,7 @@ primary_region = 'ams'
 
 [env]
   GAME_ENV = "dev"
+  LOCAL_AUTH = "1"
   DOMAIN = "openfrontio.fly.dev"
   SUBDOMAIN = "main"
   NUM_WORKERS = "1"
