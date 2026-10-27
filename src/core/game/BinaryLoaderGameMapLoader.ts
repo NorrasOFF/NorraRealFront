@@ -56,16 +56,17 @@ export class BinaryLoaderGameMapLoader implements GameMapLoader {
         }),
       ),
       webpPath: mapAssetUrl("thumbnail.webp"),
-      layerPng: (layerId: string) =>
-        fetch(mapAssetUrl(`${layerId}.png`))
-          .then((res) => {
-            if (!res.ok)
-              throw new Error(
-                `Failed to load ${mapAssetUrl(`${layerId}.png`)}`,
-              );
-            return res.blob();
-          })
-          .then((blob) => createImageBitmap(blob)),
+      layerPng: async (layerId: string) => {
+        // Older maps ship layer PNGs; newer maps ship the same layer as WebP.
+        for (const extension of ["png", "webp"]) {
+          const url = mapAssetUrl(`${layerId}.${extension}`);
+          const res = await fetch(url);
+          if (res.ok) {
+            return createImageBitmap(await res.blob());
+          }
+        }
+        throw new Error(`Failed to load ${mapAssetUrl(`${layerId}.png`)}`);
+      },
     } satisfies MapData;
 
     this.maps.set(map, mapData);

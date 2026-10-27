@@ -14,6 +14,10 @@
     "num_land_tiles": 47938,
     "width": 788
   },
-  "name": "SixIslands",
-  "nations": []
+  "name": "Six Islands",
+  "nations": [],
+  "id": "SixIslands",
+  "translation_key": "map.sixislands",
+  "categories": ["featured", "fictional"],
+  "multiplayer_frequency": 4
 }

@@ -42,6 +42,7 @@ import { PlayerPanel } from "./layers/PlayerPanel";
 import { ReplayPanel } from "./layers/ReplayPanel";
 import { SettingsModal } from "./layers/SettingsModal";
 import { SpawnTimer } from "./layers/SpawnTimer";
+import { TutorialPanel } from "./layers/TutorialPanel";
 import { UnitDisplay } from "./layers/UnitDisplay";
 import { WinModal } from "./layers/WinModal";
 import { loadAllSprites } from "./SpriteLoader";
@@ -295,6 +296,17 @@ export function createRenderer(
   }
   inGamePromo.game = game;
 
+  const tutorialPanel = document.querySelector(
+    "tutorial-panel",
+  ) as TutorialPanel;
+  if (!(tutorialPanel instanceof TutorialPanel)) {
+    console.error("tutorial panel not found");
+  }
+  tutorialPanel.game = game;
+  tutorialPanel.eventBus = eventBus;
+  tutorialPanel.userSettings = userSettings;
+  tutorialPanel.uiState = uiState;
+
   const layers: Controller[] = [
     new WarshipSelectionController(game, eventBus, transformHandler, view),
     new AvoidConquestController(game, eventBus, transformHandler, view),
@@ -343,6 +355,7 @@ export function createRenderer(
     headsUpMessage,
     multiTabModal,
     inGamePromo,
+    tutorialPanel,
     alertFrame,
     performanceOverlay,
     fleetDisplay,
