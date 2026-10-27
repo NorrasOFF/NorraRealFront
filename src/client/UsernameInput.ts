@@ -785,14 +785,19 @@ export class UsernameInput extends LitElement {
       ${this.verifiedActive
         ? this.renderVerifiedChip()
         : this.renderNameInput()}
-      <!-- The buttons differ in width, so this resizes the name field — which
+      <!-- Only offered when the account actually has a verified name to
+           switch to; for everyone else the button could do nothing but open
+           an upsell, so the name field simply takes the whole row.
+           The buttons differ in width, so this resizes the name field — which
            is transparent and left-aligned, so only its invisible right edge
            moves. -->
-      <div class="no-crazygames shrink-0 h-full max-h-[44px]">
-        ${this.verifiedActive
-          ? this.renderUseCustomButton()
-          : this.renderUseVerifiedButton()}
-      </div>
+      ${this.verifiedName() !== null
+        ? html`<div class="no-crazygames shrink-0 h-full max-h-[44px]">
+            ${this.verifiedActive
+              ? this.renderUseCustomButton()
+              : this.renderUseVerifiedButton()}
+          </div>`
+        : null}
     `;
   }
 

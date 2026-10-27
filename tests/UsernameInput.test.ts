@@ -688,14 +688,14 @@ describe("UsernameInput verified name", () => {
     expect(el.isVerified()).toBe(false);
   });
 
-  it("renders the free-text field and an off-state toggle when ineligible", async () => {
+  it("renders only the free-text field when ineligible", async () => {
     const el = await mount();
     await signIn(el, {
       player: { username: null, usernameBase: null, usernameStatus: "none" },
     } as unknown as UserMeResponse);
 
     expect(el.isVerified()).toBe(false);
-    expect(q(el, TOGGLE)).not.toBeNull();
+    expect(q(el, TOGGLE)).toBeNull();
     expect(q(el, CHANGE)).toBeNull();
   });
 

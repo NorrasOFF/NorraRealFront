@@ -114,7 +114,6 @@ import {
 } from "./utilities/DisableSafariPinchZoom";
 
 import "./components/DesktopNavBar";
-import "./components/DetailedGameViewModal";
 import "./components/Footer";
 import "./components/MainLayout";
 import "./components/MobileNavBar";
@@ -325,10 +324,6 @@ class Client {
     modalRouter.register("ranked", {
       tag: "ranked-modal",
       pageId: "page-ranked",
-    });
-    modalRouter.register("detailed-view", {
-      tag: "detailed-view-modal",
-      pageId: "page-detailed-view",
     });
     modalRouter.register("troubleshooting", {
       tag: "troubleshooting-modal",
