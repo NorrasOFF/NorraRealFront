@@ -44,7 +44,7 @@ export class Footer extends LitElement {
             class="flex items-center justify-center gap-4 lg:gap-6 pt-2 w-full relative"
           >
             <a
-              href="https://github.com/openfrontio/OpenFrontIO"
+              href="https://github.com/NorrasOFF/NorraRealFront"
               target="_blank"
               rel="noopener noreferrer"
               class="opacity-60 hover:opacity-100 hover:scale-110 transition-all"
