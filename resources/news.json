@@ -1,9 +1,15 @@
 [
   {
+    "id": "nytt-loginsystem",
+    "title": "Nytt loginsystem",
+    "description": "Nytt loginsystem och nya länkar i botten. Kolla in discorden!",
+    "type": "announcement"
+  },
+  {
     "id": "mötestid",
     "title": "Välkommen till OpenFront-föreningens officiella server!",
     "descriptionTranslationKey": "Möten måndagar kl. 15:40-16:40 i A22. Det finns fika! :)",
     "url": "https://norrasoff.github.io/",
-    "type": "Möten måndagar i A22"
+    "type": "announcement"
   }
 ]
