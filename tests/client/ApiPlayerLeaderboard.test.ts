@@ -19,8 +19,6 @@ const entry = (rank: number) => ({
   rank,
   elo: 1500,
   peakElo: 1600,
-  wins: 10,
-  losses: 5,
   total: 15,
   public_id: `player-${rank}`,
   accountUsername: "alpha.0001",

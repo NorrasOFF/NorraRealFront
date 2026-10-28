@@ -16,9 +16,6 @@ const toPlayerEntry = (
   accountUsername: entry.accountUsername,
   elo: entry.elo,
   games: entry.total,
-  wins: entry.wins,
-  losses: entry.losses,
-  winRate: entry.total > 0 ? entry.wins / entry.total : 0,
 });
 
 @customElement("leaderboard-player-list")
@@ -261,17 +258,6 @@ export class LeaderboardPlayerList extends LitElement {
           <td class="py-3 px-4 text-right">
             <span class="font-mono text-white font-bold">${entry.games}</span>
           </td>
-          <td class="py-3 px-4 text-right pr-6">
-            <div class="inline-flex flex-col items-end">
-              <span class="font-mono font-bold text-white"
-                >${(entry.winRate * 100).toFixed(1)}%</span
-              >
-              <span
-                class="text-[10px] uppercase text-blue-200/80 font-bold tracking-wider"
-                >${translateText("leaderboard_modal.ratio")}</span
-              >
-            </div>
-          </td>
         </tr>
       </tfoot>
     `;
@@ -324,20 +310,6 @@ export class LeaderboardPlayerList extends LitElement {
         </td>
         <td class="py-3 px-4 text-right">
           <span class="font-mono text-white font-medium">${player.games}</span>
-        </td>
-        <td class="py-3 px-4 text-right pr-6">
-          <div class="inline-flex flex-col items-end">
-            <span
-              class="font-mono font-bold ${player.winRate >= 0.5
-                ? "text-green-400"
-                : "text-red-400"}"
-              >${(player.winRate * 100).toFixed(1)}%</span
-            >
-            <span
-              class="text-[10px] uppercase text-white/30 font-bold tracking-wider"
-              >${translateText("leaderboard_modal.ratio")}</span
-            >
-          </div>
         </td>
       </tr>
     `;
@@ -484,7 +456,6 @@ export class LeaderboardPlayerList extends LitElement {
                 <col style="width: 12rem" />
                 <col style="width: 6rem" />
                 <col style="width: 6rem" />
-                <col style="width: 6rem" />
               </colgroup>
               <thead class="sticky top-0 z-10">
                 <tr
@@ -501,9 +472,6 @@ export class LeaderboardPlayerList extends LitElement {
                   </th>
                   <th class="py-4 px-4 text-right font-bold">
                     ${translateText("leaderboard_modal.games")}
-                  </th>
-                  <th class="py-4 px-4 text-right font-bold pr-6">
-                    ${translateText("leaderboard_modal.win_loss_ratio")}
                   </th>
                 </tr>
               </thead>

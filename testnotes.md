@@ -721,3 +721,28 @@ asserts the button opens it with `{ tab: "players" }`, and asserts it still
 opens while a desktop update is downloading (the multiplayer cards do not).
 `npx vitest run` on the three `GameModeSelector*` files passes, and
 `npx tsc --noEmit`, `npm run lint`, and Prettier are clean.
+
+## Ranked ladder shows only Rank / Player / ELO / Games
+
+Wins and losses are no longer tracked on the ranked ladder, and the win-rate
+column is gone. The player tab now has exactly four columns: **Rank**,
+**Player**, **ELO**, **Games** (the sticky "Your Ranking" footer matches).
+
+- `RankedRatings.ts`: `PlayerRating`/`PlayerRatingSchema`/`defaultRating` drop
+  `wins`/`losses`; `applyMatch` only increments `games`; the leaderboard rows
+  no longer emit wins/losses.
+- `ApiSchemas.ts`: `RankedLeaderboardEntrySchema` drops `wins`/`losses`, and
+  the client-facing `PlayerLeaderboardEntrySchema` drops `wins`/`losses`/
+  `winRate`.
+- `LeaderboardPlayerList.ts`: `toPlayerEntry` maps only rank, player, ELO and
+  games; the win-rate cells and the fifth `col`/header are removed.
+  `peakElo` is still tracked and returned but is not displayed.
+- Old `ranked-ratings.json` files still load: Zod strips the now-unknown
+  `wins`/`losses` keys, and the file schema version stays 1. Clan/tribe
+  leaderboards and player profile stats keep their own win/loss data.
+
+Tests updated: `tests/server/RankedRatings.test.ts` (games counted, no
+win/loss fields), `tests/ApiSchemas.test.ts`,
+`tests/client/ApiPlayerLeaderboard.test.ts`, and
+`tests/client/LeaderboardModal.test.ts`. The six affected suites pass
+(192 tests), with `npx tsc --noEmit`, `npm run lint`, and Prettier clean.
