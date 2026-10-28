@@ -696,3 +696,28 @@ Implementation notes:
   loaded and territory grew.
 - `UserSettings.test.ts` still fails only because this Node setup lacks a
   `localStorage` implementation (documented environment-only failure).
+
+## Home-menu Leaderboard button
+
+The home menu now has a **Leaderboard** button beside Create Lobby / Join Lobby /
+Load, linking to the single ranked ladder added in the previous session. It is
+the fourth card in the same action row:
+
+- Desktop (`grid-cols-3` to `grid-cols-4`) shows all four on one line.
+- Mobile was one row of three (`grid-cols-3 h-14`); it is now a 2x2 grid
+  (`grid-cols-2 auto-rows-[3.5rem]`) so the longer "Leaderboard" label fits
+  instead of overflowing a quarter-width button.
+- Text uses the existing `main.leaderboard` translation key, so `en.json` is
+  unchanged (and stays sorted).
+- `GameModeSelector.openLeaderboard()` calls
+  `leaderboard-modal.open({ tab: "players" })`, which opens the modal through
+  `BaseModal`/`modalRouter` (URL becomes `#modal=leaderboard&tab=players`) and
+  selects the "Ranked" tab. It is not gated by the desktop update check because
+  it is not a multiplayer entry point, but it is disabled while the username
+  input is invalid, like the other cards in the row.
+
+Tests: `tests/GameModeSelectorGatingWiring.test.ts` stubs `leaderboard-modal`,
+asserts the button opens it with `{ tab: "players" }`, and asserts it still
+opens while a desktop update is downloading (the multiplayer cards do not).
+`npx vitest run` on the three `GameModeSelector*` files passes, and
+`npx tsc --noEmit`, `npm run lint`, and Prettier are clean.
