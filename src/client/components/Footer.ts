@@ -90,7 +90,7 @@ export class Footer extends LitElement {
               </svg>
             </a>
             <a
-              href="https://openfront.wiki/Main_Page"
+              href="https://norrasoff.github.io/"
               target="_blank"
               rel="noopener noreferrer"
               class="opacity-60 hover:opacity-100 hover:scale-110 transition-all"
