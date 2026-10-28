@@ -259,6 +259,10 @@ function makeClient(clientID: string, persistentID: string, ws: MockWs) {
   return harnessClient({
     clientID,
     persistentID,
+    // Listing makes a private lobby ranked, and ranked lobbies require a
+    // signed-in account (publicId is only set for JWT joins).
+    publicId: persistentID,
+    claims: { role: null } as any,
     ip: "1.2.3.4",
     username: `user_${clientID}`,
     ws,

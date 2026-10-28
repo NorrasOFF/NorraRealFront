@@ -24,6 +24,8 @@ import {
   type UserMeResponse,
 } from "../core/ApiSchemas";
 import { uuidToBase64url } from "../core/Base64";
+import { authDataDir } from "./AuthPaths";
+import { getRankedRatings } from "./ranking/RankedRatings";
 
 export const LOCAL_REFRESH_COOKIE = "hexfront_refresh";
 export const LOCAL_JWT_TTL_SECONDS = 15 * 60;
@@ -107,10 +109,6 @@ export function localAuthBase(): string {
     return "http://localhost:9000/api";
   }
   return `https://${domain}/api`;
-}
-
-function authDir(): string {
-  return process.env.AUTH_DIR ?? path.join(process.cwd(), "auth-data");
 }
 
 type ScryptOptions = { N: number; r: number; p: number };
@@ -221,7 +219,7 @@ export class LocalAuthStore {
   private publicJwkValue: JWK | null = null;
 
   constructor(
-    private readonly dir: string = authDir(),
+    private readonly dir: string = authDataDir(),
     private readonly base: string = localAuthBase(),
     private readonly audience: string = process.env.DOMAIN ?? "localhost",
   ) {}
@@ -477,6 +475,15 @@ export class LocalAuthStore {
     if (!username) {
       return { ok: false, error: "account not found" };
     }
+    // The ranked ladder is local to this deployment. A missing/failed store
+    // read must not break sign-in, so an unavailable rating degrades to "no
+    // Elo" (the client already renders `no_elo` when the field is absent).
+    let rankedElo: number | undefined;
+    try {
+      rankedElo = (await getRankedRatings().player(result.claims.sub))?.elo;
+    } catch (error) {
+      console.warn("local auth: ranked rating read failed", error);
+    }
     return {
       ok: true,
       response: {
@@ -497,6 +504,10 @@ export class LocalAuthStore {
           friends: [],
           subscription: null,
           currency: { soft: 0, hard: 0 },
+          leaderboard:
+            rankedElo === undefined
+              ? undefined
+              : { ranked: { elo: rankedElo } },
         },
       },
     };

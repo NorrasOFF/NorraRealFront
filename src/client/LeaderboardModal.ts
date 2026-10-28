@@ -1,6 +1,5 @@
 import { html } from "lit";
 import { customElement, query, state } from "lit/decorators.js";
-import { RankedType } from "../core/game/Game";
 import { BaseModal } from "./components/BaseModal";
 import "./components/leaderboard/LeaderboardClanTable";
 import type { LeaderboardClanTable } from "./components/leaderboard/LeaderboardClanTable";
@@ -11,15 +10,7 @@ import type { LeaderboardTribeTable } from "./components/leaderboard/Leaderboard
 import { modalHeader } from "./components/ui/ModalHeader";
 import { translateText } from "./Utils";
 
-const TAB_KEYS = ["players", "players2v2", "clans", "tribes"] as const;
-
-// Tab key -> ladder. "players" predates the 2v2 ladder and stays the 1v1 tab
-// so existing `#modal=leaderboard&tab=players` links keep working. Both tabs
-// share one <leaderboard-player-list>: a page fetch returns both ladders.
-const PLAYER_TABS: Record<string, RankedType> = {
-  players: RankedType.OneVOne,
-  players2v2: RankedType.TwoVTwo,
-};
+const TAB_KEYS = ["players", "clans", "tribes"] as const;
 
 @customElement("leaderboard-modal")
 export class LeaderboardModal extends BaseModal {
@@ -36,7 +27,6 @@ export class LeaderboardModal extends BaseModal {
   private tribeTable?: LeaderboardTribeTable;
 
   private loadToken = 0;
-  private lastRankedType: RankedType = RankedType.OneVOne;
 
   protected modalConfig() {
     return {
@@ -45,22 +35,18 @@ export class LeaderboardModal extends BaseModal {
           key: "players",
           label: translateText("leaderboard_modal.ranked_tab"),
         },
-        {
-          key: "players2v2",
-          label: translateText("leaderboard_modal.ranked_2v2_tab"),
-        },
         { key: "clans", label: translateText("leaderboard_modal.clans_tab") },
         { key: "tribes", label: translateText("leaderboard_modal.tribes_tab") },
       ],
     };
   }
 
-  private rankedTypeFor(tab: string): RankedType | null {
-    return PLAYER_TABS[tab] ?? null;
+  private isPlayerTab(tab: string): boolean {
+    return tab === "players";
   }
 
   private tabComponent(tab: string) {
-    if (this.rankedTypeFor(tab) !== null) return this.playerList;
+    if (this.isPlayerTab(tab)) return this.playerList;
     if (tab === "clans") return this.clanTable;
     return this.tribeTable;
   }
@@ -70,22 +56,17 @@ export class LeaderboardModal extends BaseModal {
   }
 
   protected onTabEnter(): void {
-    // The player list is one element shared by both ladder tabs, so it needs a
-    // ranked type even while another tab is up: keep showing the last one.
-    this.lastRankedType =
-      this.rankedTypeFor(this.activeTab) ?? this.lastRankedType;
     this.loadActiveTabData();
   }
 
   private loadActiveTabData() {
     const token = ++this.loadToken;
-
     const active = this.activeTab;
 
     const run = async () => {
       if (token !== this.loadToken) return;
 
-      if (this.rankedTypeFor(active) !== null) {
+      if (this.isPlayerTab(active)) {
         await this.playerList?.ensureLoaded();
         if (token !== this.loadToken) return;
         this.playerList?.handleTabActivated();
@@ -139,8 +120,7 @@ export class LeaderboardModal extends BaseModal {
             ${translateText("leaderboard_modal.title")}
           </span>
           ${this.activeTab === "clans" ? dateRange : ""}
-          ${this.rankedTypeFor(this.activeTab) !== null ||
-          this.activeTab === "tribes"
+          ${this.isPlayerTab(this.activeTab) || this.activeTab === "tribes"
             ? refreshTime
             : ""}
         </div>
@@ -154,11 +134,7 @@ export class LeaderboardModal extends BaseModal {
     return html`
       <div class="flex-1 min-h-0 h-full">
         <leaderboard-player-list
-          class=${this.rankedTypeFor(this.activeTab) !== null
-            ? "h-full"
-            : "hidden"}
-          .rankedType=${this.rankedTypeFor(this.activeTab) ??
-          this.lastRankedType}
+          class=${this.isPlayerTab(this.activeTab) ? "h-full" : "hidden"}
         ></leaderboard-player-list>
         <leaderboard-clan-table
           class=${this.activeTab === "clans" ? "h-full" : "hidden"}

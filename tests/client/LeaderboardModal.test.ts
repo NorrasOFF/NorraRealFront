@@ -16,7 +16,6 @@ vi.mock("../../src/client/Utils", () => ({
         "Weighted losses based on clan participation and match difficulty",
       "leaderboard_modal.title": "Leaderboard",
       "leaderboard_modal.ranked_tab": "Ranked",
-      "leaderboard_modal.ranked_2v2_tab": "2v2 Ranked",
       "leaderboard_modal.ranked_no_stats": "No ranked games on this ladder",
       "leaderboard_modal.clans_tab": "Clans",
       "leaderboard_modal.refresh_time": "Refreshed every 1 hour",
@@ -117,7 +116,7 @@ beforeEach(() => {
         return jsonRes({ start: "...", end: "...", clans: [] });
       }
       if (url.includes("/leaderboard/ranked")) {
-        return jsonRes({ "1v1": [], "2v2": [] });
+        return jsonRes([]);
       }
       if (url.includes("/leaderboard/tribes")) {
         return jsonRes({
@@ -134,7 +133,6 @@ beforeEach(() => {
 
 import "../../src/client/components/baseComponents/Modal";
 import { LeaderboardModal } from "../../src/client/LeaderboardModal";
-import { RankedType } from "../../src/core/game/Game";
 
 describe("LeaderboardModal", () => {
   let modal: LeaderboardModal;
@@ -155,20 +153,10 @@ describe("LeaderboardModal", () => {
     modal.querySelector("leaderboard-player-list") as {
       loadPlayerLeaderboard: (reset?: boolean) => Promise<void>;
       updateComplete: Promise<unknown>;
-      rankedType: RankedType;
       playerData: Array<Record<string, unknown>>;
       currentUserEntry?: { playerId: string } | null;
       showStickyUser: boolean;
     } | null;
-  // The list element is shared by both ladder tabs; the modal drives which
-  // ladder it shows off the active tab.
-  const showLadder = async (tab: string) => {
-    (modal as unknown as { activeTab: string }).activeTab = tab;
-    await modal.updateComplete;
-    const playerList = getPlayerList()!;
-    await playerList.updateComplete;
-    return playerList;
-  };
 
   beforeEach(async () => {
     vi.stubGlobal("fetch", vi.fn());
@@ -273,31 +261,28 @@ describe("LeaderboardModal", () => {
 
       (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
         ok: true,
-        json: async () => ({
-          "1v1": [
-            {
-              rank: 1,
-              elo: 1200,
-              peakElo: 1300,
-              wins: 6,
-              losses: 4,
-              total: 10,
-              public_id: "player-1",
-              accountUsername: "alpha.4821",
-            },
-            {
-              rank: 2,
-              elo: 1100,
-              peakElo: 1250,
-              wins: 4,
-              losses: 6,
-              total: 10,
-              public_id: "player-2",
-              accountUsername: null,
-            },
-          ],
-          "2v2": [],
-        }),
+        json: async () => [
+          {
+            rank: 1,
+            elo: 1200,
+            peakElo: 1300,
+            wins: 6,
+            losses: 4,
+            total: 10,
+            public_id: "player-1",
+            accountUsername: "alpha.4821",
+          },
+          {
+            rank: 2,
+            elo: 1100,
+            peakElo: 1250,
+            wins: 4,
+            losses: 6,
+            total: 10,
+            public_id: "player-2",
+            accountUsername: null,
+          },
+        ],
       });
 
       const playerList = getPlayerList();
@@ -342,21 +327,18 @@ describe("LeaderboardModal", () => {
       });
 
       (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
-        jsonRes({
-          "1v1": [
-            {
-              rank: 1,
-              elo: 1200,
-              peakElo: 1300,
-              wins: 6,
-              losses: 4,
-              total: 10,
-              public_id: "player-1",
-              accountUsername: "alpha.4821",
-            },
-          ],
-          "2v2": [],
-        }),
+        jsonRes([
+          {
+            rank: 1,
+            elo: 1200,
+            peakElo: 1300,
+            wins: 6,
+            losses: 4,
+            total: 10,
+            public_id: "player-1",
+            accountUsername: "alpha.4821",
+          },
+        ]),
       );
 
       const playerList = getPlayerList()!;
@@ -383,21 +365,18 @@ describe("LeaderboardModal", () => {
       });
 
       (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
-        jsonRes({
-          "1v1": [
-            {
-              rank: 1,
-              elo: 1200,
-              peakElo: 1300,
-              wins: 6,
-              losses: 4,
-              total: 10,
-              public_id: "player-1",
-              accountUsername: "alpha.4821",
-            },
-          ],
-          "2v2": [],
-        }),
+        jsonRes([
+          {
+            rank: 1,
+            elo: 1200,
+            peakElo: 1300,
+            wins: 6,
+            losses: 4,
+            total: 10,
+            public_id: "player-1",
+            accountUsername: "alpha.4821",
+          },
+        ]),
       );
 
       const playerList = getPlayerList()!;
@@ -413,8 +392,8 @@ describe("LeaderboardModal", () => {
   });
 
   describe("Player Pagination", () => {
-    const rankedPage = (count: number, startRank: number) => ({
-      "1v1": Array.from({ length: count }, (_, i) => ({
+    const rankedPage = (count: number, startRank: number) =>
+      Array.from({ length: count }, (_, i) => ({
         rank: startRank + i,
         elo: 2000 - (startRank + i),
         peakElo: 2000,
@@ -423,9 +402,7 @@ describe("LeaderboardModal", () => {
         total: 10,
         public_id: `player-${startRank + i}`,
         accountUsername: null,
-      })),
-      "2v2": [],
-    });
+      }));
 
     // The body the API actually sends for a page past the end.
     const pastEnd = jsonRes(
@@ -500,9 +477,8 @@ describe("LeaderboardModal", () => {
     });
   });
 
-  // 1v1 and 2v2 are independent ladders returned by one request: same player,
-  // own rank and elo on each, own end of list.
-  describe("Ranked ladders", () => {
+  // One flat ladder: every ranked lobby feeds it.
+  describe("Ranked ladder", () => {
     const entry = (rank: number, publicId: string, elo: number) => ({
       rank,
       elo,
@@ -514,74 +490,48 @@ describe("LeaderboardModal", () => {
       accountUsername: publicId,
     });
 
-    it("ranks a player separately on each ladder", async () => {
+    it("ranks players and pins the signed-in user", async () => {
       const { getUserMe } = await import("../../src/client/Api");
       (getUserMe as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
         player: { publicId: "player-2" },
       });
 
-      const fetchMock = global.fetch as ReturnType<typeof vi.fn>;
-      fetchMock.mockResolvedValueOnce(
-        jsonRes({
-          "1v1": [entry(1, "player-1", 1200), entry(2, "player-2", 1100)],
-          "2v2": [entry(1, "player-2", 1500), entry(2, "player-3", 1400)],
-        }),
+      (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+        jsonRes([entry(1, "player-1", 1200), entry(2, "player-2", 1100)]),
       );
 
       const playerList = getPlayerList()!;
       await playerList.loadPlayerLeaderboard(true);
       await playerList.updateComplete;
 
-      expect(playerList.rankedType).toBe(RankedType.OneVOne);
       expect(playerList.playerData.map((p) => p.playerId)).toEqual([
         "player-1",
         "player-2",
       ]);
       expect(playerList.playerData[1].elo).toBe(1100);
       expect(playerList.currentUserEntry?.playerId).toBe("player-2");
-
-      // One request filled both ladders, so switching tabs must not refetch.
-      const callCount = fetchMock.mock.calls.length;
-      const twoVTwo = await showLadder("players2v2");
-
-      expect(twoVTwo.rankedType).toBe(RankedType.TwoVTwo);
-      expect(twoVTwo.playerData.map((p) => p.playerId)).toEqual([
-        "player-2",
-        "player-3",
-      ]);
-      // Same player, other ladder: rank 1 at 1500 rather than rank 2 at 1100.
-      expect(twoVTwo.playerData[0].rank).toBe(1);
-      expect(twoVTwo.playerData[0].elo).toBe(1500);
-      expect(twoVTwo.currentUserEntry?.playerId).toBe("player-2");
-      expect(fetchMock.mock.calls.length).toBe(callCount);
     });
 
-    // The 2v2 board starts empty and has no backfill, so an empty ladder is a
-    // normal state rather than a failure.
     it("shows a no data state for an empty ladder", async () => {
       (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
-        jsonRes({ "1v1": [entry(1, "player-1", 1200)], "2v2": [] }),
+        jsonRes([]),
       );
 
       const playerList = getPlayerList()!;
       await playerList.loadPlayerLeaderboard(true);
-      await showLadder("players2v2");
 
       expect(modal.textContent).toContain("No data yet");
-      expect(modal.textContent).toContain("No ranked games on this ladder");
       expect(modal.querySelector("leaderboard-player-list table")).toBeNull();
     });
 
-    it("pages the ladders independently", async () => {
+    it("pages the ladder until a short page", async () => {
       const fetchMock = global.fetch as ReturnType<typeof vi.fn>;
       fetchMock.mockResolvedValueOnce(
-        jsonRes({
-          "1v1": Array.from({ length: 50 }, (_, i) =>
+        jsonRes(
+          Array.from({ length: 50 }, (_, i) =>
             entry(i + 1, `solo-${i + 1}`, 2000 - i),
           ),
-          // Short page: the younger ladder ends first.
-          "2v2": [entry(1, "duo-1", 1500)],
-        }),
+        ),
       );
 
       const playerList = getPlayerList()!;
@@ -589,55 +539,33 @@ describe("LeaderboardModal", () => {
       await playerList.updateComplete;
       expect(playerList.playerData).toHaveLength(50);
 
-      fetchMock.mockResolvedValueOnce(
-        jsonRes({ "1v1": [entry(51, "solo-51", 1900)], "2v2": [] }),
-      );
+      fetchMock.mockResolvedValueOnce(jsonRes([entry(51, "solo-51", 1900)]));
       await playerList.loadPlayerLeaderboard();
       await playerList.updateComplete;
 
       expect(playerList.playerData).toHaveLength(51);
       expect(fetchMock.mock.calls[1][0]).toContain("page=2");
 
-      // The exhausted ladder keeps its row and stops asking for pages.
-      const twoVTwo = await showLadder("players2v2");
-      expect(twoVTwo.playerData.map((p) => p.playerId)).toEqual(["duo-1"]);
-
       const callCount = fetchMock.mock.calls.length;
-      await twoVTwo.loadPlayerLeaderboard();
+      await playerList.loadPlayerLeaderboard();
       expect(fetchMock.mock.calls.length).toBe(callCount);
     });
 
-    it("selects the 2v2 ladder from its tab", async () => {
-      // The tab click also prefetches the clan and tribe tabs, so route by
-      // URL: a blanket resolved value would feed them ladder-shaped JSON and
-      // crash their renders after the test ends.
-      (global.fetch as ReturnType<typeof vi.fn>).mockImplementation(
-        async (input: any) => {
-          const url =
-            typeof input === "string" ? input : (input?.url ?? String(input));
-          if (url.includes("/leaderboard/ranked")) {
-            return jsonRes({ "1v1": [], "2v2": [] });
-          }
-          return jsonRes({}, false, 404);
-        },
-      );
-
+    it("has one player tab", async () => {
       modal.inline = true;
       await modal.updateComplete;
       const oModal = modal.querySelector("o-modal");
       await (oModal as unknown as { updateComplete: Promise<unknown> })
         .updateComplete;
-      const tab = oModal!.shadowRoot!.querySelector(
-        'button[role="tab"][data-key="players2v2"]',
+      const tabs = oModal!.shadowRoot!.querySelectorAll(
+        'button[role="tab"][data-key^="players"]',
       );
-      expect(tab).toBeTruthy();
-
-      tab!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-      expect((modal as unknown as { activeTab: string }).activeTab).toBe(
-        "players2v2",
-      );
-      await modal.updateComplete;
-      expect(getPlayerList()!.rankedType).toBe(RankedType.TwoVTwo);
+      expect(tabs).toHaveLength(1);
+      expect(
+        oModal!.shadowRoot!.querySelector(
+          'button[role="tab"][data-key="players2v2"]',
+        ),
+      ).toBeNull();
     });
   });
 
