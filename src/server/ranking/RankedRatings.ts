@@ -4,6 +4,7 @@ import path from "path";
 import { z } from "zod";
 import type { RankedLeaderboardEntry } from "../../core/ApiSchemas";
 import { authDataDir } from "../AuthPaths";
+import { gameApiCors } from "../GameApiCors";
 
 // The single ranked ladder. Games that produce a rating are private lobbies
 // whose host listed them publicly ("ranked lobbies"). The computation is
@@ -356,9 +357,11 @@ const LEADERBOARD_PAGE_SIZE = 50;
 
 // GET /api/leaderboard/ranked?page=N
 // The single ranked ladder. Pages are 1-based; an out-of-range page is an
-// empty array (the client stops paging on a short page).
+// empty array (the client stops paging on a short page). This route is public
+// and is also read cross-origin by the Norra Real website's Topplista page, so
+// it carries the game API's CORS grant.
 export function registerRankedRoutes(app: Express): void {
-  app.get("/api/leaderboard/ranked", async (req, res) => {
+  app.get("/api/leaderboard/ranked", gameApiCors, async (req, res) => {
     const raw = Array.isArray(req.query.page)
       ? req.query.page[0]
       : req.query.page;

@@ -4,6 +4,7 @@ import type { AddressInfo } from "net";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import {
   DESKTOP_APP_ORIGIN,
+  NORRA_WEBSITE_ORIGIN,
   applyGameApiCorsHeaders,
   gameApiCors,
 } from "../../src/server/GameApiCors";
@@ -29,6 +30,14 @@ describe("applyGameApiCorsHeaders", () => {
     const { headers, setHeader } = collect();
     applyGameApiCorsHeaders(DESKTOP_APP_ORIGIN, setHeader);
     expect(headers.get("Access-Control-Allow-Origin")).toBe("app://openfront");
+  });
+
+  test("allows the Norra Real website origin", () => {
+    const { headers, setHeader } = collect();
+    applyGameApiCorsHeaders(NORRA_WEBSITE_ORIGIN, setHeader);
+    expect(headers.get("Access-Control-Allow-Origin")).toBe(
+      "https://norrasoff.github.io",
+    );
   });
 
   test("advertises the methods and headers the game API actually uses", () => {
@@ -74,6 +83,15 @@ describe("applyGameApiCorsHeaders", () => {
   test("does not allow a lookalike of the desktop origin", () => {
     const { headers, setHeader } = collect();
     applyGameApiCorsHeaders("app://openfront.evil.example", setHeader);
+    expect(headers.has("Access-Control-Allow-Origin")).toBe(false);
+  });
+
+  test("does not allow a lookalike of the website origin", () => {
+    const { headers, setHeader } = collect();
+    applyGameApiCorsHeaders(
+      "https://norrasoff.github.io.evil.example",
+      setHeader,
+    );
     expect(headers.has("Access-Control-Allow-Origin")).toBe(false);
   });
 

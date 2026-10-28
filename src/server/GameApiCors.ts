@@ -7,16 +7,30 @@ import type { NextFunction, Request, Response } from "express";
  */
 export const DESKTOP_APP_ORIGIN = "app://openfront";
 
-const ALLOWED_ORIGINS: ReadonlySet<string> = new Set([DESKTOP_APP_ORIGIN]);
+/**
+ * Origin of the Norra Real community website (GitHub Pages, PaperMod). The
+ * Topplista page reads the public ranked leaderboard cross-origin.
+ */
+export const NORRA_WEBSITE_ORIGIN = "https://norrasoff.github.io";
+
+const ALLOWED_ORIGINS: ReadonlySet<string> = new Set([
+  DESKTOP_APP_ORIGIN,
+  NORRA_WEBSITE_ORIGIN,
+]);
 
 /**
- * Grant the game server's `/api` routes to the desktop app.
+ * Grant the game server's `/api` routes to the desktop app and the Norra Real
+ * website.
  *
  * The web client is same-origin with the game server and never sends an
  * `Origin` we need to answer. The desktop client is not: its renderer lives on
  * `app://openfront` while the game server is `openfront.io` (or a branch host
  * on dev), so every `/api` call is cross-origin. The POSTs send Authorization
  * and Content-Type, which makes them non-simple, so the browser preflights.
+ *
+ * The Norra Real website is also cross-origin (`norrasoff.github.io`) and reads
+ * the public ranked leaderboard with a simple GET, so it only needs the
+ * response grant.
  *
  * Deliberately no `Access-Control-Allow-Credentials`: the play token travels
  * in the Authorization header, so nothing here needs cookies, and granting
