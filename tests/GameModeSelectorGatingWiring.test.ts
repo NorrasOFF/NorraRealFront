@@ -57,6 +57,7 @@ function publicLobby(gameID: string): PublicGameInfo {
 let selector: HTMLElement & { updateComplete: Promise<unknown> };
 let joinOpen: ReturnType<typeof vi.fn>;
 let hostOpen: ReturnType<typeof vi.fn>;
+let leaderboardOpen: ReturnType<typeof vi.fn>;
 let wiggle: ReturnType<typeof vi.fn>;
 let joinLobby: ReturnType<typeof vi.fn>;
 
@@ -113,10 +114,12 @@ beforeEach(async () => {
 
   joinOpen = vi.fn();
   hostOpen = vi.fn();
+  leaderboardOpen = vi.fn();
   wiggle = vi.fn();
   joinLobby = vi.fn();
   stub("join-lobby-modal", { open: joinOpen });
   stub("host-lobby-modal", { open: hostOpen });
+  stub("leaderboard-modal", { open: leaderboardOpen });
   stub("single-player-modal", { open: vi.fn() });
   stub("desktop-status-bar", { wiggle });
   (window as { showPage?: (id: string) => void }).showPage = vi.fn();
@@ -151,6 +154,7 @@ describe("the multiplayer gate at its real call sites", () => {
     // assertions below are about the gate and not about a broken mount.
     expect(joinOpen).toHaveBeenCalled();
     expect(hostOpen).toHaveBeenCalled();
+    expect(leaderboardOpen).toHaveBeenCalledWith({ tab: "players" });
     expect(wiggle).not.toHaveBeenCalled();
   });
 
@@ -161,6 +165,8 @@ describe("the multiplayer gate at its real call sites", () => {
 
     expect(joinOpen).not.toHaveBeenCalled();
     expect(hostOpen).not.toHaveBeenCalled();
+    // The leaderboard is not a multiplayer entry point, so it still opens.
+    expect(leaderboardOpen).toHaveBeenCalledWith({ tab: "players" });
     // Refusing silently would look like a broken button; the click has to land
     // somewhere, and it lands on the snackbar.
     expect(wiggle).toHaveBeenCalled();

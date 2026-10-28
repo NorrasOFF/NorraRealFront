@@ -38,9 +38,8 @@ describe("RankedRatingsStore", () => {
     expect(winner?.elo).toBe(RANKED_START_ELO + RANKED_K_FACTOR / 2);
     expect(winner?.peakElo).toBe(winner?.elo);
     expect(winner?.games).toBe(1);
-    expect(winner?.wins).toBe(1);
     expect(loser?.elo).toBe(RANKED_START_ELO - RANKED_K_FACTOR / 2);
-    expect(loser?.losses).toBe(1);
+    expect(loser?.games).toBe(1);
   });
 
   test("is idempotent by game id", async () => {
@@ -131,7 +130,7 @@ describe("RankedRatingsStore", () => {
     // The algorithm returns no value for Bob, so his rating is unchanged but
     // the match is still counted.
     expect((await store.player(bob.publicId))?.elo).toBe(RANKED_START_ELO);
-    expect((await store.player(bob.publicId))?.losses).toBe(1);
+    expect((await store.player(bob.publicId))?.games).toBe(1);
   });
 
   test("ignores winnerless matches and single-participant matches", async () => {

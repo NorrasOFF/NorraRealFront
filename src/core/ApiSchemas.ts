@@ -638,9 +638,6 @@ export const PlayerLeaderboardEntrySchema = z.object({
   flag: z.string().optional(),
   elo: z.number(),
   games: z.number(),
-  wins: z.number(),
-  losses: z.number(),
-  winRate: z.number(),
 });
 export type PlayerLeaderboardEntry = z.infer<
   typeof PlayerLeaderboardEntrySchema
@@ -657,8 +654,6 @@ export const RankedLeaderboardEntrySchema = z.object({
   rank: z.number(),
   elo: z.number(),
   peakElo: z.number().nullable(),
-  wins: z.number(),
-  losses: z.number(),
   total: z.number(),
   public_id: z.string(),
   // Account username (null = never set). The client displays

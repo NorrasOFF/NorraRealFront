@@ -336,9 +336,6 @@ describe("PlayerLeaderboardEntrySchema accountUsername", () => {
         playerId: "abc123",
         elo: 1500,
         games: 15,
-        wins: 10,
-        losses: 5,
-        winRate: 2 / 3,
       }).success,
     ).toBe(false);
   });
@@ -349,8 +346,6 @@ describe("RankedLeaderboardEntrySchema accountUsername", () => {
     rank: 1,
     elo: 1500,
     peakElo: 1600,
-    wins: 10,
-    losses: 5,
     total: 15,
     public_id: "abc123",
   };

@@ -265,8 +265,9 @@ export class GameModeSelector extends LitElement {
               </div>`
             : nothing}
         </div>
-        <!-- Create/join/load: mobile only, below solo -->
-        <div class="sm:hidden grid grid-cols-3 gap-4 h-14">
+        <!-- Create/join/load/leaderboard: mobile only, below solo. Two rows
+             of two so the longer labels fit. -->
+        <div class="sm:hidden grid grid-cols-2 auto-rows-[3.5rem] gap-4">
           ${this.renderSmallActionCard(
             translateText("main.create"),
             this.openHostLobby,
@@ -284,6 +285,11 @@ export class GameModeSelector extends LitElement {
           ${this.renderSmallActionCard(
             translateText("save_game.load"),
             this.openSaves,
+            "bg-surface hover:brightness-[1.08] active:brightness-[0.95] hover:scale-105 hover:shadow-[var(--shadow-action-card-hover)]",
+          )}
+          ${this.renderSmallActionCard(
+            translateText("main.leaderboard"),
+            this.openLeaderboard,
             "bg-surface hover:brightness-[1.08] active:brightness-[0.95] hover:scale-105 hover:shadow-[var(--shadow-action-card-hover)]",
           )}
         </div>
@@ -350,9 +356,8 @@ export class GameModeSelector extends LitElement {
             "bg-malibu-blue hover:bg-aquarius active:bg-malibu-blue/80 hover:scale-y-105 hover:scale-x-[1.01]",
           )}
         </div>
-        <!-- Bottom row: create + join + load (desktop only), compressed to
-             fill the space the old Ranked button occupied. -->
-        <div class="hidden sm:grid grid-cols-3 gap-4 h-14">
+        <!-- Bottom row: create + join + load + leaderboard (desktop only). -->
+        <div class="hidden sm:grid grid-cols-4 gap-4 h-14">
           ${this.renderSmallActionCard(
             translateText("main.create"),
             this.openHostLobby,
@@ -370,6 +375,11 @@ export class GameModeSelector extends LitElement {
           ${this.renderSmallActionCard(
             translateText("save_game.load"),
             this.openSaves,
+            "bg-surface hover:brightness-[1.08] active:brightness-[0.95] hover:scale-105 hover:shadow-[var(--shadow-action-card-hover)]",
+          )}
+          ${this.renderSmallActionCard(
+            translateText("main.leaderboard"),
+            this.openLeaderboard,
             "bg-surface hover:brightness-[1.08] active:brightness-[0.95] hover:scale-105 hover:shadow-[var(--shadow-action-card-hover)]",
           )}
         </div>
@@ -427,6 +437,14 @@ export class GameModeSelector extends LitElement {
   private openSaves = () => {
     if (!this.validateUsername()) return;
     (document.querySelector("saves-modal") as SavesModal)?.open();
+  };
+
+  private openLeaderboard = () => {
+    (
+      document.querySelector("leaderboard-modal") as
+        | (HTMLElement & { open: (args?: Record<string, unknown>) => void })
+        | null
+    )?.open({ tab: "players" });
   };
 
   // Handled in Main, which also serves the help page's tutorial button.

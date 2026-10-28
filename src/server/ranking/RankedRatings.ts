@@ -38,8 +38,6 @@ export interface PlayerRating {
   username: string;
   elo: number;
   peakElo: number;
-  wins: number;
-  losses: number;
   games: number;
   updatedAt: number;
 }
@@ -47,7 +45,7 @@ export interface PlayerRating {
 /**
  * Pure rating step. Receives the ratings as they stood before the match and
  * returns the new Elo for every participant it wants to change. The store
- * handles persistence, win/loss counters and idempotency.
+ * handles persistence, match counting and idempotency.
  */
 export type RatingAlgorithm = (
   match: RankedMatch,
@@ -59,8 +57,6 @@ const PlayerRatingSchema = z.object({
   username: z.string(),
   elo: z.number(),
   peakElo: z.number(),
-  wins: z.number().int().nonnegative(),
-  losses: z.number().int().nonnegative(),
   games: z.number().int().nonnegative(),
   updatedAt: z.number(),
 });
@@ -83,8 +79,6 @@ function defaultRating(
     username,
     elo: RANKED_START_ELO,
     peakElo: RANKED_START_ELO,
-    wins: 0,
-    losses: 0,
     games: 0,
     updatedAt: now,
   };
@@ -277,8 +271,6 @@ export class RankedRatingsStore {
       rank: start + index + 1,
       elo: rating.elo,
       peakElo: rating.peakElo,
-      wins: rating.wins,
-      losses: rating.losses,
       total: rating.games,
       public_id: rating.publicId,
       accountUsername: rating.username,
@@ -331,8 +323,6 @@ export class RankedRatingsStore {
           rating.username = participant.username;
         }
         rating.games += 1;
-        if (winners.has(participant.publicId)) rating.wins += 1;
-        else rating.losses += 1;
         rating.updatedAt = now;
       }
 
