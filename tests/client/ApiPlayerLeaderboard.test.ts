@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../../src/client/ClientEnv", () => ({
-  ClientEnv: { jwtAudience: () => "localhost" },
+  ClientEnv: { jwtAudience: () => "localhost", localAuth: () => false },
 }));
 
 // fetchPlayerLeaderboard is unauthenticated; Auth is only mocked because
@@ -44,18 +44,18 @@ beforeEach(() => {
 describe("fetchPlayerLeaderboard", () => {
   it("returns the parsed page", async () => {
     (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
-      res({ "1v1": [entry(1)], "2v2": [] }),
+      res([entry(1)]),
     );
 
     const result = await fetchPlayerLeaderboard(1);
     expect(result).not.toBe(false);
     expect(result).not.toBe("reached_limit");
-    expect((result as { "1v1": unknown[] })["1v1"]).toHaveLength(1);
+    expect(result as unknown[]).toHaveLength(1);
   });
 
   it("requests the page it was asked for", async () => {
     const fetchMock = global.fetch as ReturnType<typeof vi.fn>;
-    fetchMock.mockResolvedValueOnce(res({ "1v1": [], "2v2": [] }));
+    fetchMock.mockResolvedValueOnce(res([]));
 
     await fetchPlayerLeaderboard(3);
     expect(String(fetchMock.mock.calls[0][0])).toContain("page=3");
@@ -141,7 +141,7 @@ describe("fetchPlayerLeaderboard", () => {
 
   it("returns false when the payload fails validation", async () => {
     (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
-      res({ "1v1": [{ rank: "first" }] }),
+      res([{ rank: "first" }]),
     );
 
     expect(await fetchPlayerLeaderboard(1)).toBe(false);

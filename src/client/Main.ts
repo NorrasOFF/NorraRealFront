@@ -65,8 +65,6 @@ import "./LangSelector";
 import { LangSelector } from "./LangSelector";
 import { initLayout } from "./Layout";
 import "./LeaderboardModal";
-import "./Matchmaking";
-import { MatchmakingModal } from "./Matchmaking";
 import {
   hideMenuChrome,
   menuChromeIsTornDown,
@@ -118,7 +116,6 @@ import "./components/Footer";
 import "./components/MainLayout";
 import "./components/MobileNavBar";
 import "./components/PlayPage";
-import "./components/RankedModal";
 import "./components/baseComponents/Button";
 import "./components/baseComponents/Modal";
 import "./styles.css";
@@ -181,8 +178,6 @@ declare global {
     "kick-player": CustomEvent;
     toggle_game_start_timer: CustomEvent;
     "join-changed": CustomEvent;
-    "open-matchmaking": CustomEvent<{ mode?: "1v1" | "2v2" } | undefined>;
-    "matchmaking-requeue": CustomEvent<{ mode?: "1v1" | "2v2" } | undefined>;
     userMeResponse: CustomEvent<UserMeResponse | false>;
     "session-cleared": CustomEvent;
     "leave-lobby": CustomEvent;
@@ -249,7 +244,6 @@ class Client {
   private userSettings: UserSettings = new UserSettings();
   private storeModal: StoreModal;
   private tokenLoginModal: TokenLoginModal;
-  private matchmakingModal: MatchmakingModal;
   private rewardsModal: RewardsModal;
   private steamLinkModal: SteamLinkModal;
   private mostRecentJoinEvent: number;
@@ -320,10 +314,6 @@ class Client {
     modalRouter.register("load-game", {
       tag: "saves-modal",
       pageId: "page-load-game",
-    });
-    modalRouter.register("ranked", {
-      tag: "ranked-modal",
-      pageId: "page-ranked",
     });
     modalRouter.register("troubleshooting", {
       tag: "troubleshooting-modal",
@@ -448,15 +438,6 @@ class Client {
       "update-game-config",
       this.handleUpdateGameConfig.bind(this),
     );
-    document.addEventListener(
-      "open-matchmaking",
-      this.handleOpenMatchmaking.bind(this),
-    );
-    document.addEventListener(
-      "matchmaking-requeue",
-      this.handleMatchmakingRequeue.bind(this),
-    );
-
     const hlpModal = document.querySelector("help-modal") as HelpModal;
     if (!hlpModal || !(hlpModal instanceof HelpModal)) {
       console.warn("Help modal element not found");
@@ -503,16 +484,6 @@ class Client {
       !(this.tokenLoginModal instanceof TokenLoginModal)
     ) {
       console.warn("Token login modal element not found");
-    }
-
-    this.matchmakingModal = document.querySelector(
-      "matchmaking-modal",
-    ) as MatchmakingModal;
-    if (
-      !this.matchmakingModal ||
-      !(this.matchmakingModal instanceof MatchmakingModal)
-    ) {
-      console.warn("Matchmaking modal element not found");
     }
 
     this.rewardsModal = document.querySelector("rewards-modal") as RewardsModal;
@@ -1033,33 +1004,6 @@ class Client {
     if (decodedHash.startsWith("#refresh")) {
       window.location.href = "/";
     }
-
-    const requeueMode = this.consumeRequeueUrl();
-    if (requeueMode !== null) {
-      document.dispatchEvent(
-        new CustomEvent("open-matchmaking", {
-          detail: { mode: requeueMode },
-        }),
-      );
-    }
-  }
-
-  // Returns the requeue mode ("/?requeue" = 1v1, "/?requeue=2v2" = 2v2), or
-  // null when the URL has no requeue param.
-  private consumeRequeueUrl(): "1v1" | "2v2" | null {
-    const searchParams = new URLSearchParams(window.location.search);
-    if (!searchParams.has("requeue")) {
-      return null;
-    }
-    const mode = searchParams.get("requeue") === "2v2" ? "2v2" : "1v1";
-
-    searchParams.delete("requeue");
-    const newUrl =
-      window.location.pathname +
-      (searchParams.toString() ? `?${searchParams.toString()}` : "") +
-      window.location.hash;
-    history.replaceState(null, "", newUrl);
-    return mode;
   }
 
   private desktopUpdateState: DesktopUpdateState | null = null;
@@ -1255,7 +1199,6 @@ class Client {
         "leaderboard-button",
         "token-login",
         "steam-link-modal",
-        "matchmaking-modal",
         "clan-modal",
         "account-settings-modal",
         "change-username-modal",
@@ -1492,35 +1435,6 @@ class Client {
     }
 
     crazyGamesSDK.gameplayStop();
-  }
-
-  // Puts the player back into the ranked queue. From a pre-start match
-  // cancellation the matchmaking modal is still open and rejoins in place,
-  // keeping its mode. From a finished game (WinModal passes the mode) the
-  // page needs the reload teardown, so navigate home with the requeue
-  // param and let consumeRequeueUrl() reopen the queue. A modeless
-  // dispatch with no open modal (the player closed it mid-wait) stays a
-  // no-op — don't force them back into a queue they left.
-  private handleMatchmakingRequeue(
-    event: CustomEvent<{ mode?: "1v1" | "2v2" } | undefined>,
-  ) {
-    if (this.matchmakingModal?.requeue()) {
-      return;
-    }
-    if (event.detail?.mode !== undefined) {
-      window.location.href =
-        event.detail.mode === "2v2" ? "/?requeue=2v2" : "/?requeue";
-    }
-  }
-
-  private handleOpenMatchmaking(
-    event: CustomEvent<{ mode?: "1v1" | "2v2" } | undefined>,
-  ) {
-    if (!this.matchmakingModal) return;
-    // Always set the mode: dispatchers without a detail (homepage button,
-    // requeue URL) mean 1v1 and must reset a lingering 2v2 selection.
-    this.matchmakingModal.mode = event.detail?.mode === "2v2" ? "2v2" : "1v1";
-    this.matchmakingModal.open();
   }
 
   private handleKickPlayer(event: CustomEvent) {

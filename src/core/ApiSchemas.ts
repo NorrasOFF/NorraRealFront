@@ -205,6 +205,14 @@ export const UserMeResponseSchema = z.object({
     }),
     leaderboard: z
       .object({
+        // The single ranked ladder driven by ranked lobbies.
+        ranked: z
+          .object({
+            elo: z.number().optional(),
+          })
+          .optional(),
+        // Legacy matchmaking ladders. Kept optional so older API deployments
+        // and the dormant matchmaking client still parse; not displayed.
         oneVone: z
           .object({
             elo: z.number().optional(),
@@ -661,13 +669,10 @@ export type RankedLeaderboardEntry = z.infer<
   typeof RankedLeaderboardEntrySchema
 >;
 
-export const RankedLeaderboardResponseSchema = z.object({
-  [RankedType.OneVOne]: RankedLeaderboardEntrySchema.array(),
-  // Each ranked type is its own ladder, ranked independently: a player can
-  // appear on both with a different elo and rank. Defaulted because an API
-  // deployment that predates the 2v2 ladder omits the key entirely.
-  [RankedType.TwoVTwo]: RankedLeaderboardEntrySchema.array().default([]),
-});
+// One flat ladder. The legacy 1v1/2v2 split is gone: every ranked lobby feeds
+// this single board. Paginated by `?page=N`; a short page marks the end.
+export const RankedLeaderboardResponseSchema =
+  RankedLeaderboardEntrySchema.array();
 export type RankedLeaderboardResponse = z.infer<
   typeof RankedLeaderboardResponseSchema
 >;

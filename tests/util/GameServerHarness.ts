@@ -7,6 +7,7 @@
 // pass by mocking the Schemas module. Use cid() to spell a readable id.
 
 import { vi } from "vitest";
+import { TokenPayload } from "../../src/core/ApiSchemas";
 import {
   ClientMessage,
   GameConfig,
@@ -105,6 +106,9 @@ export function makeMockWs(): MockWs {
 export interface ClientOpts {
   clientID?: string;
   persistentID?: string;
+  // Signed-in identity. Defaults to null (anonymous dev persistent-ID join),
+  // which ranked lobbies reject.
+  claims?: TokenPayload | null;
   role?: string | null;
   ip?: string;
   username?: string;
@@ -129,7 +133,7 @@ export function makeClient(opts: ClientOpts = {}): Client {
   return new Client(
     clientID,
     opts.persistentID ?? `${clientID}-pid`,
-    null,
+    opts.claims ?? null,
     opts.role ?? null,
     undefined,
     opts.ip ?? `10.0.${Math.floor(n / 256)}.${n % 256}`,

@@ -265,18 +265,11 @@ export class GameModeSelector extends LitElement {
               </div>`
             : nothing}
         </div>
-        <!-- Create/ranked/join: mobile only, below solo -->
-        <div class="sm:hidden grid grid-cols-4 gap-4 h-14">
+        <!-- Create/join/load: mobile only, below solo -->
+        <div class="sm:hidden grid grid-cols-3 gap-4 h-14">
           ${this.renderSmallActionCard(
             translateText("main.create"),
             this.openHostLobby,
-            "bg-surface hover:brightness-[1.08] active:brightness-[0.95] hover:scale-105 hover:shadow-[var(--shadow-action-card-hover)]",
-            undefined,
-            true,
-          )}
-          ${this.renderSmallActionCard(
-            translateText("mode_selector.ranked_title"),
-            this.openRankedMenu,
             "bg-surface hover:brightness-[1.08] active:brightness-[0.95] hover:scale-105 hover:shadow-[var(--shadow-action-card-hover)]",
             undefined,
             true,
@@ -348,8 +341,8 @@ export class GameModeSelector extends LitElement {
               </div>
             </div>`}
 
-        <!-- Solo, desktop only. Full width so it lines up with the Load
-             button at the end of the row below. -->
+        <!-- Solo, desktop only. It spans the same width as the three-button
+             row below, so both rows line up edge to edge. -->
         <div class="hidden sm:block h-14">
           ${this.renderSmallActionCard(
             translateText("main.solo"),
@@ -357,18 +350,12 @@ export class GameModeSelector extends LitElement {
             "bg-malibu-blue hover:bg-aquarius active:bg-malibu-blue/80 hover:scale-y-105 hover:scale-x-[1.01]",
           )}
         </div>
-        <!-- Bottom row: create + ranked + join (desktop only) -->
-        <div class="hidden sm:grid grid-cols-4 gap-4 h-14">
+        <!-- Bottom row: create + join + load (desktop only), compressed to
+             fill the space the old Ranked button occupied. -->
+        <div class="hidden sm:grid grid-cols-3 gap-4 h-14">
           ${this.renderSmallActionCard(
             translateText("main.create"),
             this.openHostLobby,
-            "bg-surface hover:brightness-[1.08] active:brightness-[0.95] hover:scale-105 hover:shadow-[var(--shadow-action-card-hover)]",
-            undefined,
-            true,
-          )}
-          ${this.renderSmallActionCard(
-            translateText("mode_selector.ranked_title"),
-            this.openRankedMenu,
             "bg-surface hover:brightness-[1.08] active:brightness-[0.95] hover:scale-105 hover:shadow-[var(--shadow-action-card-hover)]",
             undefined,
             true,
@@ -429,12 +416,6 @@ export class GameModeSelector extends LitElement {
     )?.wiggle?.();
     return true;
   }
-
-  private openRankedMenu = () => {
-    if (this.blockedByUpdate()) return;
-    if (!this.validateUsername()) return;
-    window.showPage?.("page-ranked");
-  };
 
   private openSinglePlayerModal = () => {
     if (!this.validateUsername()) return;

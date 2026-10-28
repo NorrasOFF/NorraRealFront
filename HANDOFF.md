@@ -1,4 +1,4 @@
-# Handoff — self-hosted username/password login
+# Handoff — ranked lobbies and the single ranked ladder
 
 > Future sessions: this file holds the current handoff. Overwrite it rather than
 > appending; keep only the latest handoff. Write one only when the session leaves
@@ -16,103 +16,111 @@ Companion notes: `testnotes.md`.
 - Remotes: `origin` = `hexfront-dev/NorraRealFront-Remus-`,
   `norrasoff` = `NorrasOFF/NorraRealFront`, `upstream` = `openfrontio/OpenFrontIO`,
   `hexfront` = `hexfront-dev/OpenFrontIO`.
-- Ship target is **`origin/main`**. This work was built and pushed from
-  `upstream-v34-backports`, which shares history with `origin/main`.
+- Ship target is **`origin/main`**. This session's base branch was
+  `upstream-v34-backports`.
 
 ## 2. What landed this session
 
-Upstream login is delegated to the closed-source API at `api.<DOMAIN>`; the
-fork's `api.openfrontio.fly.dev` does not resolve, so every login/refresh/JWKS
-call failed. This session adds a local identity provider inside the game server.
+The old 1v1/2v2 matchmaking entry point is gone from the home menu. A private
+lobby that its host lists publicly is now a **ranked lobby**, and every ranked
+lobby feeds **one** Elo ladder instead of two.
 
-### New server module
+### Ranked lobby model and gating
 
-`src/server/LocalAuth.ts`:
+- `GameConfig.ranked?: boolean` (`src/core/Schemas.ts`) is server-authoritative.
+  It is **not** in `ConfigPatch.ts`, so hosts cannot set it through
+  `update_game_config` or a crafted `create_game`.
+- `GameServer.setListed(true)` stamps `ranked = true`; a server-side delist
+  before start deletes it. `start()` copies the listing state into the frozen
+  `GameStartInfo.config`. A resumed save always clears `ranked` (continuation,
+  never re-rated).
+- Joining a ranked lobby requires a signed-in account:
+  `GameServer.passesRankedSignIn()` uses `client.publicId` (only set for JWT
+  joins) and returns a new `not_authenticated` join result. The Worker closes
+  with `Sign in to join ranked lobbies`.
+- The listing endpoint (`POST /api/game/:id/listing`) also rejects the anonymous
+  dev persistent-ID path (`sign_in_required`) so a host cannot list a lobby it
+  could not itself join.
+- `tests/server/RankedLobby.test.ts` covers the marker, the signed-in gate and
+  the game-end hook.
 
-- JSON account store at `AUTH_DIR/accounts.json` (atomic write + 0600), scrypt
-  password hashes, case-insensitive usernames (3–20 chars, letters/numbers/
-  spaces/`_`/`-`), 8–128-char passwords.
-- Ed25519 JWT signing key at `AUTH_DIR/jwt-key.json` (generated on first run).
-- 15-minute JWTs, 30-day rotating `hexfront_refresh` HttpOnly cookie
-  (`SameSite=Lax`, `Secure` when the issuer is https).
-- Routes on the game server: `POST /api/auth/register`,
-  `POST /api/auth/login`, `POST /api/auth/refresh`, `POST /api/auth/logout`,
-  `GET /api/users/@me`, `GET /api/.well-known/jwks.json` (+ root
-  `/.well-known/jwks.json`).
-- Register/login are IP rate-limited with `express-rate-limit`.
+### One ladder, local ratings store
 
-### Wiring
+New module `src/server/ranking/RankedRatings.ts`:
 
-- `LOCAL_AUTH=1` enables it (`fly.toml`, `npm run dev`,
-  `npm run start:server-dev`).
-- `AUTH_DIR` defaults to `./auth-data` (`/usr/src/app/auth-data` in Docker);
-  `Dockerfile` creates and chowns it.
-- `LOCAL_AUTH_BASE` overrides the issuer/API base. Otherwise it is
-  `https://$DOMAIN/api`, or `http://localhost:9000/api` when `DOMAIN=localhost`.
-- `ServerEnv.jwtIssuer`/`jwkPublicKey`, `verifyClientToken`, and `getUserMe`
-  use the local key and claims instead of fetching `api.<DOMAIN>`.
-- `Worker` skips upstream join verification when local auth is on (same
-  fail-open path as dev), so first joins do not require Turnstile.
-- Client: `ClientEnv`/`getApiBase`/`jwtIssuer` use the injected local base;
-  `Auth.ts` gained `localLogin`/`localRegister`.
-- `AccountModal` shows a username/password form, a local "logged in as" view
-  with Log out, and only the Account tab (stats/games/friends need the API).
-- `Master` registers auth routes before the SPA fallback. The fallback moved
-  into `registerSpaFallback()` and is installed in `startMaster()` so
-  `GET /api/users/@me` is not swallowed by the app shell.
-- `TokenPayloadSchema` gained optional `username`, so workers can resolve an
-  account without re-reading a possibly stale `accounts.json`.
+- JSON store at `AUTH_DIR/ranked-ratings.json` (same directory as
+  `accounts.json`/`jwt-key.json`; path helper in `src/server/AuthPaths.ts`).
+- Stores `elo`, `peakElo`, wins/losses/games per account, plus recent game ids
+  for idempotent re-uploads. Cross-worker read-modify-write is serialised with
+  a lock file; writes are atomic temp-file + rename.
+- `provisionalElo` is a **placeholder** standard-Elo implementation. Replace it
+  (or pass another `RatingAlgorithm` to the store) when the real balancing model
+  is ready. The store, endpoint, UI and game hook do not need to change.
+- `GameServer` snapshots account identities for a ranked lobby at start
+  (`rankedRoster`) and, on game end, maps the winner tuple to public ids and
+  calls `deps.ranked(...)`. Team wins use the winner tuple's trailing client
+  ids. A nation winner is not rated.
+- `GET /api/leaderboard/ranked?page=N` (Master) returns one flat page of 50
+  `RankedLeaderboardEntry` values.
+- `LocalAuth.userMeFromToken` now adds `player.leaderboard.ranked.elo` when the
+  account has a rating.
+- `tests/server/RankedRatings.test.ts` covers Elo, idempotency, persistence,
+  ordering, paging and the replaceable algorithm.
 
-### Docs/config
+### Client
 
-`DEPLOYMENT.md`, `example.env`, `fly.toml`, `package.json`, `.gitignore`.
+- The home menu no longer has the Ranked button or the `#modal=ranked` route.
+  `RankedModal.ts`/`Matchmaking.ts` still exist for a future matchmaking design
+  but are no longer imported or reachable (their tests still pass). Server
+  matchmaking code (`MapPlaylist` 1v1/2v2 configs, Worker polling, team pins) is
+  untouched.
+- `LeaderboardModal` has one player tab ("Ranked") plus Clans and Tribes.
+  `LeaderboardPlayerList` is now a single flat list (paging by 50).
+- `RankedLeaderboardResponseSchema` is a flat array; `UserMeResponse` keeps the
+  legacy `oneVone`/`twoVtwo` fields optional so the dormant matchmaking client
+  still type-checks, and adds `leaderboard.ranked`.
+- Host modal: the Public listing segment is labelled **Ranked**; the join modal
+  heading is **Ranked Lobbies**; listing error strings now say ranked. The home
+  layout keeps Solo full width and compresses the bottom row to the remaining
+  three buttons (`grid-cols-3`), with no gap where Ranked used to be.
 
 ## 3. Verification
 
 - `npx tsc --noEmit` — clean.
 - `npm run lint` — clean.
-- `npm run build-prod` — clean.
-- New tests: `tests/server/LocalAuth.test.ts` (10) and
-  `tests/server/LocalAuthRoutes.test.ts` (3) pass. `tests/Api.test.ts` local
-  auth cases pass.
-- `tests/server`: **669 passed, 2 failed** — both documented pre-existing:
-  `GameServerWire` golden snapshot (`numTurns`) and `HostedLobbyListing`
-  (no `createGame` messages).
-- Browser-verified (headless Chrome, throwaway script, deleted): opened
-  `#modal=account`, created `E2E896283`, reloaded, `/api/auth/refresh` +
-  `/api/users/@me` returned the account, and the Account modal showed
-  "Logged in as E2E896283" with Log out.
-  Artifact: `e2e/artifacts/09-local-auth-account.png`.
-- Known environment-only failures unchanged: `Api.test` localStorage fallback,
-  `TranslationSystem` unused keys, `UserSettings`/client localStorage tests.
-
-### Fly volume (mounted 2026-10-27)
-
-- Volume `openfront_auth` (`vol_r1j7g8n6qx5y8nwr`), 1 GB, `ams`, attached to
-  machine `8576399c13e748`; mounted at `/data`; `AUTH_DIR=/data/auth`.
-- Live deploy verified: `https://openfrontio.fly.dev` serves
-  `localAuth: true`, `apiBase: https://openfrontio.fly.dev/api`, JWKS is
-  EdDSA, `/api/users/@me` and bogus login return 401.
-- Persistence verified with a marker file across a machine restart. `/data/auth`
-  contains `jwt-key.json` (0600, node-owned). Accounts will be written there.
-- Deployment was run manually from the local working tree; the GitHub
-  autodeploy source must contain the same commits or a later autodeploy will
-  roll the app back.
+- `npx vitest run tests/server` — **679 passed, 3 failed**, all documented
+  pre-existing failures in `testnotes.md`: `MapPlaylistOvertime`,
+  `HostedLobbyListing` (no `createGame`), `GameServerWire` golden (`numTurns`,
+  plus the known snapshot drift). The snapshot was re-checked: this session no
+  longer adds a `ranked: undefined` key (only `ranked: true` is written).
+- Targeted tests all pass: `RankedRatings`, `RankedLobby`,
+  `ApiPlayerLeaderboard`, `LeaderboardModal`, `GameModeSelectorGating`,
+  `EnJsonSorted`, `LocalAuth`, `GameServerSave`, `SpectatorJoin`,
+  `MatchmakingCancel`.
+- `HostedLobbyListing`'s host-left tests now give their fixture clients
+  `publicId`/claims because a listed lobby is ranked; the remaining failure is
+  the documented scheduling one.
 
 ## 4. Open items
 
-- Confirm the GitHub autodeploy source/branch is `origin/main` of
-  `hexfront-dev/NorraRealFront-Remus-`; this session pushed there. If it watches
-  a different repo, push/cherry-pick the login + `fly.toml` commits there too.
-- No password reset, email verification, account deletion, or username-change
-  endpoint. `PUT /users/@me/username` and the nav "Change username" flow will
-  fail for local accounts.
-- Local accounts have no cosmetics/flares/currency; stats, shop, clans,
-  leaderboards, friends, and game history remain unavailable.
-- The in-game player name is still free-form; logging in does not force it to
-  the account username.
-- A single volume only works for one machine/region. Multiple machines need
-  Postgres/Redis or shared storage.
-- `GAME_ENV=dev` is still the deployment assumption. Local auth verification
-  works in prod, but matchmaking/privilege/subscription polling still target
-  `api.<DOMAIN>`.
+- **Replace `provisionalElo`** with the real algorithm (or wire in the balancing
+  model). Nothing else needs to change.
+- **Stats/profile integration**: `PlayerStatsTreeSchema` and clan stats still
+  have the legacy `Ranked` keyed by `RankedType` (`1v1`/`2v2`). They are not fed
+  by the local store; the local `/users/@me` has no stats tree, so the profile
+  shows no stats. Migrating those schemas/UI to one ranked bucket is still to do.
+- **Game history labels**: archived records now carry `config.ranked`, but the
+  public game/player-history schemas still identify ranked games via
+  `rankedType`. A ranked-lobby game will therefore not show as “Ranked” in the
+  history UI until that schema/API side is updated.
+- **Matchmaking**: the client matchmaking code is dormant. Reuse/adapt it for
+  the single ladder when a matchmaking design exists.
+- **Local ratings storage** is a single JSON file. It is suitable for this
+  single-volume Fly deployment; multi-machine deployments need Postgres/Redis
+  or shared storage. The lock file is best-effort (`LOCK_STALE_MS = 10s`).
+- `GAME_ENV=dev` remains the deployment assumption; local listing is allowed
+  through the dev bypass even though `LocalAuth` returns
+  `canCreatePublicLobbies: false`. Signed-in users still have `unlimitedRanked`.
+- A ranked lobby with a nation winner, or one that ends without a winner, is
+  not rated. If those outcomes should affect ratings, the algorithm/store needs
+  an explicit policy.

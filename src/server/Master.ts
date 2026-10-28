@@ -12,6 +12,7 @@ import { logger } from "./Logger";
 import { MapPlaylist } from "./MapPlaylist";
 import { MasterLobbyService } from "./MasterLobbyService";
 import { setNoStoreHeaders } from "./NoStoreHeaders";
+import { registerRankedRoutes } from "./ranking/RankedRatings";
 import { renderAppShell } from "./RenderHtml";
 import { ServerEnv } from "./ServerEnv";
 import { applyStaticAssetCacheControl } from "./StaticAssetCache";
@@ -123,6 +124,7 @@ export async function startMaster() {
 
   await initLocalAuth();
   registerLocalAuthRoutes(app);
+  registerRankedRoutes(app);
   registerSpaFallback();
 
   lobbyService = new MasterLobbyService(playlist, log);

@@ -49,6 +49,7 @@ import {
   StampedIntent,
   Tribe,
   Turn,
+  Winner,
 } from "../core/Schemas";
 import { createPartialGameRecord } from "../core/Util";
 import { createGameWireContext, encodeServerMessage } from "../core/ZbinWire";
@@ -66,6 +67,7 @@ import {
 import { ListingState } from "./ListingState";
 import { identityFor, MatchTelemetryRecorder } from "./MatchTelemetryRecorder";
 import { friendsLookup, NameVisibility } from "./NameVisibility";
+import { getRankedRatings, type RankedMatch } from "./ranking/RankedRatings";
 import { Roster } from "./Roster";
 import { noopSaveStore, type ServerSaveStore } from "./SaveStore";
 import { ServerEnv } from "./ServerEnv";
@@ -129,6 +131,9 @@ export interface GameServerDeps {
   // Where resumable private lobbies are persisted (see SaveStore.ts). The
   // default no-op keeps tests that never resume from touching the disk.
   saveStore: ServerSaveStore;
+  // Apply a finished ranked lobby's result to the single ladder. The default
+  // writes the shared rankings store; tests inject a spy.
+  ranked: (match: RankedMatch) => Promise<boolean>;
 }
 
 export function defaultGameServerDeps(): GameServerDeps {
@@ -140,6 +145,7 @@ export function defaultGameServerDeps(): GameServerDeps {
     telemetry: noopMatchTelemetryEmitter,
     telemetryBuildHash: "DEV",
     saveStore: noopSaveStore,
+    ranked: (match) => getRankedRatings().applyMatch(match),
   };
 }
 
@@ -291,9 +297,17 @@ export class GameServer {
   // emitted as info.reports of the archived record (see handleReport).
   private readonly reports = new Map<string, PlayerReport>();
 
-  // This private lobby's presence in the public lobby browser (see
+  // This private lobby's presence in the ranked lobby browser (see
   // ListingState.ts).
   private readonly listing = new ListingState();
+  // Account identities of the players who started a ranked lobby, keyed by the
+  // simulation clientID. gameStartInfo is deliberately PII-free, so this is
+  // what lets the game-end hook turn winner clientIDs into accounts.
+  private readonly rankedRoster = new Map<
+    ClientID,
+    { publicId: string; username: string }
+  >();
+  private rankedResultApplied = false;
 
   private lobbyInfoIntervalId: ReturnType<typeof setInterval> | null = null;
 
@@ -397,6 +411,10 @@ export class GameServer {
     this.restored = true;
     this.durationBase = Date.now();
     this.gameConfig = save.gameConfig;
+    // A resumed save is a continuation, not a fresh ranked match. Clearing the
+    // flag here (and from the frozen start info below) prevents a resumed game
+    // from re-rating players or archiving as ranked.
+    delete this.gameConfig.ranked;
     this.creatorPersistentID = save.creatorPersistentID;
     this.visibleAt = save.visibleAt;
     // "prestart" is a transient countdown state with no frozen player list;
@@ -428,6 +446,7 @@ export class GameServer {
 
     if (save.stage === "started" && save.gameStartInfo !== undefined) {
       this.gameStartInfo = save.gameStartInfo;
+      delete this.gameStartInfo.config.ranked;
       this.buildWireGameStartInfo();
       this.zbinCtx = createGameWireContext(this.gameStartInfo.players);
       this._startTime = Date.now();
@@ -882,7 +901,13 @@ export class GameServer {
   public joinClient(
     client: Client,
     claimClientID?: ClientID,
-  ): "joined" | "kicked" | "rejected" | "not_allowlisted" | "not_trusted" {
+  ):
+    | "joined"
+    | "kicked"
+    | "rejected"
+    | "not_allowlisted"
+    | "not_trusted"
+    | "not_authenticated" {
     // e.g. the host left an unstarted lobby and GameManager hasn't pruned
     // it yet.
     if (this.ended) {
@@ -907,6 +932,13 @@ export class GameServer {
         clientID: client.clientID,
       });
       return "not_trusted";
+    }
+
+    if (!this.passesRankedSignIn(client)) {
+      this.log.warn("anonymous client tried to join a ranked lobby", {
+        clientID: client.clientID,
+      });
+      return "not_authenticated";
     }
 
     // Resume-as-lobby: a saved human nation can be claimed by an original
@@ -1767,6 +1799,11 @@ export class GameServer {
     const config = { ...this.gameConfig };
     delete config.allowedPublicIds;
     delete config.nameRevealPublicIds;
+    // Stamp the ranked flag from the listing state at the moment the game
+    // freezes its config. A lobby delisted before start (server cap/duplicate)
+    // never becomes a ranked game.
+    if (this.listing.isListed()) config.ranked = true;
+    else delete config.ranked;
 
     const result = GameStartInfoSchema.safeParse({
       gameID: this.id,
@@ -1790,6 +1827,7 @@ export class GameServer {
       return;
     }
     this.gameStartInfo = result.data satisfies GameStartInfo;
+    this.captureRankedRoster();
     this.telemetry.emit(
       "match_started",
       {
@@ -1813,6 +1851,22 @@ export class GameServer {
       });
       this.sendStartGameMsg(c.ws, 0);
     });
+  }
+
+  // Snapshot the account identity behind each starting client. Only signed-in
+  // players have a publicId (ranked lobbies require it at join), and the frozen
+  // gameStartInfo intentionally has no PII to fall back on.
+  private captureRankedRoster(): void {
+    this.rankedRoster.clear();
+    if (!this.isRanked()) return;
+    for (const client of this.clients.players()) {
+      if (client.publicId !== undefined) {
+        this.rankedRoster.set(client.clientID, {
+          publicId: client.publicId,
+          username: client.username,
+        });
+      }
+    }
   }
 
   // Arm the per-turn interval at most once. Restored games call this on the
@@ -1932,6 +1986,14 @@ export class GameServer {
     return client.trusted;
   }
 
+  // Ranked lobbies are account games: an anonymous dev persistent-ID join has
+  // no publicId and therefore cannot appear on the ladder. Signed-in local and
+  // upstream accounts always carry one (Worker only fetches it for a JWT).
+  private passesRankedSignIn(client: Client): boolean {
+    if (!this.isRanked()) return true;
+    return client.publicId !== undefined;
+  }
+
   // Switch a client between playing and watching from the lobby screen. Seating
   // is refused once the game has started (the player list is frozen), when the
   // lobby is full, or when the allowlist does not name them — the toggle must
@@ -1944,6 +2006,7 @@ export class GameServer {
       if (this.stage === "started" || this.ended) return;
       if (!this.passesAllowlist(client)) return;
       if (!this.passesTrustGate(client)) return;
+      if (!this.passesRankedSignIn(client)) return;
       const max = this.gameConfig.maxPlayers;
       if (max !== undefined && this.playerCount() >= max) return;
     }
@@ -2352,6 +2415,12 @@ export class GameServer {
     return this.listing.isListed();
   }
 
+  // A listed private lobby is a ranked lobby. Server-authoritative; hosts
+  // cannot set it through update_game_config (see ConfigPatch.ts).
+  public isRanked(): boolean {
+    return this.gameConfig.ranked === true;
+  }
+
   /** Who joined, and the account behind each one.
    *
    *  The public game record is PII-stripped, so a clientID can only be tied back
@@ -2375,6 +2444,11 @@ export class GameServer {
 
   public setListed(listed: boolean): void {
     this.listing.setListed(listed);
+    // Listing is permanent for the host, so this is also the point where the
+    // lobby becomes ranked. Clearing on the server-side delist paths (duplicate
+    // creator / cap overflow) keeps a never-started lobby out of the ladder.
+    if (listed) this.gameConfig.ranked = true;
+    else delete this.gameConfig.ranked;
   }
 
   public autoStartAt(): number | undefined {
@@ -2537,6 +2611,7 @@ export class GameServer {
       gameID: this.id,
       winner: winner?.winner,
     });
+    this.applyRankedResult(winner?.winner);
 
     // Players must stay in the same order as the game start info.
     const playerRecords: PlayerRecord[] = this.gameStartInfo.players.map(
@@ -2577,6 +2652,47 @@ export class GameServer {
         this.gameStartInfo.tribes,
         [...this.reports.values()],
       ),
+    );
+  }
+
+  // Feed a finished ranked lobby into the single ladder. The winner tuple
+  // carries the winning player's clientID, or (for a team win) every winning
+  // member's clientID after the team name, which is exactly what the store
+  // needs. A nation winner has no account and is not rated.
+  private applyRankedResult(winner: Winner | undefined): void {
+    if (this.rankedResultApplied || !this.isRanked()) return;
+    if (winner === undefined || this.rankedRoster.size < 2) return;
+
+    let winnerClientIDs: string[];
+    if (winner[0] === "player") {
+      winnerClientIDs = [winner[1]];
+    } else if (winner[0] === "team") {
+      winnerClientIDs = winner.slice(2);
+    } else {
+      this.log.info("ranked game ended with a nation winner; not rated");
+      return;
+    }
+
+    const winnerPublicIds = [
+      ...new Set(
+        winnerClientIDs
+          .map((clientID) => this.rankedRoster.get(clientID)?.publicId)
+          .filter((id): id is string => id !== undefined),
+      ),
+    ];
+    if (winnerPublicIds.length === 0) return;
+
+    this.rankedResultApplied = true;
+    const match: RankedMatch = {
+      gameId: this.id,
+      participants: [...this.rankedRoster.values()],
+      winnerPublicIds,
+    };
+    void this.deps.ranked(match).catch((error) =>
+      this.log.error("failed to apply ranked result", {
+        gameID: this.id,
+        error: error instanceof Error ? error.message : String(error),
+      }),
     );
   }
 

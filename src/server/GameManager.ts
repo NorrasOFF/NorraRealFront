@@ -61,6 +61,7 @@ export class GameManager {
     | "rejected"
     | "not_allowlisted"
     | "not_trusted"
+    | "not_authenticated"
     | "not_found" {
     const game = this.games.get(gameID);
     if (!game) return "not_found";

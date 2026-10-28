@@ -1,27 +1,12 @@
-import { html, LitElement, nothing, PropertyValues } from "lit";
-import { customElement, property, query, state } from "lit/decorators.js";
+import { html, LitElement, nothing } from "lit";
+import { customElement, query, state } from "lit/decorators.js";
 import {
   PlayerLeaderboardEntry,
   RankedLeaderboardEntry,
 } from "../../../core/ApiSchemas";
-import { RankedType } from "../../../core/game/Game";
 import { fetchPlayerLeaderboard, getUserMe } from "../../Api";
 import { translateText } from "../../Utils";
 import "../PlayerName";
-
-/** One ranked ladder's loaded rows. */
-interface LadderState {
-  entries: PlayerLeaderboardEntry[];
-  userEntry: PlayerLeaderboardEntry | null;
-  hasMore: boolean;
-}
-
-const RANKED_TYPES = Object.values(RankedType);
-
-const emptyLadders = (): Record<RankedType, LadderState> => ({
-  [RankedType.OneVOne]: { entries: [], userEntry: null, hasMore: true },
-  [RankedType.TwoVTwo]: { entries: [], userEntry: null, hasMore: true },
-});
 
 const toPlayerEntry = (
   entry: RankedLeaderboardEntry,
@@ -38,14 +23,8 @@ const toPlayerEntry = (
 
 @customElement("leaderboard-player-list")
 export class LeaderboardPlayerList extends LitElement {
-  /**
-   * Which ladder to display. Each ranked type is ranked independently — the
-   * same player can hold a different elo and rank on each — but one request
-   * returns both, so the other ladder rides along and is kept for its own tab.
-   */
-  @property({ attribute: false }) rankedType: RankedType = RankedType.OneVOne;
-
-  @state() private ladders: Record<RankedType, LadderState> = emptyLadders();
+  @state() private entries: PlayerLeaderboardEntry[] = [];
+  @state() private userEntry: PlayerLeaderboardEntry | null = null;
   @state() private showStickyUser = false;
   @state() private isLoading = false;
   @state() private error: string | null = null;
@@ -61,39 +40,21 @@ export class LeaderboardPlayerList extends LitElement {
   @query(".scroll-container") private scrollContainer?: HTMLElement;
 
   private get playerData(): PlayerLeaderboardEntry[] {
-    return this.ladders[this.rankedType].entries;
+    return this.entries;
   }
 
   private get currentUserEntry(): PlayerLeaderboardEntry | null {
-    return this.ladders[this.rankedType].userEntry;
+    return this.userEntry;
   }
 
   private get playerHasMore(): boolean {
-    return this.ladders[this.rankedType].hasMore;
+    return this.hasMore;
   }
 
-  private mapLadders(
-    fn: (ladder: LadderState) => LadderState,
-  ): Record<RankedType, LadderState> {
-    const next = { ...this.ladders };
-    for (const rankedType of RANKED_TYPES) {
-      next[rankedType] = fn(this.ladders[rankedType]);
-    }
-    return next;
-  }
+  private hasMore = true;
 
   createRenderRoot() {
     return this;
-  }
-
-  protected updated(changed: PropertyValues) {
-    if (changed.has("rankedType")) {
-      // The ladders are separate lists sharing one scroll container: show the
-      // newly selected one from its top rather than the other one's offset.
-      if (this.scrollContainer) this.scrollContainer.scrollTop = 0;
-      this.scheduleStickyVisibilityCheck();
-      this.schedulePlayerFillCheck();
-    }
   }
 
   public async ensureLoaded() {
@@ -105,9 +66,11 @@ export class LeaderboardPlayerList extends LitElement {
     if (reset) {
       this.currentPage = 1;
       this.loadMoreError = null;
-      this.ladders = emptyLadders();
+      this.entries = [];
+      this.userEntry = null;
+      this.hasMore = true;
       this.showStickyUser = false;
-    } else if (!this.playerHasMore) {
+    } else if (!this.hasMore) {
       return;
     }
 
@@ -130,10 +93,7 @@ export class LeaderboardPlayerList extends LitElement {
 
       // Past the last page. Not an error: stop paging, leave the footer clear.
       if (result === "reached_limit") {
-        this.ladders = this.mapLadders((ladder) => ({
-          ...ladder,
-          hasMore: false,
-        }));
+        this.hasMore = false;
         this.hasLoadedPlayers = true;
         return;
       }
@@ -144,42 +104,20 @@ export class LeaderboardPlayerList extends LitElement {
         this.currentUserId = userMe ? userMe.player.publicId : null;
       }
 
-      // One page carries a slice of every ladder, so fold them all in — even
-      // the ones whose tab isn't showing.
-      let receivedAny = false;
-      const nextLadders = { ...this.ladders };
-      for (const rankedType of RANKED_TYPES) {
-        const ladder = this.ladders[rankedType];
-        const nextPlayers = (result[rankedType] ?? []).map(toPlayerEntry);
-        if (nextPlayers.length > 0) receivedAny = true;
-
-        const existingIds = new Set(
-          ladder.entries.map((player) => player.playerId),
-        );
-        nextLadders[rankedType] = {
-          entries: [
-            ...ladder.entries,
-            ...nextPlayers.filter(
-              (player) => !existingIds.has(player.playerId),
-            ),
-          ],
-          // Ranks differ per ladder, so the pinned "your ranking" row is
-          // whichever row this ladder gave the signed-in player.
-          userEntry:
-            ladder.userEntry ??
-            nextPlayers.find(
-              (player) => player.playerId === this.currentUserId,
-            ) ??
-            null,
-          // A short page ends that ladder. The ladders run out at different
-          // pages — the 2v2 board is younger and has no backfill — so this is
-          // tracked per ladder rather than off the 1v1 page size.
-          hasMore: ladder.hasMore && nextPlayers.length >= this.playerPageSize,
-        };
-      }
-      this.ladders = nextLadders;
-
-      if (receivedAny) {
+      const nextPlayers = result.map(toPlayerEntry);
+      const existingIds = new Set(
+        this.entries.map((player) => player.playerId),
+      );
+      this.entries = [
+        ...this.entries,
+        ...nextPlayers.filter((player) => !existingIds.has(player.playerId)),
+      ];
+      this.userEntry =
+        this.userEntry ??
+        nextPlayers.find((player) => player.playerId === this.currentUserId) ??
+        null;
+      this.hasMore = nextPlayers.length >= this.playerPageSize;
+      if (nextPlayers.length > 0) {
         this.currentPage++;
       }
 
@@ -486,8 +424,8 @@ export class LeaderboardPlayerList extends LitElement {
     `;
   }
 
-  // An empty ladder is a normal state, not an error: a ranked type that has
-  // just launched starts with no rows and fills as games are played.
+  // An empty ladder is a normal state, not an error: a fresh deployment starts
+  // with no rows and fills as ranked lobbies finish.
   private renderNoData() {
     return html`
       <div

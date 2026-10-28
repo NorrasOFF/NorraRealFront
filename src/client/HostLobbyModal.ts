@@ -1379,6 +1379,8 @@ export class HostLobbyModal extends BaseModal {
     let key = "private_lobby.listing_failed";
     if (serverError === "subscription_required") {
       key = "private_lobby.listing_requires_subscription";
+    } else if (serverError === "sign_in_required") {
+      key = "private_lobby.listing_sign_in_required";
     } else if (serverError === "listing_limit_reached") {
       key = "private_lobby.listing_limit_reached";
     } else if (serverError === "listing_whitelist_enabled") {

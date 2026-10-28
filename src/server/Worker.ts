@@ -302,6 +302,12 @@ export async function startWorker() {
     if (auth.type !== "success") {
       return res.status(401).json({ error: "Invalid token" });
     }
+    // A listed private lobby is a ranked lobby, and ranked lobbies are
+    // account-only. Reject the anonymous dev persistent-ID path up front so a
+    // host cannot list a lobby it is itself unable to rank in.
+    if (auth.claims === null) {
+      return res.status(401).json({ error: "sign_in_required" });
+    }
 
     const parsed = z.object({ listed: z.boolean() }).safeParse(req.body);
     if (!parsed.success) {
@@ -1016,6 +1022,12 @@ export async function startWorker() {
             workerId,
           });
           ws.close(1002, "Trusted account required");
+        } else if (joinResult === "not_authenticated") {
+          log.info(
+            `anonymous client tried to join ranked game ${clientMsg.gameID}`,
+            { gameID: clientMsg.gameID, workerId },
+          );
+          ws.close(1002, "Sign in to join ranked lobbies");
         } else if (joinResult === "rejected") {
           log.info(`client rejected from game ${clientMsg.gameID}`, {
             gameID: clientMsg.gameID,

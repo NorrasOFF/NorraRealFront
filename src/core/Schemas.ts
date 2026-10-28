@@ -492,7 +492,11 @@ export const GameConfigSchema = z.object({
   donateTroops: z.boolean(), // Configures donations to humans only
   gameType: z.enum(GameType),
   gameMode: z.enum(GameMode),
-  rankedType: z.enum(RankedType).optional(), // Only set for ranked games.
+  // Server-authoritative: a private lobby that is publicly listed becomes a
+  // ranked lobby and feeds the single ranked ladder. Hosts cannot set it
+  // (ConfigPatch excludes it); GameServer stamps it when listing succeeds.
+  ranked: z.boolean().optional(),
+  rankedType: z.enum(RankedType).optional(), // Only set for legacy matchmade games.
   gameMapSize: z.enum(GameMapSize),
   doomsdayClock: DoomsdayClockConfigSchema.optional(),
   overtime: OvertimeConfigSchema.optional(),
