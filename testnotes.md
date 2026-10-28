@@ -744,5 +744,19 @@ column is gone. The player tab now has exactly four columns: **Rank**,
 Tests updated: `tests/server/RankedRatings.test.ts` (games counted, no
 win/loss fields), `tests/ApiSchemas.test.ts`,
 `tests/client/ApiPlayerLeaderboard.test.ts`, and
-`tests/client/LeaderboardModal.test.ts`. The six affected suites pass
-(192 tests), with `npx tsc --noEmit`, `npm run lint`, and Prettier clean.
+`tests/client/LeaderboardModal.test.ts`. The affected suites pass, with
+`npx tsc --noEmit`, `npm run lint`, and Prettier clean.
+
+## Ranked ladder shows only the top 5
+
+`LeaderboardPlayerList` caps the ranked player tab at `TOP_PLAYER_LIMIT = 5`
+entries. The first page is sliced to 5 and `hasMore` becomes false once the
+cap is reached, so no further pages are requested and the table cannot grow
+past five rows.
+
+- A signed-in player outside the top 5 is no longer tracked as
+  `currentUserEntry`, so the pinned "Your Ranking" footer does not appear.
+- `tests/client/LeaderboardModal.test.ts`'s paging tests were replaced by a
+  "Top-player limit" block: top-five cap, no page-2 request, no pinned row for
+  a rank-20 user, and the retry state when the first page fails. The obsolete
+  "pages the ladder until a short page" case was removed.

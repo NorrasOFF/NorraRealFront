@@ -381,7 +381,7 @@ describe("LeaderboardModal", () => {
     });
   });
 
-  describe("Player Pagination", () => {
+  describe("Top-player limit", () => {
     const rankedPage = (count: number, startRank: number) =>
       Array.from({ length: count }, (_, i) => ({
         rank: startRank + i,
@@ -392,51 +392,47 @@ describe("LeaderboardModal", () => {
         accountUsername: null,
       }));
 
-    // The body the API actually sends for a page past the end.
-    const pastEnd = jsonRes(
-      { error: "Bad request", message: "Page must be between 1 and 2" },
-      false,
-      400,
-    );
-
-    it("stops paging past the last page without showing an error", async () => {
+    it("shows only the top five and does not page further", async () => {
       const fetchMock = global.fetch as ReturnType<typeof vi.fn>;
-      fetchMock
-        .mockResolvedValueOnce(jsonRes(rankedPage(50, 1)))
-        .mockResolvedValueOnce(pastEnd);
-
-      const playerList = getPlayerList()!;
-      await playerList.loadPlayerLeaderboard(true);
-      await playerList.updateComplete;
-      expect(playerList.playerData).toHaveLength(50);
-
-      await playerList.loadPlayerLeaderboard();
-      await playerList.updateComplete;
-
-      expect(playerList.playerData).toHaveLength(50);
-      expect(modal.textContent).not.toContain("Try Again");
-
-      // The end of the list is sticky: no further requests are made.
-      const callCount = fetchMock.mock.calls.length;
-      await playerList.loadPlayerLeaderboard();
-      expect(fetchMock.mock.calls.length).toBe(callCount);
-    });
-
-    it("stops paging on a short page", async () => {
-      const fetchMock = global.fetch as ReturnType<typeof vi.fn>;
-      fetchMock.mockResolvedValueOnce(jsonRes(rankedPage(20, 1)));
+      fetchMock.mockResolvedValueOnce(jsonRes(rankedPage(50, 1)));
 
       const playerList = getPlayerList()!;
       await playerList.loadPlayerLeaderboard(true);
       await playerList.updateComplete;
 
-      const callCount = fetchMock.mock.calls.length;
-      await playerList.loadPlayerLeaderboard();
-      expect(fetchMock.mock.calls.length).toBe(callCount);
+      expect(playerList.playerData).toHaveLength(5);
+      expect(playerList.playerData.map((player) => player.rank)).toEqual([
+        1, 2, 3, 4, 5,
+      ]);
       expect(modal.textContent).not.toContain("Try Again");
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+
+      // The list is capped, so scrolling cannot request another page.
+      await playerList.loadPlayerLeaderboard();
+      expect(fetchMock).toHaveBeenCalledTimes(1);
     });
 
-    // Only the page-bounds 400 means "end of data".
+    it("does not pin a signed-in user who is outside the top five", async () => {
+      const { getUserMe } = await import("../../src/client/Api");
+      (getUserMe as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        player: { publicId: "player-20" },
+      });
+
+      (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+        jsonRes(rankedPage(50, 1)),
+      );
+
+      const playerList = getPlayerList()!;
+      await playerList.loadPlayerLeaderboard(true);
+      await playerList.updateComplete;
+
+      expect(playerList.currentUserEntry).toBeNull();
+      expect(
+        modal.querySelector("leaderboard-player-list table tfoot"),
+      ).toBeNull();
+    });
+
+    // A failed first page is still a real error and must offer a retry.
     it.each([
       ["500", jsonRes({}, false, 500)],
       ["unrelated 400", jsonRes({ error: "Bad request" }, false, 400)],
@@ -448,17 +444,11 @@ describe("LeaderboardModal", () => {
           400,
         ),
       ],
-    ])("shows Try Again when a page genuinely fails (%s)", async (_, bad) => {
-      const fetchMock = global.fetch as ReturnType<typeof vi.fn>;
-      fetchMock
-        .mockResolvedValueOnce(jsonRes(rankedPage(50, 1)))
-        .mockResolvedValueOnce(bad);
+    ])("shows Try Again when the first page fails (%s)", async (_, bad) => {
+      (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(bad);
 
       const playerList = getPlayerList()!;
       await playerList.loadPlayerLeaderboard(true);
-      await playerList.updateComplete;
-
-      await playerList.loadPlayerLeaderboard();
       await playerList.updateComplete;
 
       expect(modal.textContent).toContain("Try Again");
@@ -508,33 +498,6 @@ describe("LeaderboardModal", () => {
 
       expect(modal.textContent).toContain("No data yet");
       expect(modal.querySelector("leaderboard-player-list table")).toBeNull();
-    });
-
-    it("pages the ladder until a short page", async () => {
-      const fetchMock = global.fetch as ReturnType<typeof vi.fn>;
-      fetchMock.mockResolvedValueOnce(
-        jsonRes(
-          Array.from({ length: 50 }, (_, i) =>
-            entry(i + 1, `solo-${i + 1}`, 2000 - i),
-          ),
-        ),
-      );
-
-      const playerList = getPlayerList()!;
-      await playerList.loadPlayerLeaderboard(true);
-      await playerList.updateComplete;
-      expect(playerList.playerData).toHaveLength(50);
-
-      fetchMock.mockResolvedValueOnce(jsonRes([entry(51, "solo-51", 1900)]));
-      await playerList.loadPlayerLeaderboard();
-      await playerList.updateComplete;
-
-      expect(playerList.playerData).toHaveLength(51);
-      expect(fetchMock.mock.calls[1][0]).toContain("page=2");
-
-      const callCount = fetchMock.mock.calls.length;
-      await playerList.loadPlayerLeaderboard();
-      expect(fetchMock.mock.calls.length).toBe(callCount);
     });
 
     it("has one player tab", async () => {

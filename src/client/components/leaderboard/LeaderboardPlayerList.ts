@@ -18,6 +18,9 @@ const toPlayerEntry = (
   games: entry.total,
 });
 
+/** Only the top players are shown on the ranked leaderboard. */
+const TOP_PLAYER_LIMIT = 5;
+
 @customElement("leaderboard-player-list")
 export class LeaderboardPlayerList extends LitElement {
   @state() private entries: PlayerLeaderboardEntry[] = [];
@@ -108,12 +111,14 @@ export class LeaderboardPlayerList extends LitElement {
       this.entries = [
         ...this.entries,
         ...nextPlayers.filter((player) => !existingIds.has(player.playerId)),
-      ];
+      ].slice(0, TOP_PLAYER_LIMIT);
       this.userEntry =
         this.userEntry ??
-        nextPlayers.find((player) => player.playerId === this.currentUserId) ??
+        this.entries.find((player) => player.playerId === this.currentUserId) ??
         null;
-      this.hasMore = nextPlayers.length >= this.playerPageSize;
+      this.hasMore =
+        this.entries.length < TOP_PLAYER_LIMIT &&
+        nextPlayers.length >= this.playerPageSize;
       if (nextPlayers.length > 0) {
         this.currentPage++;
       }
