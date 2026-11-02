@@ -2472,10 +2472,11 @@ export class GameServer {
     this.listing.setFeatured(opts);
   }
 
-  // Called from GameManager's tick while in the Lobby phase: once the
-  // listed deadline passes, arm the normal start countdown (same path as
-  // the host's Start button). Cancelling the countdown re-arms it on the
-  // next tick, so the only way out is to unlist.
+  // Called from GameManager's tick while in the Lobby phase: once the listed
+  // featured deadline passes, arm the normal start countdown (same path as
+  // the host's Start button). Player-hosted ranked lobbies have no deadline.
+  // Cancelling the countdown re-arms it on the next tick, so the only way out
+  // is to unlist.
   public maybeAutoStartListed(): void {
     if (this.hasStarted() || this.startsAt !== undefined) {
       return;

@@ -10,7 +10,6 @@ import {
 } from "../../src/core/game/Game";
 import {
   FEATURED_LOBBY_AUTO_START_MS,
-  HOSTED_LOBBY_AUTO_START_MS,
   LobbyLabelSchema,
   MAX_HOSTED_LOBBIES,
 } from "../../src/core/Schemas";
@@ -201,37 +200,36 @@ describe("listed lobby auto-start", () => {
     vi.useRealTimers();
   });
 
-  it("tracks the deadline from when the lobby was listed", () => {
+  it("never gives a player-hosted listing an auto-start deadline", () => {
     const game = makeGame();
     expect(game.autoStartAt()).toBeUndefined();
 
     game.setListed(true);
-    const deadline = Date.now() + HOSTED_LOBBY_AUTO_START_MS;
-    expect(game.autoStartAt()).toBe(deadline);
-    expect(game.gameInfo().autoStartAt).toBe(deadline);
+    expect(game.autoStartAt()).toBeUndefined();
+    expect(game.gameInfo().autoStartAt).toBeUndefined();
 
-    // A duplicate toggle must not extend the deadline...
+    // A duplicate toggle and a relist still leave it without a deadline.
     vi.setSystemTime(Date.now() + 60_000);
     game.setListed(true);
-    expect(game.autoStartAt()).toBe(deadline);
+    expect(game.autoStartAt()).toBeUndefined();
 
-    // ...unlisting cancels it, and relisting starts a fresh one.
     game.setListed(false);
     expect(game.autoStartAt()).toBeUndefined();
     game.setListed(true);
-    expect(game.autoStartAt()).toBe(Date.now() + HOSTED_LOBBY_AUTO_START_MS);
+    expect(game.autoStartAt()).toBeUndefined();
   });
 
-  it("arms the start countdown only once the deadline passes", () => {
+  it("arms the start countdown once a featured deadline passes", () => {
     const gm = new GameManager(mockLogger);
     const game = gm.createGame(
       "g-auto-start",
       { startDelay: 30 } as any,
       CREATOR,
     )!;
+    game.setFeatured({ label: "Featured" });
     game.setListed(true);
 
-    vi.setSystemTime(Date.now() + HOSTED_LOBBY_AUTO_START_MS - 1000);
+    vi.setSystemTime(Date.now() + FEATURED_LOBBY_AUTO_START_MS - 1000);
     gm.tick();
     expect(game.gameInfo().startsAt).toBeUndefined();
 
@@ -247,7 +245,7 @@ describe("listed lobby auto-start", () => {
     const gm = new GameManager(mockLogger);
     const game = gm.createGame("g-manual", undefined, CREATOR)!;
 
-    vi.setSystemTime(Date.now() + HOSTED_LOBBY_AUTO_START_MS * 2);
+    vi.setSystemTime(Date.now() + FEATURED_LOBBY_AUTO_START_MS * 2);
     gm.tick();
     expect(game.gameInfo().startsAt).toBeUndefined();
   });
@@ -967,10 +965,10 @@ describe("featured lobbies", () => {
     expect(game.lobbyLabel()).toBeUndefined();
   });
 
-  it("extends the auto-start deadline to the featured window", () => {
+  it("gives a featured lobby an auto-start deadline", () => {
     const game = makeGame();
     game.setListed(true);
-    expect(game.autoStartAt()).toBe(Date.now() + HOSTED_LOBBY_AUTO_START_MS);
+    expect(game.autoStartAt()).toBeUndefined();
     game.setFeatured({ label: "Europe — OFM Scrims" });
     expect(game.autoStartAt()).toBe(Date.now() + FEATURED_LOBBY_AUTO_START_MS);
   });

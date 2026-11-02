@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   FEATURED_LOBBY_AUTO_START_MS,
-  HOSTED_LOBBY_AUTO_START_MS,
   LobbyLabelSchema,
 } from "../../src/core/Schemas";
 import { ListingState } from "../../src/server/ListingState";
@@ -32,22 +31,24 @@ describe("ListingState", () => {
     expect(listing.lobbyAccent()).toBeUndefined();
   });
 
-  it("dates the auto-start deadline from the moment of listing", () => {
+  it("gives a player-hosted listing no auto-start deadline", () => {
     const listing = new ListingState();
     listing.setListed(true);
-    expect(listing.autoStartAt()).toBe(T0 + HOSTED_LOBBY_AUTO_START_MS);
+    expect(listing.autoStartAt()).toBeUndefined();
   });
 
-  it("does not let a repeated listing push the deadline back", () => {
+  it("does not let a repeated featured listing push the deadline back", () => {
     const listing = new ListingState();
+    listing.setFeatured({});
     listing.setListed(true);
     vi.setSystemTime(T0 + 60_000);
     listing.setListed(true);
-    expect(listing.autoStartAt()).toBe(T0 + HOSTED_LOBBY_AUTO_START_MS);
+    expect(listing.autoStartAt()).toBe(T0 + FEATURED_LOBBY_AUTO_START_MS);
   });
 
-  it("drops the deadline on delist and starts a fresh one on relist", () => {
+  it("drops a featured deadline on delist and starts a fresh one on relist", () => {
     const listing = new ListingState();
+    listing.setFeatured({});
     listing.setListed(true);
     listing.setListed(false);
     expect(listing.isListed()).toBe(false);
@@ -56,14 +57,16 @@ describe("ListingState", () => {
     vi.setSystemTime(T0 + 60_000);
     listing.setListed(true);
     expect(listing.autoStartAt()).toBe(
-      T0 + 60_000 + HOSTED_LOBBY_AUTO_START_MS,
+      T0 + 60_000 + FEATURED_LOBBY_AUTO_START_MS,
     );
   });
 
-  it("gives a featured lobby the longer deadline", () => {
+  it("only gives a featured listing a deadline", () => {
     const listing = new ListingState();
-    listing.setFeatured({});
     listing.setListed(true);
+    expect(listing.autoStartAt()).toBeUndefined();
+
+    listing.setFeatured({});
     expect(listing.isFeatured()).toBe(true);
     expect(listing.autoStartAt()).toBe(T0 + FEATURED_LOBBY_AUTO_START_MS);
   });
