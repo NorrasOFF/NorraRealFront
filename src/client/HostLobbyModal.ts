@@ -278,9 +278,9 @@ export class HostLobbyModal extends BaseModal {
     `;
   }
 
-  // Countdown until the listed lobby starts automatically (hosts can't sit
-  // on a public listing). Hidden once the real start countdown is running —
-  // the Start button shows that one.
+  // Countdown until a listed featured lobby starts automatically. Player-hosted
+  // ranked lobbies have no auto-start deadline. Hidden once the real start
+  // countdown is running — the Start button shows that one.
   private renderAutoStartTimer() {
     if (
       !this.publiclyListed ||

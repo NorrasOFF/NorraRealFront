@@ -219,16 +219,11 @@ export type ScheduledPublicGameType = z.infer<
 // and delists any overflow as the authoritative backstop.
 export const MAX_HOSTED_LOBBIES = 10;
 
-// How long a lobby may stay publicly listed before it starts automatically,
-// so hosts can't sit on a listing indefinitely. Unlisting cancels the
-// deadline; relisting starts a fresh one.
-export const HOSTED_LOBBY_AUTO_START_MS = 5 * 60 * 1000;
-
-// Featured lobbies get a longer window. A scheduled event announced ahead of
-// time needs the listing to still be up when its audience arrives, and unlike a
-// subscriber sitting on a listing the host is an authenticated admin bot. Only
-// create_game can set it, so the ordinary deadline still governs every
-// player-hosted lobby.
+// How long a featured lobby may stay publicly listed before it starts
+// automatically, so a scheduled event goes ahead even if its host is away.
+// Player-hosted ranked lobbies have no auto-start deadline and are only ever
+// started by their host. Unlisting cancels the deadline; relisting starts a
+// fresh one.
 export const FEATURED_LOBBY_AUTO_START_MS = 10 * 60 * 1000;
 
 // Labels are capped by CODE POINT, matching sanitizeLobbyLabel. z.string().max()

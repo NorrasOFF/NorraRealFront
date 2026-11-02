@@ -1,8 +1,4 @@
-import {
-  FEATURED_LOBBY_AUTO_START_MS,
-  HOSTED_LOBBY_AUTO_START_MS,
-  LobbyAccent,
-} from "../core/Schemas";
+import { FEATURED_LOBBY_AUTO_START_MS, LobbyAccent } from "../core/Schemas";
 import { sanitizeLobbyLabel } from "../core/Util";
 
 // A private lobby's presence in the public lobby browser: whether it is
@@ -35,16 +31,14 @@ export class ListingState {
     this.listedAt = listed ? Date.now() : undefined;
   }
 
-  // Deadline after which a listed lobby starts automatically, so hosts
-  // can't sit on a public listing indefinitely.
+  // Deadline after which a listed featured lobby starts automatically, so a
+  // scheduled event goes ahead even if its host is away. Player-hosted ranked
+  // lobbies have no deadline: the host always starts them by hand.
   autoStartAt(): number | undefined {
-    if (!this.listed || this.listedAt === undefined) return undefined;
-    return (
-      this.listedAt +
-      (this.featured
-        ? FEATURED_LOBBY_AUTO_START_MS
-        : HOSTED_LOBBY_AUTO_START_MS)
-    );
+    if (!this.featured || !this.listed || this.listedAt === undefined) {
+      return undefined;
+    }
+    return this.listedAt + FEATURED_LOBBY_AUTO_START_MS;
   }
 
   isFeatured(): boolean {
