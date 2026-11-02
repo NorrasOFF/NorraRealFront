@@ -30,6 +30,7 @@ import { registerGamePreviewRoute } from "./GamePreviewRoute";
 import { hashPersistentID, type GameServer } from "./GameServer";
 import { isSteamAuthenticated, planJoinVerify, verifyJoin } from "./JoinVerify";
 import { getUserMe, verifyClientToken } from "./jwt";
+import { getLocalAuth, isLocalAuthEnabled } from "./LocalAuth";
 import { logger } from "./Logger";
 import { enforceVerifiedBadge } from "./Privilege";
 
@@ -290,8 +291,9 @@ export async function startWorker() {
   });
 
   // Toggle whether a private lobby is visible in the public lobby browser.
-  // Creator-only; listing requires an active subscription (checked fresh
-  // against the API) and is limited to one listed lobby per creator.
+  // Creator-only; listing requires the host/admin account tier on local
+  // deployments (or the API entitlement otherwise) and is limited to one
+  // listed lobby per creator.
   app.post("/api/game/:id/listing", async (req, res) => {
     const authHeader = req.headers.authorization;
     if (!authHeader?.startsWith("Bearer ")) {
@@ -349,9 +351,15 @@ export async function startWorker() {
         return res.status(409).json({ error: "listing_host_cheats_enabled" });
       }
 
-      // Dev has no subscription backend; skip the check so the feature is
-      // testable locally (same precedent as Turnstile).
-      if (ServerEnv.env() !== GameEnv.Dev) {
+      // Local deployments use account tiers instead of the upstream
+      // subscription entitlement. This check is deliberately not dev-only:
+      // GAME_ENV=dev is the normal self-hosted deployment, so a dev bypass
+      // would let every account host ranked lobbies.
+      if (isLocalAuthEnabled()) {
+        if (!(await getLocalAuth().canHostRanked(auth.persistentId))) {
+          return res.status(403).json({ error: "host_tier_required" });
+        }
+      } else if (ServerEnv.env() !== GameEnv.Dev) {
         const userMe = await getUserMe(token);
         if (userMe.type === "error") {
           log.warn(

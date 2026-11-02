@@ -6,6 +6,7 @@ import http from "http";
 import path from "path";
 import { fileURLToPath } from "url";
 import { GameEnv } from "../core/configuration/Config";
+import { registerAccountTierRoutes } from "./AccountTierRoutes";
 import { getDescriptor } from "./DesktopRelease";
 import { initLocalAuth, registerLocalAuthRoutes } from "./LocalAuth";
 import { logger } from "./Logger";
@@ -124,6 +125,7 @@ export async function startMaster() {
 
   await initLocalAuth();
   registerLocalAuthRoutes(app);
+  registerAccountTierRoutes(app);
   registerRankedRoutes(app);
   registerSpaFallback();
 

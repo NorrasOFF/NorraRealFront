@@ -210,8 +210,9 @@ rejects an old save; the server-side decode check is what protects resume.
 
 Unrelated to save/resume, present with these changes stashed:
 
-- `tests/server/MapPlaylistOvertime.test.ts` — `always enables overtime in FFA
-lobbies` (`publicGameModifiers.isCompact` is `true`, expected `undefined`).
+- `tests/server/GameServerPhase.test.ts` — `prunes on tick, not on a
+lobby-browser read` (`numClients` is already 0 before `gm.tick()`). Verified
+  on the clean tip by stashing the account-tier work.
 - `tests/server/HostedLobbyListing.test.ts` — `never schedules or sets
 countdowns on hosted lobbies` (no `createGame` messages observed).
 - `tests/server/GameServerWire.test.ts` — `matches the golden transcript for a
@@ -540,9 +541,10 @@ not called out before:
   `"unit_display"` now precedes `"unit_type"`, and the
   `build_aac_carrier*` / `build_missile_carrier*` / `build_units_caps_lock_hint`
   keys are in alphabetical order. The test passes again.
-- `tests/TranslationSystem.test.ts` — five unused keys
+- `tests/TranslationSystem.test.ts` — four unused keys
   (`error_modal.turnstile_error`, `events_display.attack_cancelled_retreat`,
-  `main.clans`, `main.inventory`, `main.leaderboard`).
+  `main.clans`, `main.inventory`). `main.leaderboard` is now used by the home
+  Leaderboard button.
 
 ## Node `Buffer` map terrain was lost through the plain checkpoint codec
 

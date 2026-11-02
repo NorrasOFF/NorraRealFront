@@ -45,6 +45,10 @@ function publicLobby(gameID: string): PublicGameInfo {
   };
 }
 
+function hostedLobby(gameID: string): PublicGameInfo {
+  return { ...publicLobby(gameID), publicGameType: "hosted" };
+}
+
 /**
  * The pure predicate is covered in GameModeSelectorGating.test.ts. What that
  * cannot see is whether the predicate is actually CONSULTED at each entry
@@ -311,5 +315,28 @@ describe("the public lobby card (validateAndJoin)", () => {
     card!.click();
 
     expect(joinLobby).not.toHaveBeenCalled();
+  });
+});
+
+describe("the home ranked lobby browser", () => {
+  it("replaces the playlist cards when ranked lobbies are open", async () => {
+    await pushLobbies({
+      ffa: [publicLobby("ffa-1")],
+      hosted: [hostedLobby("ranked-1")],
+    });
+
+    const cards = selector.querySelectorAll("button.group");
+    expect(cards.length).toBe(1);
+    (cards[0] as HTMLElement).click();
+
+    expect(joinLobby).toHaveBeenCalledTimes(1);
+    expect(joinLobby.mock.calls[0][0].detail.gameID).toBe("ranked-1");
+  });
+
+  it("falls back to the playlist cards when none are open", async () => {
+    await pushLobbies({ ffa: [publicLobby("ffa-1")] });
+
+    expect(selector.querySelectorAll("button.group").length).toBeGreaterThan(0);
+    expect(selector.querySelector("button.group")).not.toBeNull();
   });
 });

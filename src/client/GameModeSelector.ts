@@ -307,45 +307,50 @@ export class GameModeSelector extends LitElement {
                 class="w-24 h-24 border-[6px] border-blue-500/30 border-t-blue-500 rounded-full animate-spin"
               ></span>
             </div>`
-          : html`<div
-              class="grid grid-cols-1 sm:grid-cols-[2fr_1fr] gap-4 sm:h-[min(24rem,40vh)]"
-            >
-              <!-- Left col: main card (desktop only) -->
-              ${ffa
-                ? html`<div class="hidden sm:block">
-                    ${this.renderLobbyCard(ffa, this.getLobbyTitle(ffa))}
-                  </div>`
-                : nothing}
-
-              <!-- Right col: special + teams (desktop only) -->
-              <div class="hidden sm:flex sm:flex-col sm:gap-4">
-                ${special
-                  ? html`<div class="flex-1 min-h-0">
-                      ${this.renderSpecialLobbyCard(special)}
-                    </div>`
-                  : nothing}
-                ${teams
-                  ? html`<div class="flex-1 min-h-0">
-                      ${this.renderLobbyCard(teams, this.getLobbyTitle(teams))}
-                    </div>`
-                  : nothing}
-              </div>
-
-              <!-- Mobile: special, ffa, teams inline -->
-              <div class="sm:hidden">
-                ${special ? this.renderSpecialLobbyCard(special) : nothing}
-              </div>
-              <div class="sm:hidden">
+          : this.hostedLobbyCount() > 0
+            ? this.renderRankedLobbies()
+            : html`<div
+                class="grid grid-cols-1 sm:grid-cols-[2fr_1fr] gap-4 sm:h-[min(24rem,40vh)]"
+              >
+                <!-- Left col: main card (desktop only) -->
                 ${ffa
-                  ? this.renderLobbyCard(ffa, this.getLobbyTitle(ffa))
+                  ? html`<div class="hidden sm:block">
+                      ${this.renderLobbyCard(ffa, this.getLobbyTitle(ffa))}
+                    </div>`
                   : nothing}
-              </div>
-              <div class="sm:hidden">
-                ${teams
-                  ? this.renderLobbyCard(teams, this.getLobbyTitle(teams))
-                  : nothing}
-              </div>
-            </div>`}
+
+                <!-- Right col: special + teams (desktop only) -->
+                <div class="hidden sm:flex sm:flex-col sm:gap-4">
+                  ${special
+                    ? html`<div class="flex-1 min-h-0">
+                        ${this.renderSpecialLobbyCard(special)}
+                      </div>`
+                    : nothing}
+                  ${teams
+                    ? html`<div class="flex-1 min-h-0">
+                        ${this.renderLobbyCard(
+                          teams,
+                          this.getLobbyTitle(teams),
+                        )}
+                      </div>`
+                    : nothing}
+                </div>
+
+                <!-- Mobile: special, ffa, teams inline -->
+                <div class="sm:hidden">
+                  ${special ? this.renderSpecialLobbyCard(special) : nothing}
+                </div>
+                <div class="sm:hidden">
+                  ${ffa
+                    ? this.renderLobbyCard(ffa, this.getLobbyTitle(ffa))
+                    : nothing}
+                </div>
+                <div class="sm:hidden">
+                  ${teams
+                    ? this.renderLobbyCard(teams, this.getLobbyTitle(teams))
+                    : nothing}
+                </div>
+              </div>`}
 
         <!-- Solo, desktop only. It spans the same width as the three-button
              row below, so both rows line up edge to edge. -->
@@ -510,9 +515,37 @@ export class GameModeSelector extends LitElement {
     `;
   }
 
+  // Ranked lobbies (listed private lobbies) replace the scheduled playlist
+  // cards while any are open. The data is already in the socket snapshot as
+  // `games.hosted`, so this needs no extra request.
+  private renderRankedLobbies() {
+    const lobbies = this.lobbies?.games?.hosted ?? [];
+    return html`
+      <div class="flex flex-col gap-3">
+        <div
+          class="text-center text-[10px] font-bold uppercase tracking-widest text-white/40"
+        >
+          ${translateText("private_lobby.open_lobbies")}
+          <span class="text-white/60">(${lobbies.length})</span>
+        </div>
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          ${lobbies.map((lobby) =>
+            this.renderLobbyCard(
+              lobby,
+              this.getLobbyTitle(lobby) ||
+                translateText("mode_selector.ranked_title"),
+              "h-44",
+            ),
+          )}
+        </div>
+      </div>
+    `;
+  }
+
   private renderLobbyCard(
     lobby: PublicGameInfo,
     titleContent: string | TemplateResult,
+    heightClass?: string,
   ) {
     const timeRemaining = lobby.startsAt
       ? getSecondsUntilServerTimestamp(lobby.startsAt, this.serverTimeOffset)
@@ -521,7 +554,12 @@ export class GameModeSelector extends LitElement {
     let timeDisplay: string;
     let timeDisplayUppercase = false;
     if (timeRemaining === undefined) {
-      timeDisplay = renderDuration(this.defaultLobbyTime);
+      // A hosted lobby has no scheduled start until its host presses Start,
+      // so the playlist's creation-rate countdown would be misleading.
+      timeDisplay =
+        lobby.publicGameType === "hosted"
+          ? translateText("public_lobby.waiting_for_players")
+          : renderDuration(this.defaultLobbyTime);
     } else if (timeRemaining > 0) {
       timeDisplay = renderDuration(timeRemaining);
     } else {
@@ -544,6 +582,7 @@ export class GameModeSelector extends LitElement {
         this.desktopSessionState,
       ),
       viewerTrusted: this.viewerTrusted,
+      heightClass,
       onClick: () => this.validateAndJoin(lobby),
     });
   }
