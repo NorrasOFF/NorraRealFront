@@ -52,13 +52,27 @@ All account records now have an optional `tier` in `accounts.json`
 Mounted on the master by `registerAccountTierRoutes` in
 `src/server/AccountTierRoutes.ts` (local auth only):
 
+- `GET /api/admin/accounts?query=<username|publicId>&limit=25`
 - `GET /api/admin/account-tier?identifier=<publicId|username>`
 - `POST /api/admin/account-tier` with
   `{ "publicId"?: "...", "username"?: "...", "tier": "player"|"host"|"admin" }`
 - Authorization: `x-admin-bot-key: <ADMIN_BOT_API_KEY>` **or** a Bearer token
   whose account currently has tier `admin`.
 - Responses: `{ publicId, username, tier, canHostRanked, canManageTiers }`;
+  the search route returns `{ accounts: [...] }`;
   `401 unauthorized`, `403 admin_required`, `404 account_not_found`.
+
+### In-game admin panel
+
+`AccountTierModal.ts` (`<account-tier-modal>`, router `account-tiers`) is a
+nav-profile-menu item shown only when `/users/@me` returns
+`canManageAccountTiers: true` (local auth sets it for tier `admin`). It searches
+accounts (username substring / publicId prefix, empty query = first accounts
+alphabetically) and has Player / Host / Admin buttons per row. It uses the same
+admin endpoints; the server re-checks admin on every request, so opening the
+modal by URL without the tier only shows "Only admin accounts can manage
+tiers." Client API helpers live in `src/client/Api.ts`
+(`searchAccountTiers`, `updateAccountTier`).
 
 Examples:
 
@@ -99,8 +113,8 @@ curl.exe http://localhost:3000/api/admin/account-tier?identifier=Alice `
 - `npx tsc --noEmit` — clean.
 - `npm run lint` — clean.
 - Prettier on all changed files — clean.
-- `npx vitest run tests/server/AccountTiers.test.ts tests/server/LocalAuth.test.ts tests/server/LocalAuthRoutes.test.ts tests/GameModeSelectorGatingWiring.test.ts tests/EnJsonSorted.test.ts`
-  — 36 passed.
+- `npx vitest run tests/server/AccountTiers.test.ts tests/server/LocalAuth.test.ts tests/server/LocalAuthRoutes.test.ts tests/GameModeSelectorGatingWiring.test.ts tests/EnJsonSorted.test.ts tests/client/AccountTierModal.test.ts`
+  — 37 passed.
 - `npx vitest run tests/server` — **689 passed, 3 failed**, all verified
   pre-existing on the clean tip by stashing this work:
   - `GameServerWire.test.ts` golden `numTurns` snapshot drift.
@@ -114,11 +128,10 @@ curl.exe http://localhost:3000/api/admin/account-tier?identifier=Alice `
 
 ## 4. Open items
 
-- **Deploy**: the code was pushed but not deployed. The Fly secret
-  `OWNER_USERNAME=Remus` is already set, so the next deploy makes Remus
-  `admin` (host + tier management) and every other account `player`.
-- **No tier UI**: grants are HTTP/curl only. An in-game admin panel was not
-  built.
+- **Deploy**: the tier backend commit is deployed, but the in-game admin panel
+  commit must be redeployed for the nav item to appear. The Fly secret
+  `OWNER_USERNAME=Remus` is already set; Remus is `admin` (host + tier
+  management) and every other account is `player`.
 - **Grants are cluster-local**: tiers live in `accounts.json`, which is a
   single-volume file suitable for this Fly deployment. Multi-machine
   deployments need shared storage.

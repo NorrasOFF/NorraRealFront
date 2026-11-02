@@ -1335,6 +1335,96 @@ export async function fetchGameSeats(gameID: string): Promise<ResumableSeat[]> {
   }
 }
 
+export type AccountTier = "player" | "host" | "admin";
+
+export type AccountTierInfo = {
+  publicId: string;
+  username: string;
+  tier: AccountTier;
+  canHostRanked: boolean;
+  canManageTiers: boolean;
+};
+
+function isAccountTierInfo(value: unknown): value is AccountTierInfo {
+  if (typeof value !== "object" || value === null) return false;
+  const v = value as Record<string, unknown>;
+  return (
+    typeof v.publicId === "string" &&
+    typeof v.username === "string" &&
+    (v.tier === "player" || v.tier === "host" || v.tier === "admin") &&
+    typeof v.canHostRanked === "boolean" &&
+    typeof v.canManageTiers === "boolean"
+  );
+}
+
+// GET /api/admin/accounts on the master. Admin-tier only. An empty query
+// lists the first accounts alphabetically; otherwise matches username
+// substrings and publicId prefixes.
+export async function searchAccountTiers(
+  query: string,
+): Promise<AccountTierInfo[] | false> {
+  try {
+    const token = await getPlayToken();
+    const url = new URL(`${getApiBase()}/admin/accounts`);
+    if (query.trim().length > 0) {
+      url.searchParams.set("query", query.trim());
+    }
+    const response = await fetch(url.toString(), {
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+    });
+    if (!response.ok) {
+      console.warn(
+        "searchAccountTiers: request failed",
+        response.status,
+        response.statusText,
+      );
+      return false;
+    }
+    const body = await response.json().catch(() => null);
+    if (!Array.isArray(body?.accounts)) return [];
+    return body.accounts.filter(isAccountTierInfo);
+  } catch (e) {
+    console.error("searchAccountTiers: request failed", e);
+    return false;
+  }
+}
+
+// POST /api/admin/account-tier on the master. Admin-tier only. The server
+// returns the account's effective tier after the write.
+export async function updateAccountTier(
+  identifier: { publicId?: string; username?: string },
+  tier: AccountTier,
+): Promise<
+  { ok: true; info: AccountTierInfo } | { ok: false; error?: string }
+> {
+  try {
+    const token = await getPlayToken();
+    const response = await fetch(`${getApiBase()}/admin/account-tier`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ ...identifier, tier }),
+    });
+    const body = await response.json().catch(() => null);
+    if (!response.ok) {
+      return { ok: false, error: body?.error };
+    }
+    if (!isAccountTierInfo(body)) {
+      console.warn("updateAccountTier: unexpected response shape");
+      return { ok: false };
+    }
+    return { ok: true, info: body };
+  } catch (e) {
+    console.error("updateAccountTier: request failed", e);
+    return { ok: false };
+  }
+}
+
 export function getApiBase() {
   if (ClientEnv.localAuth()) {
     const base = ClientEnv.localAuthApiBase();

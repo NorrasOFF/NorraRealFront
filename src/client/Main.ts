@@ -18,6 +18,7 @@ import { GameEnv } from "../core/configuration/Config";
 import { UserSettings } from "../core/game/UserSettings";
 import "./AccountModal";
 import "./AccountSettingsModal";
+import "./AccountTierModal";
 import { adGatekeeper } from "./AdGatekeeper";
 import { loadAdmiral, onAdmiralMeasured } from "./Admiral";
 import { getUserMe, invalidateUserMe } from "./Api";
@@ -291,6 +292,7 @@ class Client {
     });
     // Profile-menu modals: popup style, so no pageId.
     modalRouter.register("account-settings", { tag: "account-settings-modal" });
+    modalRouter.register("account-tiers", { tag: "account-tier-modal" });
     modalRouter.register("change-username", { tag: "change-username-modal" });
     modalRouter.register("subscription", { tag: "subscription-modal" });
     modalRouter.register("stats", {

@@ -86,6 +86,18 @@ function deny(
 export function registerAccountTierRoutes(app: Express): void {
   if (!isLocalAuthEnabled()) return;
 
+  app.get("/api/admin/accounts", async (req, res) => {
+    const authorization = await authorize(req);
+    if (deny(res, authorization)) return;
+
+    const query = typeof req.query.query === "string" ? req.query.query : "";
+    const rawLimit =
+      typeof req.query.limit === "string" ? Number(req.query.limit) : 25;
+    const limit = Number.isFinite(rawLimit) ? rawLimit : 25;
+    const accounts = await getLocalAuth().searchAccounts(query, limit);
+    res.json({ accounts });
+  });
+
   app.get("/api/admin/account-tier", async (req, res) => {
     const authorization = await authorize(req);
     if (deny(res, authorization)) return;
