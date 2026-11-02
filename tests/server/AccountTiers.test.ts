@@ -265,6 +265,52 @@ describe("account tier routes", () => {
     expect(idBody.accounts.map((a) => a.publicId)).toContain(bob.publicId);
   });
 
+  test("resets a password and invalidates the old one", async () => {
+    const bob = await register("Bob");
+
+    const reset = await post(
+      "/api/admin/account-password",
+      { username: "Bob", password: "brand new password" },
+      { "x-admin-bot-key": ADMIN_KEY },
+    );
+    expect(reset.status).toBe(200);
+    expect(await reset.json()).toMatchObject({
+      publicId: bob.publicId,
+      username: "Bob",
+    });
+
+    const oldLogin = await post("/api/auth/login", {
+      username: "Bob",
+      password: "correct horse",
+    });
+    expect(oldLogin.status).toBe(401);
+
+    const newLogin = await post("/api/auth/login", {
+      username: "Bob",
+      password: "brand new password",
+    });
+    expect(newLogin.status).toBe(200);
+  });
+
+  test("rejects a short or unauthorized password reset", async () => {
+    const bob = await register("Bob");
+
+    const short = await post(
+      "/api/admin/account-password",
+      { publicId: bob.publicId, password: "short" },
+      { "x-admin-bot-key": ADMIN_KEY },
+    );
+    expect(short.status).toBe(400);
+    expect(await short.json()).toEqual({ error: "invalid_password" });
+
+    const forbidden = await post(
+      "/api/admin/account-password",
+      { publicId: bob.publicId, password: "brand new password" },
+      { Authorization: `Bearer ${bob.jwt}` },
+    );
+    expect(forbidden.status).toBe(403);
+  });
+
   test("reports an unknown account", async () => {
     const response = await post(
       "/api/admin/account-tier",

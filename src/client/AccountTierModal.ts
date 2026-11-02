@@ -1,9 +1,10 @@
-import { html, TemplateResult } from "lit";
+import { html, nothing, TemplateResult } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { UserMeResponse } from "../core/ApiSchemas";
 import {
   AccountTier,
   AccountTierInfo,
+  resetAccountPassword,
   searchAccountTiers,
   updateAccountTier,
 } from "./Api";
@@ -26,6 +27,9 @@ export class AccountTierModal extends ProfileMenuModal {
   @state() private loading = false;
   @state() private loadFailed = false;
   @state() private updatingPublicId: string | null = null;
+  @state() private resetPublicId: string | null = null;
+  @state() private resetPassword = "";
+  @state() private resetting = false;
 
   private readonly tiers: AccountTier[] = ["player", "host", "admin"];
   private readonly tierLabelKeys = {
@@ -58,6 +62,92 @@ export class AccountTierModal extends ProfileMenuModal {
     event.preventDefault();
     void this.search(this.query);
   };
+
+  private startReset(account: AccountTierInfo): void {
+    this.resetPublicId = account.publicId;
+    this.resetPassword = "";
+  }
+
+  private cancelReset(): void {
+    this.resetPublicId = null;
+    this.resetPassword = "";
+  }
+
+  private async submitReset(
+    event: Event,
+    account: AccountTierInfo,
+  ): Promise<void> {
+    event.preventDefault();
+    if (this.resetting) return;
+    if (this.resetPassword.length < 8) {
+      showToast(
+        translateText("account_tier_modal.password_too_short"),
+        "red",
+        3000,
+      );
+      return;
+    }
+    this.resetting = true;
+    const result = await resetAccountPassword(
+      { publicId: account.publicId },
+      this.resetPassword,
+    );
+    this.resetting = false;
+    if (!result.ok) {
+      showToast(
+        result.error === "invalid_password"
+          ? translateText("account_tier_modal.password_too_short")
+          : translateText("account_tier_modal.reset_failed"),
+        "red",
+        3000,
+      );
+      return;
+    }
+    this.cancelReset();
+    showToast(
+      translateText("account_tier_modal.reset_success", {
+        username: result.info.username,
+      }),
+      "green",
+      4000,
+    );
+  }
+
+  private renderResetForm(account: AccountTierInfo): TemplateResult {
+    return html`
+      <form
+        class="flex flex-wrap items-center gap-2 mt-3 pt-3 border-t border-white/10"
+        @submit=${(event: Event) => this.submitReset(event, account)}
+      >
+        <input
+          type="password"
+          .value=${this.resetPassword}
+          @input=${(event: Event) => {
+            this.resetPassword = (event.target as HTMLInputElement).value;
+          }}
+          placeholder=${translateText(
+            "account_tier_modal.new_password_placeholder",
+          )}
+          autocomplete="new-password"
+          class="flex-1 min-w-40 rounded-lg border border-white/15 bg-white/5 px-3 py-1.5 text-sm text-white placeholder:text-white/40 focus:outline-none focus:border-malibu-blue"
+        />
+        <button
+          type="submit"
+          ?disabled=${this.resetting}
+          class="px-3 py-1.5 rounded-lg bg-red-500/80 text-white text-xs font-bold uppercase tracking-wide hover:bg-red-500 transition-colors disabled:opacity-40"
+        >
+          ${translateText("account_tier_modal.reset_save")}
+        </button>
+        <button
+          type="button"
+          @click=${this.cancelReset}
+          class="px-3 py-1.5 rounded-lg border border-white/15 text-white/70 text-xs font-bold uppercase tracking-wide hover:bg-white/10 transition-colors"
+        >
+          ${translateText("common.cancel")}
+        </button>
+      </form>
+    `;
+  }
 
   private async changeTier(
     account: AccountTierInfo,
@@ -159,21 +249,36 @@ export class AccountTierModal extends ProfileMenuModal {
                     ${this.accounts.map(
                       (account) => html`
                         <div
-                          class="flex flex-wrap items-center gap-3 rounded-xl border border-white/10 bg-white/5 p-3"
+                          class="rounded-xl border border-white/10 bg-white/5 p-3"
                         >
-                          <div class="flex flex-col min-w-0 flex-1">
-                            <span class="text-sm font-bold text-white truncate"
-                              >${account.username}</span
+                          <div class="flex flex-wrap items-center gap-3">
+                            <div class="flex flex-col min-w-0 flex-1">
+                              <span
+                                class="text-sm font-bold text-white truncate"
+                                >${account.username}</span
+                              >
+                              <span class="text-[10px] text-white/40 truncate"
+                                >${account.publicId}</span
+                              >
+                            </div>
+                            <div class="flex items-center gap-1.5">
+                              ${this.tiers.map((tier) =>
+                                this.renderTierButton(account, tier),
+                              )}
+                            </div>
+                            <button
+                              type="button"
+                              @click=${() => this.startReset(account)}
+                              class="px-2.5 py-1 rounded-lg text-[11px] font-bold uppercase tracking-wide border border-red-400/40 bg-red-500/10 text-red-200 hover:bg-red-500/20 transition-colors"
                             >
-                            <span class="text-[10px] text-white/40 truncate"
-                              >${account.publicId}</span
-                            >
+                              ${translateText(
+                                "account_tier_modal.reset_password",
+                              )}
+                            </button>
                           </div>
-                          <div class="flex items-center gap-1.5">
-                            ${this.tiers.map((tier) =>
-                              this.renderTierButton(account, tier),
-                            )}
-                          </div>
+                          ${this.resetPublicId === account.publicId
+                            ? this.renderResetForm(account)
+                            : nothing}
                         </div>
                       `,
                     )}

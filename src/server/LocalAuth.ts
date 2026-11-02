@@ -466,6 +466,25 @@ export class LocalAuthStore {
       .map((account) => this.tierInfo(account));
   }
 
+  // Admin password reset. No old password is required (the admin is the
+  // authority), every refresh session for the account is cleared so other
+  // devices are logged out, and the new hash is persisted. Access JWTs already
+  // issued stay valid until they expire (<=15 minutes).
+  async resetAccountPassword(
+    identifier: string,
+    newPassword: string,
+  ): Promise<AccountTierInfo | null> {
+    await this.init();
+    await this.ensureAccountsFresh();
+    validatePassword(newPassword);
+    const account = this.findByIdentifier(identifier);
+    if (!account) return null;
+    account.passwordHash = await hashPassword(newPassword);
+    account.sessions = [];
+    await this.persist();
+    return this.tierInfo(account);
+  }
+
   // Master-only write path: workers never call this, so accounts.json keeps a
   // single writer. Returns the effective tier (an owner stays admin even if a
   // stored value says otherwise).

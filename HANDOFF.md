@@ -56,6 +56,10 @@ Mounted on the master by `registerAccountTierRoutes` in
 - `GET /api/admin/account-tier?identifier=<publicId|username>`
 - `POST /api/admin/account-tier` with
   `{ "publicId"?: "...", "username"?: "...", "tier": "player"|"host"|"admin" }`
+- `POST /api/admin/account-password` with
+  `{ "publicId"?: "...", "username"?: "...", "password": "..." }` — resets the
+  password, clears every refresh session for that account, and never returns or
+  logs the password. Existing access JWTs remain valid for up to 15 minutes.
 - Authorization: `x-admin-bot-key: <ADMIN_BOT_API_KEY>` **or** a Bearer token
   whose account currently has tier `admin`.
 - Responses: `{ publicId, username, tier, canHostRanked, canManageTiers }`;
@@ -68,11 +72,12 @@ Mounted on the master by `registerAccountTierRoutes` in
 nav-profile-menu item shown only when `/users/@me` returns
 `canManageAccountTiers: true` (local auth sets it for tier `admin`). It searches
 accounts (username substring / publicId prefix, empty query = first accounts
-alphabetically) and has Player / Host / Admin buttons per row. It uses the same
-admin endpoints; the server re-checks admin on every request, so opening the
-modal by URL without the tier only shows "Only admin accounts can manage
-tiers." Client API helpers live in `src/client/Api.ts`
-(`searchAccountTiers`, `updateAccountTier`).
+alphabetically), has Player / Host / Admin buttons per row, and a **Reset
+password** row form (admin types the new password; minimum 8 characters). It
+uses the same admin endpoints; the server re-checks admin on every request, so
+opening the modal by URL without the tier only shows "Only admin accounts can
+manage tiers." Client API helpers live in `src/client/Api.ts`
+(`searchAccountTiers`, `updateAccountTier`, `resetAccountPassword`).
 
 Examples:
 
@@ -114,7 +119,7 @@ curl.exe http://localhost:3000/api/admin/account-tier?identifier=Alice `
 - `npm run lint` — clean.
 - Prettier on all changed files — clean.
 - `npx vitest run tests/server/AccountTiers.test.ts tests/server/LocalAuth.test.ts tests/server/LocalAuthRoutes.test.ts tests/GameModeSelectorGatingWiring.test.ts tests/EnJsonSorted.test.ts tests/client/AccountTierModal.test.ts`
-  — 37 passed.
+  — 40 passed.
 - `npx vitest run tests/server` — **689 passed, 3 failed**, all verified
   pre-existing on the clean tip by stashing this work:
   - `GameServerWire.test.ts` golden `numTurns` snapshot drift.
@@ -132,6 +137,9 @@ curl.exe http://localhost:3000/api/admin/account-tier?identifier=Alice `
   commit must be redeployed for the nav item to appear. The Fly secret
   `OWNER_USERNAME=Remus` is already set; Remus is `admin` (host + tier
   management) and every other account is `player`.
+- **Password reset is admin-only**: there is no self-service/email reset and no
+  in-game change-password flow. A reset logs out the target's refresh sessions,
+  but an access JWT already in flight can live for up to 15 minutes.
 - **Grants are cluster-local**: tiers live in `accounts.json`, which is a
   single-volume file suitable for this Fly deployment. Multi-machine
   deployments need shared storage.

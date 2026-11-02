@@ -4,6 +4,7 @@ import type { UserMeResponse } from "../../src/core/ApiSchemas";
 vi.mock("../../src/client/Api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../src/client/Api")>()),
   getUserMe: vi.fn(),
+  resetAccountPassword: vi.fn(),
   searchAccountTiers: vi.fn(),
   updateAccountTier: vi.fn(),
 }));
@@ -11,6 +12,7 @@ vi.mock("../../src/client/Api", async (importOriginal) => ({
 import { AccountTierModal } from "../../src/client/AccountTierModal";
 import {
   getUserMe,
+  resetAccountPassword,
   searchAccountTiers,
   updateAccountTier,
 } from "../../src/client/Api";
@@ -54,6 +56,10 @@ beforeEach(() => {
       canHostRanked: true,
     },
   });
+  vi.mocked(resetAccountPassword).mockResolvedValue({
+    ok: true,
+    info: bob,
+  });
 });
 
 afterEach(() => {
@@ -80,6 +86,39 @@ describe("account tier modal", () => {
     );
     await vi.waitFor(() =>
       expect(modal.textContent).toContain("account_tier_modal.tier_host"),
+    );
+  });
+
+  it("resets a password from the row form", async () => {
+    const modal = await mount();
+    await vi.waitFor(() => expect(modal.textContent).toContain("Bob"));
+
+    const resetButton = Array.from(modal.querySelectorAll("button")).find(
+      (button) =>
+        button.textContent?.trim() === "account_tier_modal.reset_password",
+    );
+    expect(resetButton).toBeDefined();
+    resetButton!.click();
+    await modal.updateComplete;
+
+    const input = modal.querySelector<HTMLInputElement>(
+      'input[type="password"]',
+    );
+    expect(input).not.toBeNull();
+    input!.value = "brand new password";
+    input!.dispatchEvent(new Event("input"));
+    const form = input!.closest("form");
+    expect(form).not.toBeNull();
+    form!.dispatchEvent(new Event("submit", { cancelable: true }));
+
+    await vi.waitFor(() =>
+      expect(resetAccountPassword).toHaveBeenCalledWith(
+        { publicId: bob.publicId },
+        "brand new password",
+      ),
+    );
+    await vi.waitFor(() =>
+      expect(modal.querySelector('input[type="password"]')).toBeNull(),
     );
   });
 
