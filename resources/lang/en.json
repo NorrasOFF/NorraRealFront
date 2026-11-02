@@ -1079,7 +1079,6 @@
   },
   "leaderboard_modal": {
     "clan": "Clan",
-    "clans_tab": "Clans",
     "elo": "ELO",
     "error": "Error loading leaderboard",
     "games": "Games",
@@ -1104,7 +1103,6 @@
     "tribes_reach": "Player Reach",
     "tribes_reach_tooltip": "The total number of players in the games this name appeared in.",
     "tribes_reach_value_tooltip": "Appeared in games with {count} players",
-    "tribes_tab": "Tribes",
     "tribes_window": "Rolling {days}-day window ({start} – {end})",
     "try_again": "Try Again",
     "win_loss_ratio": "Win/Loss",

@@ -134,9 +134,9 @@ describe("AccountModal — rendering", () => {
     // No Google-link CTA either — Steam is primary in v1, no linking UI.
     expect(text).not.toContain("account_modal.link_google");
 
-    // Currency IS rendered for the Steam branch of renderLoggedInAs(); logging
-    // out moved to the nav profile menu, so no log-out control here.
-    expect(modal.querySelector("currency-display")).toBeTruthy();
+    // Currency balances (plutonium/caps) are not shown in the account tab.
+    // Logging out moved to the nav profile menu, so no log-out control here.
+    expect(modal.querySelector("currency-display")).toBeNull();
     expect(text).not.toContain("nav_account_menu.log_out");
   });
 
@@ -169,7 +169,7 @@ describe("AccountModal — rendering", () => {
     expect(text).toContain("account_modal.link_google");
 
     // Still a logged-in view, not the login-options screen.
-    expect(modal.querySelector("currency-display")).toBeTruthy();
+    expect(modal.querySelector("currency-display")).toBeNull();
     // Logging out lives in the nav profile menu now.
     expect(text).not.toContain("nav_account_menu.log_out");
   });

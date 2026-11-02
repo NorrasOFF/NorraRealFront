@@ -136,19 +136,6 @@ import { LeaderboardModal } from "../../src/client/LeaderboardModal";
 
 describe("LeaderboardModal", () => {
   let modal: LeaderboardModal;
-  const awaitChildUpdate = async (selector: string) => {
-    const el = modal.querySelector(selector) as {
-      updateComplete?: Promise<unknown>;
-    } | null;
-    if (el?.updateComplete) {
-      await el.updateComplete;
-    }
-  };
-  const getClanTable = () =>
-    modal.querySelector("leaderboard-clan-table") as {
-      loadClanLeaderboard: () => Promise<void>;
-      updateComplete: Promise<unknown>;
-    } | null;
   const getPlayerList = () =>
     modal.querySelector("leaderboard-player-list") as {
       loadPlayerLeaderboard: (reset?: boolean) => Promise<void>;
@@ -172,84 +159,6 @@ describe("LeaderboardModal", () => {
     document.body.removeChild(modal);
     vi.unstubAllGlobals();
     vi.clearAllMocks();
-  });
-
-  describe("Tooltip Implementation - Issue #2508", () => {
-    it("should render Win Score and Loss Score columns with title attributes", async () => {
-      // Mock fetch to return sample clan leaderboard data
-      (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          start: "2025-01-01T00:00:00Z",
-          end: "2025-01-07T23:59:59Z",
-          clans: [
-            {
-              clanTag: "[TEST]",
-              games: 10,
-              wins: 8,
-              losses: 2,
-              playerSessions: 25,
-              weightedWins: 8.5,
-              weightedLosses: 1.5,
-              weightedWLRatio: 5.67,
-            },
-            {
-              clanTag: "[DEMO]",
-              games: 8,
-              wins: 6,
-              losses: 2,
-              playerSessions: 20,
-              weightedWins: 6.0,
-              weightedLosses: 2.0,
-              weightedWLRatio: 3.0,
-            },
-          ],
-        }),
-      });
-
-      (modal as unknown as { activeTab: string }).activeTab = "clans";
-      const clanTable = getClanTable();
-      expect(clanTable).toBeTruthy();
-      await clanTable!.loadClanLeaderboard();
-      await clanTable!.updateComplete;
-
-      const allHeaders = modal.querySelectorAll("th");
-      let winScoreHeader: Element | null = null;
-      let lossScoreHeader: Element | null = null;
-
-      // Find the headers by their text content and title attribute
-      allHeaders.forEach((th) => {
-        const title = th.getAttribute("title");
-        if (title?.includes("Weighted wins")) {
-          winScoreHeader = th;
-        } else if (title?.includes("Weighted losses")) {
-          lossScoreHeader = th;
-        }
-      });
-
-      // Assert that headers exist with correct tooltip text
-      expect(winScoreHeader).toBeTruthy();
-      expect(lossScoreHeader).toBeTruthy();
-
-      expect(winScoreHeader!.getAttribute("title")).toBe(
-        "Weighted wins based on clan participation and match difficulty",
-      );
-      expect(lossScoreHeader!.getAttribute("title")).toBe(
-        "Weighted losses based on clan participation and match difficulty",
-      );
-    });
-
-    it("should use translateText for tooltip internationalization", async () => {
-      // Verify translation keys are correct
-      const { translateText } = await import("../../src/client/Utils");
-
-      expect(translateText("leaderboard_modal.win_score_tooltip")).toBe(
-        "Weighted wins based on clan participation and match difficulty",
-      );
-      expect(translateText("leaderboard_modal.loss_score_tooltip")).toBe(
-        "Weighted losses based on clan participation and match difficulty",
-      );
-    });
   });
 
   describe("Player Data Mapping", () => {
@@ -500,7 +409,7 @@ describe("LeaderboardModal", () => {
       expect(modal.querySelector("leaderboard-player-list table")).toBeNull();
     });
 
-    it("has one player tab", async () => {
+    it("has one player tab and no clans or tribes tab", async () => {
       modal.inline = true;
       await modal.updateComplete;
       const oModal = modal.querySelector("o-modal");
@@ -513,6 +422,16 @@ describe("LeaderboardModal", () => {
       expect(
         oModal!.shadowRoot!.querySelector(
           'button[role="tab"][data-key="players2v2"]',
+        ),
+      ).toBeNull();
+      expect(
+        oModal!.shadowRoot!.querySelector(
+          'button[role="tab"][data-key="clans"]',
+        ),
+      ).toBeNull();
+      expect(
+        oModal!.shadowRoot!.querySelector(
+          'button[role="tab"][data-key="tribes"]',
         ),
       ).toBeNull();
     });
@@ -552,78 +471,6 @@ describe("LeaderboardModal", () => {
         false,
       );
       expect(mockModalEl.close).toHaveBeenCalled();
-    });
-  });
-
-  describe("Modal Interaction", () => {
-    it("should switch to clans tab and request clan leaderboard data", async () => {
-      (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          start: "2025-01-01T00:00:00Z",
-          end: "2025-01-07T23:59:59Z",
-          clans: [],
-        }),
-      });
-
-      modal.inline = true;
-      await modal.updateComplete;
-      const oModal = modal.querySelector("o-modal");
-      await (oModal as unknown as { updateComplete: Promise<unknown> })
-        .updateComplete;
-      const tab = oModal!.shadowRoot!.querySelector(
-        'button[role="tab"][data-key="clans"]',
-      );
-      expect(tab).toBeTruthy();
-
-      tab!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-      expect((modal as unknown as { activeTab: string }).activeTab).toBe(
-        "clans",
-      );
-      expect(global.fetch).toHaveBeenCalledWith(
-        "http://localhost:3000/public/clans/leaderboard",
-        { headers: { Accept: "application/json" } },
-      );
-      await Promise.resolve();
-      await modal.updateComplete;
-      await awaitChildUpdate("leaderboard-clan-table");
-    });
-
-    it("should render a no data state for empty clan leaderboard", async () => {
-      (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          start: "2025-01-01T00:00:00Z",
-          end: "2025-01-07T23:59:59Z",
-          clans: [],
-        }),
-      });
-
-      (modal as unknown as { activeTab: string }).activeTab = "clans";
-      const clanTable = getClanTable();
-      expect(clanTable).toBeTruthy();
-      await clanTable!.loadClanLeaderboard();
-      await clanTable!.updateComplete;
-
-      expect(modal.textContent).toContain("No data yet");
-      expect(modal.textContent).toContain("No stats");
-    });
-
-    it("should render an error state when clan leaderboard fails", async () => {
-      (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
-        ok: false,
-        status: 500,
-        json: async () => ({}),
-      });
-
-      (modal as unknown as { activeTab: string }).activeTab = "clans";
-      const clanTable = getClanTable();
-      expect(clanTable).toBeTruthy();
-      await clanTable!.loadClanLeaderboard();
-      await clanTable!.updateComplete;
-
-      expect(modal.textContent).toContain("Something went wrong");
-      expect(modal.textContent).toContain("Try Again");
     });
   });
 });
