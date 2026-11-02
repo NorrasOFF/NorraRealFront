@@ -110,6 +110,20 @@
   "account_settings_modal": {
     "title": "Account Settings"
   },
+  "account_tier_modal": {
+    "admin_only": "Only admin accounts can manage tiers.",
+    "load_failed": "Could not load accounts. Try again.",
+    "loading": "Loading accounts...",
+    "no_results": "No matching accounts.",
+    "search": "Search",
+    "search_placeholder": "Username or public ID",
+    "tier_admin": "Admin",
+    "tier_host": "Host",
+    "tier_player": "Player",
+    "title": "Account Tiers",
+    "update_failed": "Could not update that account's tier.",
+    "update_success": "{username} is now {tier}."
+  },
   "ban_notice": {
     "appeal": "If you believe this is a mistake, contact us on Discord.",
     "category": {
@@ -1344,6 +1358,7 @@
   },
   "nav_account_menu": {
     "account_settings": "Account settings",
+    "account_tiers": "Account tiers",
     "change_subscription": "Change subscription",
     "change_username": "Change username",
     "copy_profile_url": "Copy profile URL",

@@ -66,11 +66,13 @@ describe("account tiers", () => {
     expect(me.ok).toBe(true);
     if (!me.ok) return;
     expect(me.response.player.canCreatePublicLobbies).toBe(true);
+    expect(me.response.player.canManageAccountTiers).toBe(true);
 
     const aliceMe = await store.userMeFromToken(alice.jwt);
     expect(aliceMe.ok).toBe(true);
     if (!aliceMe.ok) return;
     expect(aliceMe.response.player.canCreatePublicLobbies).toBe(false);
+    expect(aliceMe.response.player.canManageAccountTiers).toBe(false);
 
     // An explicit stored player value cannot demote an owner.
     await store.setAccountTier(remus.account.id, "player");
@@ -233,6 +235,34 @@ describe("account tier routes", () => {
       { Authorization: `Bearer ${alice.jwt}` },
     );
     expect(after.status).toBe(403);
+  });
+
+  test("searches accounts for the admin panel", async () => {
+    const bob = await register("Bob");
+    await register("Alice");
+
+    const denied = await fetch(`${base}/api/admin/accounts`, {
+      headers: { Authorization: `Bearer ${bob.jwt}` },
+    });
+    expect(denied.status).toBe(403);
+
+    const byName = await fetch(`${base}/api/admin/accounts?query=bo`, {
+      headers: { "x-admin-bot-key": ADMIN_KEY },
+    });
+    expect(byName.status).toBe(200);
+    const nameBody = (await byName.json()) as {
+      accounts: Array<{ publicId: string; username: string; tier: string }>;
+    };
+    expect(nameBody.accounts.map((a) => a.username)).toEqual(["Bob"]);
+
+    const byId = await fetch(
+      `${base}/api/admin/accounts?query=${bob.publicId.slice(0, 8)}`,
+      { headers: { "x-admin-bot-key": ADMIN_KEY } },
+    );
+    const idBody = (await byId.json()) as {
+      accounts: Array<{ publicId: string }>;
+    };
+    expect(idBody.accounts.map((a) => a.publicId)).toContain(bob.publicId);
   });
 
   test("reports an unknown account", async () => {

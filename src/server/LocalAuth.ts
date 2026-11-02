@@ -446,6 +446,26 @@ export class LocalAuthStore {
     return account ? this.tierInfo(account) : null;
   }
 
+  // Admin-panel search. Matches username substrings and publicId prefixes;
+  // an empty query lists the first accounts alphabetically. Never returns
+  // password hashes or sessions.
+  async searchAccounts(query: string, limit = 25): Promise<AccountTierInfo[]> {
+    await this.init();
+    await this.ensureAccountsFresh();
+    const needle = normalizeUsername(query);
+    const matches = this.accounts
+      .filter(
+        (account) =>
+          needle.length === 0 ||
+          normalizeUsername(account.username).includes(needle) ||
+          account.id.toLowerCase().startsWith(needle),
+      )
+      .sort((a, b) => a.username.localeCompare(b.username));
+    return matches
+      .slice(0, Math.max(1, Math.min(limit, 100)))
+      .map((account) => this.tierInfo(account));
+  }
+
   // Master-only write path: workers never call this, so accounts.json keeps a
   // single writer. Returns the effective tier (an owner stays admin even if a
   // stored value says otherwise).
@@ -627,6 +647,7 @@ export class LocalAuthStore {
           adfree: true,
           unlimitedRanked: true,
           canCreatePublicLobbies: tierCanHostRanked(tier),
+          canManageAccountTiers: tierCanManageTiers(tier),
           trustTier: "trusted",
           username,
           usernameBase: username,
