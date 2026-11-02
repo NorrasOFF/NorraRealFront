@@ -42,12 +42,19 @@ const SessionRecordSchema = z.object({
   expiresAt: z.number(),
 });
 
+export const AccountTierSchema = z.enum(["player", "host", "admin"]);
+export type AccountTier = z.infer<typeof AccountTierSchema>;
+
+// Ranked hosting is tiered. `player` cannot list a ranked lobby; `host` can;
+// `admin` can also grant/revoke tiers. Missing on disk means `player`, so old
+// accounts files stay valid.
 const AccountRecordSchema = z.object({
   id: z.string(),
   username: z.string(),
   passwordHash: z.string(),
   createdAt: z.number(),
   sessions: z.array(SessionRecordSchema),
+  tier: AccountTierSchema.optional(),
 });
 
 const AccountsFileSchema = z.object({
@@ -62,6 +69,35 @@ const KeyFileSchema = z.object({
 
 type AccountRecord = z.infer<typeof AccountRecordSchema>;
 type SigningKey = Awaited<ReturnType<typeof importJWK>>;
+
+export function tierCanHostRanked(tier: AccountTier): boolean {
+  return tier === "host" || tier === "admin";
+}
+
+export function tierCanManageTiers(tier: AccountTier): boolean {
+  return tier === "admin";
+}
+
+// Bootstrap owner accounts from an env secret instead of committing a
+// username. Both singular and plural are accepted so a deployment can promote
+// one owner or a short list. The match is case-insensitive like login.
+function ownerUsernameSet(): Set<string> {
+  const raw = `${process.env.OWNER_USERNAME ?? ""},${process.env.OWNER_USERNAMES ?? ""}`;
+  return new Set(
+    raw
+      .split(",")
+      .map((name) => normalizeUsername(name))
+      .filter((name) => name.length > 0),
+  );
+}
+
+export type AccountTierInfo = {
+  publicId: string;
+  username: string;
+  tier: AccountTier;
+  canHostRanked: boolean;
+  canManageTiers: boolean;
+};
 
 export type LocalAuthTokens = {
   jwt: string;
@@ -215,6 +251,10 @@ export class LocalAuthStore {
   private loaded = false;
   private loading: Promise<void> | null = null;
   private writeChain: Promise<void> = Promise.resolve();
+  // Mtime of accounts.json as of the last read. Workers only read the file,
+  // and the master is its only writer, so this is how a tier grant made in
+  // the master reaches an already-running worker without a restart.
+  private accountsMtimeMs = 0;
   private privateKey: SigningKey | null = null;
   private publicJwkValue: JWK | null = null;
 
@@ -251,7 +291,14 @@ export class LocalAuthStore {
   }
 
   private async loadAccounts(): Promise<void> {
+    let mtimeMs = 0;
     try {
+      // Capture the mtime BEFORE reading. If another process replaces the
+      // file between these two calls we may read the old contents, but the
+      // stale mtime makes the next ensureAccountsFresh() read again. The
+      // reverse order would store the new mtime next to old contents and
+      // silently miss the update.
+      mtimeMs = (await fs.stat(this.accountsFile)).mtimeMs;
       const raw = await fs.readFile(this.accountsFile, "utf8");
       const parsed = AccountsFileSchema.safeParse(JSON.parse(raw));
       if (!parsed.success) {
@@ -262,7 +309,22 @@ export class LocalAuthStore {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       this.accounts = [];
     }
+    this.accountsMtimeMs = mtimeMs;
     this.pruneSessions();
+  }
+
+  // The master owns writes; worker processes call this before reading so a
+  // tier grant or new account is visible on the next request rather than only
+  // after a restart.
+  private async ensureAccountsFresh(): Promise<void> {
+    let mtimeMs = 0;
+    try {
+      mtimeMs = (await fs.stat(this.accountsFile)).mtimeMs;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    if (mtimeMs === this.accountsMtimeMs) return;
+    await this.loadAccounts();
   }
 
   private async loadOrCreateKey(): Promise<void> {
@@ -322,6 +384,11 @@ export class LocalAuthStore {
     });
     this.writeChain = run.catch(() => undefined);
     await run;
+    try {
+      this.accountsMtimeMs = (await fs.stat(this.accountsFile)).mtimeMs;
+    } catch {
+      // A stat failure only costs an extra reload on the next read.
+    }
   }
 
   private findById(id: string): AccountRecord | undefined {
@@ -333,6 +400,67 @@ export class LocalAuthStore {
     return this.accounts.find(
       (a) => normalizeUsername(a.username) === normalized,
     );
+  }
+
+  private findByIdentifier(identifier: string): AccountRecord | undefined {
+    return this.findById(identifier) ?? this.findByUsername(identifier);
+  }
+
+  private effectiveTier(account: AccountRecord | undefined): AccountTier {
+    if (!account) return "player";
+    if (ownerUsernameSet().has(normalizeUsername(account.username))) {
+      return "admin";
+    }
+    return account.tier ?? "player";
+  }
+
+  private tierInfo(account: AccountRecord): AccountTierInfo {
+    const tier = this.effectiveTier(account);
+    return {
+      publicId: account.id,
+      username: account.username,
+      tier,
+      canHostRanked: tierCanHostRanked(tier),
+      canManageTiers: tierCanManageTiers(tier),
+    };
+  }
+
+  async accountTier(publicId: string): Promise<AccountTier> {
+    await this.init();
+    await this.ensureAccountsFresh();
+    return this.effectiveTier(this.findById(publicId));
+  }
+
+  async canHostRanked(publicId: string): Promise<boolean> {
+    return tierCanHostRanked(await this.accountTier(publicId));
+  }
+
+  async canManageTiers(publicId: string): Promise<boolean> {
+    return tierCanManageTiers(await this.accountTier(publicId));
+  }
+
+  async accountTierInfo(identifier: string): Promise<AccountTierInfo | null> {
+    await this.init();
+    await this.ensureAccountsFresh();
+    const account = this.findByIdentifier(identifier);
+    return account ? this.tierInfo(account) : null;
+  }
+
+  // Master-only write path: workers never call this, so accounts.json keeps a
+  // single writer. Returns the effective tier (an owner stays admin even if a
+  // stored value says otherwise).
+  async setAccountTier(
+    identifier: string,
+    tier: AccountTier,
+  ): Promise<AccountTierInfo | null> {
+    await this.init();
+    await this.ensureAccountsFresh();
+    const account = this.findByIdentifier(identifier);
+    if (!account) return null;
+    if (tier === "player") delete account.tier;
+    else account.tier = tier;
+    await this.persist();
+    return this.tierInfo(account);
   }
 
   private async signJwt(account: AccountRecord): Promise<string> {
@@ -375,6 +503,7 @@ export class LocalAuthStore {
 
   async register(username: string, password: string): Promise<LocalAuthTokens> {
     await this.init();
+    await this.ensureAccountsFresh();
     const displayName = validateUsername(username);
     validatePassword(password);
     if (this.findByUsername(displayName)) {
@@ -397,6 +526,7 @@ export class LocalAuthStore {
 
   async login(username: string, password: string): Promise<LocalAuthTokens> {
     await this.init();
+    await this.ensureAccountsFresh();
     const account = this.findByUsername(username.trim());
     if (!account) {
       throw new LocalAuthError("invalid_credentials", 401);
@@ -409,6 +539,7 @@ export class LocalAuthStore {
 
   async refresh(refreshToken: string): Promise<LocalAuthTokens> {
     await this.init();
+    await this.ensureAccountsFresh();
     const hash = tokenHash(refreshToken);
     const now = Date.now();
     for (const account of this.accounts) {
@@ -424,6 +555,7 @@ export class LocalAuthStore {
 
   async logout(refreshToken: string): Promise<void> {
     await this.init();
+    await this.ensureAccountsFresh();
     const hash = tokenHash(refreshToken);
     let changed = false;
     for (const account of this.accounts) {
@@ -470,7 +602,9 @@ export class LocalAuthStore {
   > {
     const result = await this.verifyToken(token);
     if (!result.ok) return result;
+    await this.ensureAccountsFresh();
     const account = this.findById(result.claims.sub);
+    const tier = this.effectiveTier(account);
     const username = result.claims.username ?? account?.username;
     if (!username) {
       return { ok: false, error: "account not found" };
@@ -492,7 +626,7 @@ export class LocalAuthStore {
           publicId: result.claims.sub,
           adfree: true,
           unlimitedRanked: true,
-          canCreatePublicLobbies: false,
+          canCreatePublicLobbies: tierCanHostRanked(tier),
           trustTier: "trusted",
           username,
           usernameBase: username,

@@ -8,7 +8,6 @@ import {
   showToast,
   translateText,
 } from "../client/Utils";
-import { GameEnv } from "../core/configuration/Config";
 import { EventBus } from "../core/EventBus";
 import { DoomsdayClockSpeed } from "../core/game/DoomsdayClock";
 import {
@@ -107,9 +106,9 @@ export class HostLobbyModal extends BaseModal {
   @state() private lobbyCreatorClientID: string = "";
   @state() private lobbyStartAt: number | null = null;
   @state() private serverTimeOffset: number = 0;
-  // Whether this user may actually make the lobby public (the API's
-  // canCreatePublicLobbies entitlement, or anyone in dev). The toggle itself
-  // is always shown.
+  // Whether this user may actually make the lobby public. Local deployments
+  // derive this from the account tier; the server re-checks it. The toggle
+  // itself is always shown.
   @state() private canListPublicly: boolean = false;
   @state() private publiclyListed: boolean = false;
   @state() private showSubscriptionRequired: boolean = false;
@@ -244,9 +243,9 @@ export class HostLobbyModal extends BaseModal {
     });
   }
 
-  // Private/Public segmented toggle in the header. Shown to everyone;
-  // non-subscribers get a subscription-required dialog instead of a listing
-  // request (the server re-checks the subscription regardless). Listing is
+  // Private/Ranked segmented toggle in the header. Shown to everyone; accounts
+  // without ranked-host capability get an explanation dialog instead of a
+  // listing request (the server re-checks the tier regardless). Listing is
   // one-way (the server rejects unlisting), so the Private segment goes away
   // once the lobby is listed.
   private renderVisibilityToggle() {
@@ -674,19 +673,14 @@ export class HostLobbyModal extends BaseModal {
 
         ${this.showSubscriptionRequired
           ? html`<confirm-dialog
-              .heading=${translateText(
-                "host_modal.subscription_required_title",
-              )}
-              .message=${translateText("host_modal.subscription_required_body")}
+              .heading=${translateText("host_modal.ranked_host_required_title")}
+              .message=${translateText("host_modal.ranked_host_required_body")}
               variant="warning"
               .showClose=${true}
               .buttons=${"confirmOnly"}
-              .confirmText=${translateText("host_modal.view_subscriptions")}
+              .confirmText=${translateText("host_modal.ranked_host_ok")}
               @cancel=${() => (this.showSubscriptionRequired = false)}
-              @confirm=${() => {
-                this.showSubscriptionRequired = false;
-                window.location.href = "/#modal=store&tab=subscriptions";
-              }}
+              @confirm=${() => (this.showSubscriptionRequired = false)}
             ></confirm-dialog>`
           : ""}
       </div>
@@ -701,11 +695,10 @@ export class HostLobbyModal extends BaseModal {
     this.leaveLobbyOnClose = true;
     this.startLobbyUpdates();
     void getUserMe().then((userMe) => {
-      // Dev skips the entitlement gate (matching the server) so the
-      // listing flow is testable locally.
+      // Server-authoritative: local accounts get this from their account
+      // tier, and the listing endpoint re-checks it regardless.
       this.canListPublicly =
-        ClientEnv.env() === GameEnv.Dev ||
-        (userMe !== false && userMe.player.canCreatePublicLobbies);
+        userMe !== false && userMe.player.canCreatePublicLobbies;
     });
 
     // Attach mode: the server already minted this successor lobby with us as
@@ -1360,7 +1353,7 @@ export class HostLobbyModal extends BaseModal {
     this.putGameConfig();
   };
 
-  // Server-authoritative: it re-verifies the subscription and enforces the
+  // Server-authoritative: it re-verifies the account tier and enforces the
   // listing limits, so a failed request reverts the toggle.
   private async handlePublicListingToggle(checked: boolean) {
     this.listingRequestInFlight = true;
@@ -1377,7 +1370,9 @@ export class HostLobbyModal extends BaseModal {
 
   private showListingError(serverError?: string) {
     let key = "private_lobby.listing_failed";
-    if (serverError === "subscription_required") {
+    if (serverError === "host_tier_required") {
+      key = "private_lobby.listing_host_tier_required";
+    } else if (serverError === "subscription_required") {
       key = "private_lobby.listing_requires_subscription";
     } else if (serverError === "sign_in_required") {
       key = "private_lobby.listing_sign_in_required";
