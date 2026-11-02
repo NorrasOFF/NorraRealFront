@@ -668,6 +668,9 @@ export class AccountModal extends BaseModal {
               )}
               class="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white placeholder-white/20 focus:outline-none focus:ring-2 focus:ring-malibu-blue/50 focus:border-malibu-blue/50 transition-all font-medium hover:bg-white/10"
             />
+            <p class="text-xs leading-snug text-amber-200/80">
+              ${translateText("account_modal.local_password_warning")}
+            </p>
             <o-button
               variant="primary"
               width="block"

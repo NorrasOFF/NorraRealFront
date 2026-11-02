@@ -46,6 +46,7 @@
     "local_invalid_password": "Password must be 8 to 128 characters.",
     "local_invalid_username": "Username must be 3 to 20 characters and may contain letters, numbers, spaces, _ and -.",
     "local_password_placeholder": "Password",
+    "local_password_warning": "Use a unique password - never reuse one from your email, banking, or other sensitive accounts.",
     "local_rate_limited": "Too many attempts. Please try again later.",
     "local_sign_in_desc": "Sign in to your account or create a new one.",
     "local_username_placeholder": "Username",

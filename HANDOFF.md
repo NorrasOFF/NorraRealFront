@@ -107,6 +107,9 @@ curl.exe http://localhost:3000/api/admin/account-tier?identifier=Alice `
 
 ### Client text
 
+- The local sign-in/create-account password field shows a warning
+  (`account_modal.local_password_warning`) not to reuse an email/banking/
+  sensitive password.
 - New key `private_lobby.listing_host_tier_required`.
 - The host modal's explanation dialog now says ranked hosting is not enabled
   for the account and uses `host_modal.ranked_host_{ok,required_body,required_title}`.
