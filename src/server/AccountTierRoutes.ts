@@ -6,6 +6,7 @@ import {
   AccountTierSchema,
   getLocalAuth,
   isLocalAuthEnabled,
+  LocalAuthError,
 } from "./LocalAuth";
 import { logger } from "./Logger";
 import { ServerEnv } from "./ServerEnv";
@@ -17,6 +18,19 @@ const TierRequestSchema = z
     publicId: z.string().min(1).optional(),
     username: z.string().min(1).optional(),
     tier: AccountTierSchema,
+  })
+  .refine(
+    (value) => value.publicId !== undefined || value.username !== undefined,
+    {
+      message: "publicId or username required",
+    },
+  );
+
+const PasswordResetSchema = z
+  .object({
+    publicId: z.string().min(1).optional(),
+    username: z.string().min(1).optional(),
+    password: z.string(),
   })
   .refine(
     (value) => value.publicId !== undefined || value.username !== undefined,
@@ -146,6 +160,49 @@ export function registerAccountTierRoutes(app: Express): void {
         : `admin:${authorization.publicId}`;
     log.info(
       `account tier ${info.tier} granted to ${info.username} (${info.publicId}) by ${actor}`,
+    );
+    res.json(info);
+  });
+
+  app.post("/api/admin/account-password", async (req, res) => {
+    const authorization = await authorize(req);
+    if (deny(res, authorization)) return;
+
+    const parsed = PasswordResetSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: z.prettifyError(parsed.error) });
+      return;
+    }
+    const identifier = parsed.data.publicId ?? parsed.data.username;
+    if (identifier === undefined) {
+      res.status(400).json({ error: "identifier_required" });
+      return;
+    }
+
+    let info: { username: string; publicId: string } | null;
+    try {
+      info = await getLocalAuth().resetAccountPassword(
+        identifier,
+        parsed.data.password,
+      );
+    } catch (error) {
+      if (error instanceof LocalAuthError) {
+        res.status(error.status).json({ error: error.code });
+        return;
+      }
+      throw error;
+    }
+    if (info === null) {
+      res.status(404).json({ error: "account_not_found" });
+      return;
+    }
+
+    const actor =
+      authorization.type === "admin-bot"
+        ? "admin-bot"
+        : `admin:${authorization.publicId}`;
+    log.info(
+      `password reset for ${info.username} (${info.publicId}) by ${actor}`,
     );
     res.json(info);
   });

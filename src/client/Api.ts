@@ -1425,6 +1425,40 @@ export async function updateAccountTier(
   }
 }
 
+// POST /api/admin/account-password on the master. Admin-tier only. Clears the
+// target's refresh sessions; already-issued access tokens expire within 15
+// minutes.
+export async function resetAccountPassword(
+  identifier: { publicId?: string; username?: string },
+  password: string,
+): Promise<
+  { ok: true; info: AccountTierInfo } | { ok: false; error?: string }
+> {
+  try {
+    const token = await getPlayToken();
+    const response = await fetch(`${getApiBase()}/admin/account-password`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ ...identifier, password }),
+    });
+    const body = await response.json().catch(() => null);
+    if (!response.ok) {
+      return { ok: false, error: body?.error };
+    }
+    if (!isAccountTierInfo(body)) {
+      console.warn("resetAccountPassword: unexpected response shape");
+      return { ok: false };
+    }
+    return { ok: true, info: body };
+  } catch (e) {
+    console.error("resetAccountPassword: request failed", e);
+    return { ok: false };
+  }
+}
+
 export function getApiBase() {
   if (ClientEnv.localAuth()) {
     const base = ClientEnv.localAuthApiBase();
