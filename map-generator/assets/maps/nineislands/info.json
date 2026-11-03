@@ -1,0 +1,54 @@
+{
+  "id": "NineIslands",
+  "name": "Nine Islands",
+  "translation_key": "map.nineislands",
+  "categories": ["featured", "fictional"],
+  "multiplayer_frequency": 4,
+  "nations": [
+    {
+      "coordinates": [400, 400],
+      "flag": "",
+      "name": "Korinthal"
+    },
+    {
+      "coordinates": [1200, 400],
+      "flag": "",
+      "name": "Lunareth"
+    },
+    {
+      "coordinates": [2000, 400],
+      "flag": "",
+      "name": "Sylvoria"
+    },
+    {
+      "coordinates": [400, 1200],
+      "flag": "",
+      "name": "Myrkwind"
+    },
+    {
+      "coordinates": [1200, 1200],
+      "flag": "",
+      "name": "Valedorn"
+    },
+    {
+      "coordinates": [2000, 1200],
+      "flag": "",
+      "name": "Thornwick"
+    },
+    {
+      "coordinates": [400, 2000],
+      "flag": "",
+      "name": "Aurelis"
+    },
+    {
+      "coordinates": [1200, 2000],
+      "flag": "",
+      "name": "Emberfall"
+    },
+    {
+      "coordinates": [2000, 2000],
+      "flag": "",
+      "name": "Nightvale"
+    }
+  ]
+}

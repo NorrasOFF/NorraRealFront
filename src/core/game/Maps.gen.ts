@@ -55,6 +55,7 @@ export enum GameMapType {
   FalklandIslands = "Falkland Islands", // map-generator/assets/maps/falklandislands/info.json
   FaroeIslands = "Faroe Islands", // map-generator/assets/maps/faroeislands/info.json
   FingerLakes = "Finger Lakes", // map-generator/assets/maps/fingerlakes/info.json
+  FiveIslands = "Five Islands", // map-generator/assets/maps/fiveislands/info.json
   FourIslands = "Four Islands", // map-generator/assets/maps/fourislands/info.json
   France = "France", // map-generator/assets/maps/france/info.json
   GatewayToTheAtlantic = "Gateway to the Atlantic", // map-generator/assets/maps/gatewaytotheatlantic/info.json
@@ -96,6 +97,7 @@ export enum GameMapType {
   NewYorkCity = "New York City", // map-generator/assets/maps/newyorkcity/info.json
   NewZealand = "New Zealand", // map-generator/assets/maps/newzealand/info.json
   NileDelta = "Nile Delta", // map-generator/assets/maps/niledelta/info.json
+  NineIslands = "Nine Islands", // map-generator/assets/maps/nineislands/info.json
   NorthAmerica = "North America", // map-generator/assets/maps/northamerica/info.json
   NorthwestPassage = "Northwest Passage", // map-generator/assets/maps/northwestpassage/info.json
   Oceania = "Oceania", // map-generator/assets/maps/oceania/info.json
@@ -110,6 +112,7 @@ export enum GameMapType {
   Russia = "Russia", // map-generator/assets/maps/russia/info.json
   SanFrancisco = "San Francisco", // map-generator/assets/maps/sanfrancisco/info.json
   Scandinavia = "Scandinavia", // map-generator/assets/maps/scandinavia/info.json
+  SevenIslands = "Seven Islands", // map-generator/assets/maps/sevenislands/info.json
   Sierpinski = "Sierpinski", // map-generator/assets/maps/sierpinski/info.json
   SixIslands = "Six Islands", // map-generator/assets/maps/sixislands/info.json
   Sol = "Sol", // map-generator/assets/maps/sol/info.json
@@ -934,6 +937,16 @@ export const maps: readonly MapInfo[] = [
     teamFrequency: -1,
     specialFrequency: -1,
     themes: ["north_america"],
+  },
+  {
+    id: "FiveIslands",
+    type: GameMapType.FiveIslands,
+    translationKey: "map.fiveislands",
+    categories: ["featured", "fictional"],
+    multiplayerFrequency: 4,
+    ffaFrequency: -1,
+    teamFrequency: -1,
+    specialFrequency: -1,
   },
   {
     id: "FourIslands",
@@ -1941,6 +1954,16 @@ export const maps: readonly MapInfo[] = [
     themes: ["africa"],
   },
   {
+    id: "NineIslands",
+    type: GameMapType.NineIslands,
+    translationKey: "map.nineislands",
+    categories: ["featured", "fictional"],
+    multiplayerFrequency: 4,
+    ffaFrequency: -1,
+    teamFrequency: -1,
+    specialFrequency: -1,
+  },
+  {
     id: "NorthAmerica",
     type: GameMapType.NorthAmerica,
     translationKey: "map.northamerica",
@@ -2097,6 +2120,16 @@ export const maps: readonly MapInfo[] = [
     teamFrequency: -1,
     specialFrequency: -1,
     themes: ["europe"],
+  },
+  {
+    id: "SevenIslands",
+    type: GameMapType.SevenIslands,
+    translationKey: "map.sevenislands",
+    categories: ["featured", "fictional"],
+    multiplayerFrequency: 4,
+    ffaFrequency: -1,
+    teamFrequency: -1,
+    specialFrequency: -1,
   },
   {
     id: "Sierpinski",

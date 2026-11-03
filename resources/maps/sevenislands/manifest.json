@@ -1,0 +1,59 @@
+{
+  "categories": ["featured", "fictional"],
+  "id": "SevenIslands",
+  "map": {
+    "height": 1900,
+    "num_land_tiles": 1797833,
+    "width": 3000
+  },
+  "map16x": {
+    "height": 475,
+    "num_land_tiles": 110711,
+    "width": 750
+  },
+  "map4x": {
+    "height": 950,
+    "num_land_tiles": 447232,
+    "width": 1500
+  },
+  "multiplayer_frequency": 4,
+  "name": "Seven Islands",
+  "nations": [
+    {
+      "coordinates": [400, 450],
+      "flag": "",
+      "name": "Korinthal"
+    },
+    {
+      "coordinates": [1133, 450],
+      "flag": "",
+      "name": "Lunareth"
+    },
+    {
+      "coordinates": [1866, 450],
+      "flag": "",
+      "name": "Sylvoria"
+    },
+    {
+      "coordinates": [2600, 450],
+      "flag": "",
+      "name": "Myrkwind"
+    },
+    {
+      "coordinates": [766, 1400],
+      "flag": "",
+      "name": "Valedorn"
+    },
+    {
+      "coordinates": [1500, 1400],
+      "flag": "",
+      "name": "Thornwick"
+    },
+    {
+      "coordinates": [2233, 1400],
+      "flag": "",
+      "name": "Aurelis"
+    }
+  ],
+  "translation_key": "map.sevenislands"
+}

@@ -1,0 +1,34 @@
+{
+  "id": "FiveIslands",
+  "name": "Five Islands",
+  "translation_key": "map.fiveislands",
+  "categories": ["featured", "fictional"],
+  "multiplayer_frequency": 4,
+  "nations": [
+    {
+      "coordinates": [420, 430],
+      "flag": "",
+      "name": "Korinthal"
+    },
+    {
+      "coordinates": [1120, 430],
+      "flag": "",
+      "name": "Lunareth"
+    },
+    {
+      "coordinates": [1820, 430],
+      "flag": "",
+      "name": "Sylvoria"
+    },
+    {
+      "coordinates": [770, 1270],
+      "flag": "",
+      "name": "Myrkwind"
+    },
+    {
+      "coordinates": [1470, 1270],
+      "flag": "",
+      "name": "Valedorn"
+    }
+  ]
+}
