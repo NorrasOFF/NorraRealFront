@@ -1,23 +1,54 @@
 {
+  "categories": ["featured", "islands", "fictional"],
+  "id": "SixIslands",
   "map": {
-    "height": 1084,
-    "num_land_tiles": 194768,
-    "width": 1576
+    "height": 1700,
+    "num_land_tiles": 1540887,
+    "width": 2400
   },
   "map16x": {
-    "height": 271,
-    "num_land_tiles": 11605,
-    "width": 394
+    "height": 425,
+    "num_land_tiles": 94851,
+    "width": 600
   },
   "map4x": {
-    "height": 542,
-    "num_land_tiles": 47938,
-    "width": 788
+    "height": 850,
+    "num_land_tiles": 383293,
+    "width": 1200
   },
+  "multiplayer_frequency": 4,
   "name": "Six Islands",
-  "nations": [],
-  "id": "SixIslands",
-  "translation_key": "map.sixislands",
-  "categories": ["featured", "fictional"],
-  "multiplayer_frequency": 4
+  "nations": [
+    {
+      "coordinates": [400, 430],
+      "flag": "",
+      "name": "Korinthal"
+    },
+    {
+      "coordinates": [1200, 430],
+      "flag": "",
+      "name": "Lunareth"
+    },
+    {
+      "coordinates": [2000, 430],
+      "flag": "",
+      "name": "Sylvoria"
+    },
+    {
+      "coordinates": [400, 1270],
+      "flag": "",
+      "name": "Myrkwind"
+    },
+    {
+      "coordinates": [1200, 1270],
+      "flag": "",
+      "name": "Valedorn"
+    },
+    {
+      "coordinates": [2000, 1270],
+      "flag": "",
+      "name": "Thornwick"
+    }
+  ],
+  "translation_key": "map.sixislands"
 }

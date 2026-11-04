@@ -152,6 +152,7 @@ export type GameMapName = keyof typeof GameMapType;
 export type MapCategory =
   | "featured"
   | "new"
+  | "islands"
   | "world"
   | "continental"
   | "europe"
@@ -171,6 +172,7 @@ export type MapCategory =
 export const mapCategoryOrder: readonly MapCategory[] = [
   "featured",
   "new",
+  "islands",
   "world",
   "continental",
   "europe",
@@ -875,7 +877,7 @@ export const maps: readonly MapInfo[] = [
     id: "EightIslands",
     type: GameMapType.EightIslands,
     translationKey: "map.eightislands",
-    categories: ["featured", "fictional"],
+    categories: ["featured", "islands", "fictional"],
     multiplayerFrequency: 4,
     ffaFrequency: -1,
     teamFrequency: -1,
@@ -942,7 +944,7 @@ export const maps: readonly MapInfo[] = [
     id: "FiveIslands",
     type: GameMapType.FiveIslands,
     translationKey: "map.fiveislands",
-    categories: ["featured", "fictional"],
+    categories: ["featured", "islands", "fictional"],
     multiplayerFrequency: 4,
     ffaFrequency: -1,
     teamFrequency: -1,
@@ -952,7 +954,7 @@ export const maps: readonly MapInfo[] = [
     id: "FourIslands",
     type: GameMapType.FourIslands,
     translationKey: "map.fourislands",
-    categories: ["featured", "fictional"],
+    categories: ["featured", "islands", "fictional"],
     multiplayerFrequency: 4,
     ffaFrequency: -1,
     teamFrequency: -1,
@@ -1957,7 +1959,7 @@ export const maps: readonly MapInfo[] = [
     id: "NineIslands",
     type: GameMapType.NineIslands,
     translationKey: "map.nineislands",
-    categories: ["featured", "fictional"],
+    categories: ["featured", "islands", "fictional"],
     multiplayerFrequency: 4,
     ffaFrequency: -1,
     teamFrequency: -1,
@@ -2125,7 +2127,7 @@ export const maps: readonly MapInfo[] = [
     id: "SevenIslands",
     type: GameMapType.SevenIslands,
     translationKey: "map.sevenislands",
-    categories: ["featured", "fictional"],
+    categories: ["featured", "islands", "fictional"],
     multiplayerFrequency: 4,
     ffaFrequency: -1,
     teamFrequency: -1,
@@ -2145,7 +2147,7 @@ export const maps: readonly MapInfo[] = [
     id: "SixIslands",
     type: GameMapType.SixIslands,
     translationKey: "map.sixislands",
-    categories: ["featured", "fictional"],
+    categories: ["featured", "islands", "fictional"],
     multiplayerFrequency: 4,
     ffaFrequency: -1,
     teamFrequency: -1,

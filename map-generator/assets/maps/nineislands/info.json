@@ -2,7 +2,7 @@
   "id": "NineIslands",
   "name": "Nine Islands",
   "translation_key": "map.nineislands",
-  "categories": ["featured", "fictional"],
+  "categories": ["featured", "islands", "fictional"],
   "multiplayer_frequency": 4,
   "nations": [
     {

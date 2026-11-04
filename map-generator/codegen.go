@@ -14,6 +14,7 @@ import (
 var categoryOrder = []string{
 	"featured",
 	"new",
+	"islands",
 	"world",
 	"continental",
 	"europe",

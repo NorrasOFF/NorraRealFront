@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { maps } from "../src/core/game/Game";
 
 type Manifest = {
   map: { width: number; height: number; num_land_tiles: number };
@@ -79,32 +80,29 @@ function landAreas(folder: string, manifest: Manifest): number[] {
   return areas.sort((a, b) => b - a);
 }
 
-const NEW_MAPS = [
-  { folder: "fiveislands", islands: 5 },
-  { folder: "sevenislands", islands: 7 },
-  { folder: "nineislands", islands: 9 },
+const ISLAND_MAPS = [
+  { id: "FourIslands", folder: "fourislands", islands: 4 },
+  { id: "FiveIslands", folder: "fiveislands", islands: 5 },
+  { id: "SixIslands", folder: "sixislands", islands: 6 },
+  { id: "SevenIslands", folder: "sevenislands", islands: 7 },
+  { id: "EightIslands", folder: "eightislands", islands: 8 },
+  { id: "NineIslands", folder: "nineislands", islands: 9 },
 ] as const;
 
-const EIGHT_ISLANDS_AVERAGE =
-  readManifest("eightislands").map.num_land_tiles / 8;
+// These were resized to a shared island area.
+const RESIZED_ISLAND_MAPS = ISLAND_MAPS.filter((m) => m.islands >= 5);
+const TARGET_ISLAND_AREA = 256_000;
 
-describe.each(NEW_MAPS)("$folder", ({ folder, islands }) => {
+describe.each(ISLAND_MAPS)("$folder", ({ id, folder, islands }) => {
   const manifest = readManifest(folder);
 
-  test(`has exactly ${islands} islands of roughly equal size`, () => {
-    const areas = landAreas(folder, manifest);
+  test("is grouped under the islands category", () => {
+    const map = maps.find((m) => m.id === id);
+    expect(map?.categories).toContain("islands");
+  });
 
-    expect(areas).toHaveLength(islands);
-    const average = areas.reduce((a, b) => a + b, 0) / areas.length;
-
-    // About twice the land area of an Eight Islands island.
-    expect(average / EIGHT_ISLANDS_AVERAGE).toBeGreaterThan(1.8);
-    expect(average / EIGHT_ISLANDS_AVERAGE).toBeLessThan(2.2);
-
-    for (const area of areas) {
-      expect(area / average).toBeGreaterThan(0.95);
-      expect(area / average).toBeLessThan(1.05);
-    }
+  test(`has ${islands} islands`, () => {
+    expect(landAreas(folder, manifest)).toHaveLength(islands);
   });
 
   test(`has one nation on each island`, () => {
@@ -121,6 +119,21 @@ describe.each(NEW_MAPS)("$folder", ({ folder, islands }) => {
       expect(x).toBeLessThan(width);
       expect(y).toBeLessThan(height);
       expect(isLand(data[y * width + x])).toBe(true);
+    }
+  });
+});
+
+describe.each(RESIZED_ISLAND_MAPS)("$folder island sizing", ({ folder }) => {
+  test("islands have the shared target area", () => {
+    const areas = landAreas(folder, readManifest(folder));
+    const average = areas.reduce((a, b) => a + b, 0) / areas.length;
+
+    expect(average / TARGET_ISLAND_AREA).toBeGreaterThan(0.95);
+    expect(average / TARGET_ISLAND_AREA).toBeLessThan(1.05);
+
+    for (const area of areas) {
+      expect(area / average).toBeGreaterThan(0.95);
+      expect(area / average).toBeLessThan(1.05);
     }
   });
 });

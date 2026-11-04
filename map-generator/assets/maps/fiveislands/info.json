@@ -2,7 +2,7 @@
   "id": "FiveIslands",
   "name": "Five Islands",
   "translation_key": "map.fiveislands",
-  "categories": ["featured", "fictional"],
+  "categories": ["featured", "islands", "fictional"],
   "multiplayer_frequency": 4,
   "nations": [
     {
