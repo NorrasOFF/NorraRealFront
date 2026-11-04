@@ -2,7 +2,7 @@
   "id": "SevenIslands",
   "name": "Seven Islands",
   "translation_key": "map.sevenislands",
-  "categories": ["featured", "fictional"],
+  "categories": ["featured", "islands", "fictional"],
   "multiplayer_frequency": 4,
   "nations": [
     {

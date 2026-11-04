@@ -1,23 +1,64 @@
 {
+  "categories": ["featured", "islands", "fictional"],
+  "id": "EightIslands",
   "map": {
-    "height": 1752,
-    "num_land_tiles": 1035856,
-    "width": 3452
+    "height": 1900,
+    "num_land_tiles": 2054613,
+    "width": 3200
   },
   "map16x": {
-    "height": 438,
-    "num_land_tiles": 63340,
-    "width": 863
+    "height": 475,
+    "num_land_tiles": 126496,
+    "width": 800
   },
   "map4x": {
-    "height": 876,
-    "num_land_tiles": 257080,
-    "width": 1726
+    "height": 950,
+    "num_land_tiles": 511094,
+    "width": 1600
   },
+  "multiplayer_frequency": 4,
   "name": "Eight Islands",
-  "nations": [],
-  "id": "EightIslands",
-  "translation_key": "map.eightislands",
-  "categories": ["featured", "fictional"],
-  "multiplayer_frequency": 4
+  "nations": [
+    {
+      "coordinates": [400, 450],
+      "flag": "",
+      "name": "Korinthal"
+    },
+    {
+      "coordinates": [1200, 450],
+      "flag": "",
+      "name": "Lunareth"
+    },
+    {
+      "coordinates": [2000, 450],
+      "flag": "",
+      "name": "Sylvoria"
+    },
+    {
+      "coordinates": [2800, 450],
+      "flag": "",
+      "name": "Myrkwind"
+    },
+    {
+      "coordinates": [400, 1400],
+      "flag": "",
+      "name": "Valedorn"
+    },
+    {
+      "coordinates": [1200, 1400],
+      "flag": "",
+      "name": "Thornwick"
+    },
+    {
+      "coordinates": [2000, 1400],
+      "flag": "",
+      "name": "Aurelis"
+    },
+    {
+      "coordinates": [2800, 1400],
+      "flag": "",
+      "name": "Emberfall"
+    }
+  ],
+  "translation_key": "map.eightislands"
 }

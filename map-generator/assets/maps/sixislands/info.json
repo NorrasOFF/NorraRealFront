@@ -2,7 +2,38 @@
   "id": "SixIslands",
   "name": "Six Islands",
   "translation_key": "map.sixislands",
-  "categories": ["featured", "fictional"],
+  "categories": ["featured", "islands", "fictional"],
   "multiplayer_frequency": 4,
-  "nations": []
+  "nations": [
+    {
+      "coordinates": [400, 430],
+      "flag": "",
+      "name": "Korinthal"
+    },
+    {
+      "coordinates": [1200, 430],
+      "flag": "",
+      "name": "Lunareth"
+    },
+    {
+      "coordinates": [2000, 430],
+      "flag": "",
+      "name": "Sylvoria"
+    },
+    {
+      "coordinates": [400, 1270],
+      "flag": "",
+      "name": "Myrkwind"
+    },
+    {
+      "coordinates": [1200, 1270],
+      "flag": "",
+      "name": "Valedorn"
+    },
+    {
+      "coordinates": [2000, 1270],
+      "flag": "",
+      "name": "Thornwick"
+    }
+  ]
 }

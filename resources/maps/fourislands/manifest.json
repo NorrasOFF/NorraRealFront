@@ -1,5 +1,5 @@
 {
-  "categories": ["featured", "fictional"],
+  "categories": ["featured", "islands", "fictional"],
   "forced_modifiers": ["isWaterNukes:50"],
   "id": "FourIslands",
   "map": {

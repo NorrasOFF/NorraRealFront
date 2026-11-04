@@ -2,7 +2,48 @@
   "id": "EightIslands",
   "name": "Eight Islands",
   "translation_key": "map.eightislands",
-  "categories": ["featured", "fictional"],
+  "categories": ["featured", "islands", "fictional"],
   "multiplayer_frequency": 4,
-  "nations": []
+  "nations": [
+    {
+      "coordinates": [400, 450],
+      "flag": "",
+      "name": "Korinthal"
+    },
+    {
+      "coordinates": [1200, 450],
+      "flag": "",
+      "name": "Lunareth"
+    },
+    {
+      "coordinates": [2000, 450],
+      "flag": "",
+      "name": "Sylvoria"
+    },
+    {
+      "coordinates": [2800, 450],
+      "flag": "",
+      "name": "Myrkwind"
+    },
+    {
+      "coordinates": [400, 1400],
+      "flag": "",
+      "name": "Valedorn"
+    },
+    {
+      "coordinates": [1200, 1400],
+      "flag": "",
+      "name": "Thornwick"
+    },
+    {
+      "coordinates": [2000, 1400],
+      "flag": "",
+      "name": "Aurelis"
+    },
+    {
+      "coordinates": [2800, 1400],
+      "flag": "",
+      "name": "Emberfall"
+    }
+  ]
 }
