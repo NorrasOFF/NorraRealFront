@@ -27,7 +27,12 @@ export interface AttackExecutionCheckpoint {
   random: PseudoRandomState;
   /** The `Attack` this execution drives, or null once it has been deleted. */
   attackId: string | null;
-  toConquer: { priorities: number[]; tiles: TileRef[] };
+  toConquer: {
+    priorities: number[];
+    tiles: TileRef[];
+    /** Sparse non-zero defense tiers as [heapSlot, tier] pairs. */
+    tiers?: [number, number][];
+  };
 }
 
 export class AttackExecution implements Execution {
@@ -43,6 +48,13 @@ export class AttackExecution implements Execution {
   private map: GameMap;
 
   private attack: Attack | null = null;
+
+  // Defense-post-aware conquest ordering. `defenseLevelCache` deduplicates
+  // queries within one tick; `defensePostSignature` tracks the defender's
+  // posts so the frontier is re-tiered only when their coverage may have
+  // changed (build, upgrade, destruction, capture).
+  private defenseLevelCache = new Map<TileRef, number>();
+  private defensePostSignature: string | null = null;
 
   // Cached smallIDs for integer owner comparisons in hot loops.
   private ownerSmallID: number;
@@ -110,6 +122,13 @@ export class AttackExecution implements Execution {
       data.targetId === null ? game.terraNullius() : game.player(data.targetId);
     this.ownerSmallID = this._owner.smallID();
     this.targetSmallID = this.target.smallID();
+    this.defenseLevelCache.clear();
+    // Seed the coverage signature from the restored posts. When the checkpoint
+    // predates tier capture (`tiers` absent) but posts exist, leave it null so
+    // the first tick re-tiers the heap from live coverage.
+    const signature = this.computeDefensePostSignature();
+    this.defensePostSignature =
+      signature !== "" && data.toConquer.tiers === undefined ? null : signature;
     if (data.attackId === null) {
       this.attack = null;
     } else {
@@ -124,6 +143,69 @@ export class AttackExecution implements Execution {
 
   activeDuringSpawnPhase(): boolean {
     return false;
+  }
+
+  /**
+   * Highest defense-post level the defender has in range of `tile`, matching
+   * the coverage test used by `Config.attackLogic` (active, not under
+   * construction). 0 means undefended. Cached per tick.
+   */
+  private defenseLevelAt(tile: TileRef): number {
+    const target = this.target;
+    if (target === undefined || !target.isPlayer()) return 0;
+    const cached = this.defenseLevelCache.get(tile);
+    if (cached !== undefined) return cached;
+
+    const defender = target as Player;
+    let level = 0;
+    // Fast path: a defender with no defense posts cannot defend any tile.
+    // unitCount() sums levels, so it is 0 exactly when they own none.
+    if (defender.unitCount(UnitType.DefensePost) > 0) {
+      level = this.mg.highestLevelNearby(
+        tile,
+        this.mg.config().defensePostRange(),
+        UnitType.DefensePost,
+        defender.id(),
+      );
+    }
+    this.defenseLevelCache.set(tile, level);
+    return level;
+  }
+
+  /**
+   * Deterministic signature of the defender's defense posts. It changes when a
+   * post is built, completes construction, is upgraded, destroyed or captured,
+   * which is exactly when the frontier's defense tiers may need refreshing.
+   */
+  private computeDefensePostSignature(): string {
+    const target = this.target;
+    if (target === undefined || !target.isPlayer()) return "";
+    const posts = (target as Player).units(UnitType.DefensePost);
+    if (posts.length === 0) return "";
+    posts.sort((a, b) => a.id() - b.id());
+    let signature = "";
+    for (const post of posts) {
+      signature += `${post.id()}:${post.level()}:${
+        post.isUnderConstruction() ? 1 : 0
+      }:${post.isActive() ? 1 : 0},`;
+    }
+    return signature;
+  }
+
+  /**
+   * Clear the per-tick tier cache and re-tier the frontier if the defender's
+   * defense-post coverage changed since the previous attack tick.
+   */
+  private refreshDefenseTiers(): void {
+    this.defenseLevelCache.clear();
+    const signature = this.computeDefensePostSignature();
+    if (signature === this.defensePostSignature) return;
+    const previous = this.defensePostSignature;
+    this.defensePostSignature = signature;
+    // Nothing to re-tier on the very first tick of an attack against a
+    // defender with no posts (and no tiered entries to clear).
+    if (signature === "" && (previous === null || previous === "")) return;
+    this.toConquer.retier((tile) => this.defenseLevelAt(tile));
   }
 
   init(mg: Game, ticks: number) {
@@ -332,6 +414,11 @@ export class AttackExecution implements Execution {
       return;
     }
 
+    // Defense posts do not move, but they can be built, upgraded, destroyed or
+    // captured between ticks. Re-tier the frontier before conquering so the
+    // heap always reflects current coverage.
+    this.refreshDefenseTiers();
+
     const borderSize = this.attack.borderSize() + this.random.nextInt(0, 5);
     // Each tile consumes a fraction of the tick; conquer until it is spent.
     let tickBudget = 1;
@@ -402,16 +489,10 @@ export class AttackExecution implements Execution {
     // Same test as scanning nearbyUnits() for a post owned by the defender
     // (active, not under construction, within range), without building a
     // result array per conquered tile — this runs for every tile of every
-    // attack on the map. Uses the highest-level post in range.
-    const defensePostLevel =
-      defender === null
-        ? 0
-        : this.mg.highestLevelNearby(
-            tile,
-            this.mg.config().defensePostRange(),
-            UnitType.DefensePost,
-            defender.id(),
-          );
+    // attack on the map. Uses the highest-level post in range. The value is
+    // cached for the tick so the conquest ordering and the combat formula
+    // agree.
+    const defensePostLevel = defender === null ? 0 : this.defenseLevelAt(tile);
     return {
       terrain: this.map.terrainType(tile),
       attackTroops,
@@ -494,7 +575,9 @@ export class AttackExecution implements Execution {
         (this.random.nextInt(0, 7) + 10) * (1 - numOwnedByMe * 0.5 + mag / 2) +
         tickNow;
 
-      this.toConquer.enqueue(neighbor, priority);
+      // Undefended tiles (tier 0) are conquered before defended ones; among
+      // defended tiles, lower defense-post levels come first.
+      this.toConquer.enqueue(neighbor, priority, this.defenseLevelAt(neighbor));
     }
   }
 

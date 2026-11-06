@@ -362,19 +362,19 @@ exports[`attack scenarios > plains defender with defense posts covering the whol
 
 exports[`attack scenarios > plains defender with one defense post at the border 1`] = `
 {
-  "attackerLossPerSecond": 5263,
-  "attackerLossPerTile": 175.4,
+  "attackerLossPerSecond": 3846,
+  "attackerLossPerTile": 80,
   "attackerTiles": 5000,
   "attackerTroopsLost": 10000,
   "defenderEliminated": false,
-  "defenderLossPerSecond": 300,
+  "defenderLossPerSecond": 480.8,
   "defenderLossPerTile": 10,
   "defenderTiles": 5000,
-  "defenderTroopsLost": 570,
+  "defenderTroopsLost": 1250,
   "finished": true,
-  "ticks": 19,
-  "tilesConquered": 57,
-  "tilesPerSecond": 30,
+  "ticks": 26,
+  "tilesConquered": 125,
+  "tilesPerSecond": 48.08,
 }
 `;
 
