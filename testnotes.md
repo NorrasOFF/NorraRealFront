@@ -762,3 +762,69 @@ past five rows.
   "Top-player limit" block: top-five cap, no page-2 request, no pinned row for
   a rank-20 user, and the retry state when the first page fails. The obsolete
   "pages the ladder until a short page" case was removed.
+
+## Defense-post-aware attack prioritization
+
+Attacks now prefer less-defended frontier tiles. Undefended tiles are conquered
+before defended tiles, and among defended tiles lower defense-post levels are
+conquered before higher ones. Terrain/adjacency/random/tick priority is
+unchanged inside the same tier; the defense bonus formula itself is untouched.
+
+- **Tier definition.** For a frontier tile, the tier is the highest level among
+  the target player's active, not-under-construction `DefensePost` units within
+  `Config.defensePostRange()` (30 tiles) — the same `highestLevelNearby()`
+  coverage test `attackLogic` uses. `0` means undefended; a non-player target
+  (terra nullius) has no tiers.
+- **Heap.** `FlatBinaryHeap` stores a parallel `Uint16Array` tier and orders by
+  `(tier ascending, priority ascending)`. `enqueue(tile, priority, tier = 0)`
+  keeps the old priority-only behavior for callers/tiers of 0. `retier()` rewrites
+  every slot's tier and runs a linear bottom-up heapify (`O(H)`), preserving each
+  entry's tile and priority.
+- **Initial sampling.** `AttackExecution.addNeighbors()` computes the tier via
+  the new `defenseLevelAt()` and passes it to `enqueue()`, covering both the
+  initial frontier and every newly exposed neighbor.
+- **Dynamic re-sampling.** At the start of each attack tick, `refreshDefenseTiers()`
+  clears the per-tick `Map<TileRef, number>` cache and compares a deterministic
+  signature of the defender's posts (id-sorted
+  `id:level:underConstruction:active`). On any change it calls
+  `toConquer.retier(...)` before the conquest loop. This reacts to posts being
+  built, completing construction, upgraded (upgrade start and finish), destroyed
+  or captured. A coverage change made after the attack runs in a tick is picked
+  up on the next attack tick.
+- **Fast paths.** Bots/players with no posts short-circuit through
+  `targetPlayer.unitCount(UnitType.DefensePost) === 0` (memoised), and
+  `defenseLevelAt()` reuses one cached query per tile per tick, so
+  `attackLogicInput()` and the ordering metric always agree.
+- **Checkpoints.** `FlatBinaryHeap.snapshot()` stores non-zero tiers sparsely as
+  `[heapSlot, tier]` pairs (omitted entirely when all entries are undefended);
+  `restore()` defaults missing tiers to 0. Slot layout is preserved, so the
+  dequeue order is identical after a restore. `CHECKPOINT_VERSION` stays 5.
+  `restoreCheckpoint()` seeds the signature from the restored posts; only when
+  the blob predates tier capture (no `tiers`) but posts exist is it left null, so
+  the first post-restore tick re-tiers from live coverage.
+
+Tests: `tests/FlatBinaryHeap.test.ts` (tier ordering, within-tier priority,
+`retier`, sparse snapshot/restore, missing tiers) and the new
+`tests/AttackDefensePostPriority.test.ts` (undefended before defended, level 1
+before level 5, mid-attack build, destroy, under-construction ignored until
+completion, upgrade start/finish, checkpoint snapshot + 20-tick suffix hash
+equality, no-post fallback). `tests/AttackScenarios.test.ts` only changed for
+"plains defender with one defense post at the border" (defended tiles now go
+last): 26 ticks / 125 tiles instead of 19 / 57 for the same 10k attack. Every
+non-post scenario snapshot is unchanged.
+
+Measured on this machine (plains, 5k-tile defender half, 200 level-1 posts
+across it, 193-entry frontier, 1M-troop attack):
+
+- 200 ticks, static posts: 46 ms (~0.23 ms/tick).
+- 200 ticks with one post's construction flag toggled every tick (a forced
+  full re-tier every tick, worst case): 127 ms (~0.63 ms/tick, ~2.8x).
+- `encodeCheckpointWire()` size: 188,583 chars with tiers vs 187,207 without
+  (+1,376 chars, ~0.7%).
+- `tests/AttackScenarios.test.ts`: 6.79 s before the change vs 6.95 s after
+  (~2%); most scenarios have no defense posts and hit the fast path.
+
+Verification: `npx tsc --noEmit` and `npm run lint` clean; `tests/core` 452
+passed with only the documented pre-existing `SAMLauncherExecution` dynamic-range
+failure; `Attack`, `AttackLogicGolden`, `AttackScenarios` and
+`tests/core/Checkpoint.test.ts` pass.
