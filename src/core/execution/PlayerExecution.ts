@@ -424,6 +424,7 @@ export class PlayerExecution implements Execution {
 
     const state = this.traversalState();
     const visited = state.visited;
+    const stack = state.stack;
     // Two generation stamps on the one scratch array: first stamp every
     // border tile with `borderGen`, then flood with `currentGen`. Membership
     // becomes a single typed-array read instead of a hash probe for each of
@@ -435,23 +436,96 @@ export class PlayerExecution implements Execution {
     });
     const currentGen = this.bumpGeneration();
 
+    // Inline the diagonal neighbour walk instead of going through
+    // forEachNeighborWithDiag callbacks: this runs for every border tile of
+    // every player every ~20 ticks. The visit order matches
+    // forEachNeighborWithDiag (dx-major: NW, N, NE, W, E, SW, S, SE).
+    const map = this.map;
+    const w = map.width();
+    const lastRowStart = (map.height() - 1) * w;
     const clusters: TileRef[][] = [];
 
-    // Set.forEach instead of for..of: iterating a large Set allocates an
-    // iterator-result object per element, and border sets can be huge.
-    const neighborFn = (tile: TileRef, cb: (neighbor: TileRef) => void) =>
-      this.mg.forEachNeighborWithDiag(tile, cb);
-    const includeFn = (tile: TileRef) => visited[tile] === borderGen;
     borderTiles.forEach((startTile) => {
       if (visited[startTile] === currentGen) return;
 
-      const cluster = this.floodFillWithGen(
-        currentGen,
-        visited,
-        [startTile],
-        neighborFn,
-        includeFn,
-      );
+      const cluster: TileRef[] = [];
+      visited[startTile] = currentGen;
+      cluster.push(startTile);
+      stack.length = 0;
+      stack.push(startTile);
+
+      while (stack.length > 0) {
+        const tile = stack.pop()!;
+        const x = tile % w;
+        const hasN = tile >= w;
+        const hasS = tile < lastRowStart;
+
+        if (x !== 0) {
+          if (hasN) {
+            const n = tile - 1 - w;
+            if (visited[n] === borderGen) {
+              visited[n] = currentGen;
+              cluster.push(n);
+              stack.push(n);
+            }
+          }
+          const n1 = tile - 1;
+          if (visited[n1] === borderGen) {
+            visited[n1] = currentGen;
+            cluster.push(n1);
+            stack.push(n1);
+          }
+          if (hasS) {
+            const n2 = tile - 1 + w;
+            if (visited[n2] === borderGen) {
+              visited[n2] = currentGen;
+              cluster.push(n2);
+              stack.push(n2);
+            }
+          }
+        }
+        if (hasN) {
+          const n = tile - w;
+          if (visited[n] === borderGen) {
+            visited[n] = currentGen;
+            cluster.push(n);
+            stack.push(n);
+          }
+        }
+        if (hasS) {
+          const n = tile + w;
+          if (visited[n] === borderGen) {
+            visited[n] = currentGen;
+            cluster.push(n);
+            stack.push(n);
+          }
+        }
+        if (x !== w - 1) {
+          if (hasN) {
+            const n = tile + 1 - w;
+            if (visited[n] === borderGen) {
+              visited[n] = currentGen;
+              cluster.push(n);
+              stack.push(n);
+            }
+          }
+          const n1 = tile + 1;
+          if (visited[n1] === borderGen) {
+            visited[n1] = currentGen;
+            cluster.push(n1);
+            stack.push(n1);
+          }
+          if (hasS) {
+            const n2 = tile + 1 + w;
+            if (visited[n2] === borderGen) {
+              visited[n2] = currentGen;
+              cluster.push(n2);
+              stack.push(n2);
+            }
+          }
+        }
+      }
+
       clusters.push(cluster);
     });
     return clusters;

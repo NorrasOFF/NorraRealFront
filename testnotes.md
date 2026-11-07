@@ -828,3 +828,87 @@ Verification: `npx tsc --noEmit` and `npm run lint` clean; `tests/core` 452
 passed with only the documented pre-existing `SAMLauncherExecution` dynamic-range
 failure; `Attack`, `AttackLogicGolden`, `AttackScenarios` and
 `tests/core/Checkpoint.test.ts` pass.
+
+## Core tick performance pass: allocation-free attack logic and hot loops
+
+Benchmark harness: the existing `tests/perf/fullgame/FullGamePerf.ts` remains
+the flame-graph/heap-profile tool (`npm run perf:game -- --map World
+--ticks 900 --bots 300`). A new `tests/perf/fullgame/QuickBench.ts`
+(`npm run perf:quick`) wraps it with profiling off, repeated runs, medians and
+a saved baseline:
+
+```powershell
+npm run perf:quick -- --runs 5 --save tests/perf/output/baseline.json
+# make/perf the change
+npm run perf:quick -- --runs 5 --compare tests/perf/output/baseline.json
+```
+
+`--compare` prints mean/p50/p95/p99/total deltas and exits 1 if the final state
+hash changed, so an optimization cannot silently alter the simulation.
+Scenario used below: World, 900 ticks, 300 bots, seed `perf-default`; final hash
+`966774948` at tick 1100.
+
+### Measured result (5 runs each, medians)
+
+| metric       | before | after |  delta |
+| ------------ | -----: | ----: | -----: |
+| mean ms/tick |   6.00 |  5.70 |  -5.0% |
+| p50 ms/tick  |   5.70 |  5.37 |  -5.8% |
+| p95 ms/tick  |  11.10 | 10.10 |  -9.0% |
+| p99 ms/tick  |  15.80 | 14.00 | -11.4% |
+| total sim ms |   5396 |  5132 |  -4.9% |
+
+Run-to-run noise is about ±5% on this machine (the best run improved from 5.78
+to 5.08 ms/tick, -12%; earlier paired samples averaged ~9%), so quote p95/p99 as
+the more stable signal. Under the sampling profiler (which inflates both runs
+equally) mean tick time went 8.70 → 6.64 ms (-24%). Sampled game-phase
+allocations went **1823 MB → 956 MB (-48%)**; this is the robust number.
+
+### What changed
+
+- `AttackExecution`: reusable `AttackLogicInput`/attacker/defender/result
+  scratch objects (the old code allocated all four per conquered tile — a top-3
+  allocation site); `Config.attackLogic` takes an optional `out` result and its
+  `terrainAttackBase` object is inlined; the defender's type/traitor/
+  disconnected flags and the fallout ratio are cached per tick; `defenseLevelAt`
+  returns 0 before touching the cache when the defender has no defense posts
+  (the old code cached a 0 for every queried tile, filling the map on undefended
+  attacks); `handleDeadDefender` returns once the target has 0 tiles instead of
+  calling `conquerPlayer` again for every remaining conquered tile.
+- `PlayerImpl`: `pruneTransient`'s four per-tick extractor closures are hoisted
+  to module constants; `getEmbargoes()` returns a frozen shared empty list;
+  `maxTroops` loops over cities instead of `filter/map/reduce`; `toUpdate`
+  reuses the previous `AttackUpdate` arrays when attack membership is unchanged
+  (troop deltas are packed before the in-place troop refresh) and filters
+  incoming attacks into a reusable scratch buffer; dead players whose state is
+  final return `null` without rebuilding a full snapshot every tick;
+  `computeNearby`/`shoreReachableNeighbors` use `forEach` instead of the
+  `TileSet.values()` generator.
+- `PlayerExecution.calculateClusters`: the 8-neighbour flood fill is inlined
+  (same dx-major visit order as `forEachNeighborWithDiag`) instead of using two
+  callbacks per tile; this was ~14% of inclusive tick time.
+- `GameRunner`: name placement is cached per player by `tileChangeVersion`, so
+  the 30-tick rebuild only recomputes players whose territory changed (forced on
+  spawn end and resume full-view sync).
+- `NameBoxCalculator.placeName`: uses a flat `Uint8Array` grid and an inlined
+  histogram allocation path; `tests/client/NameBoxCalculatorFlat.test.ts`
+  compares it against the original 2D implementation over all 1–3 cell grids
+  and 200 pseudo-random larger grids.
+
+No schema, wire, checkpoint, or `CHECKPOINT_VERSION` changes. The final hash is
+identical before/after.
+
+### Verification
+
+- `npx tsc --noEmit` clean; `npm run lint` clean.
+- `tests/core`: 452 passed, only the documented pre-existing
+  `SAMLauncherExecution` dynamic-range failure.
+- Targeted suites pass: `AttackDefensePostPriority`, `AttackLogicGolden`,
+  `core/executions/PlayerExecution`, `PlayerUpdateDiff`, `PackedPlayerUpdates`,
+  `PlayerImpl`, `GameRunner`, `PlayerTransientPrune`, `Cluster`.
+- Full `npm test` is still dominated by the documented environment-only
+  `localStorage` failures (453 failing tests, mostly client components).
+  Additionally, `tests/DeleteUnitExecution.test.ts` fails **on the clean tip
+  too** (verified by stashing this work) with `Error: Player has no tiles` in
+  `beforeEach`; it is a spawn/map setup issue in this environment, unrelated to
+  these changes.

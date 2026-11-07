@@ -1,5 +1,5 @@
 import { ExecutionCheckpoint } from "../Checkpoint";
-import { AttackLogicInput } from "../configuration/Config";
+import { AttackLogicInput, AttackLogicResult } from "../configuration/Config";
 import {
   Attack,
   Difficulty,
@@ -62,6 +62,43 @@ export class AttackExecution implements Execution {
   // Reusable neighbor buffers to avoid closures/allocation in hot loops.
   private nbuf: TileRef[] = [0, 0, 0, 0];
   private nbuf2: TileRef[] = [0, 0, 0, 0];
+
+  // Reusable attackLogic input/result. `attackLogic` runs once per conquered
+  // tile on every attack; allocating a fresh input object, attacker/defender
+  // sub-objects and result object for each tile was a top-3 allocation site in
+  // late games. The callee only reads the input synchronously, so one scratch
+  // object per execution is safe.
+  private readonly attackLogicInputScratch: AttackLogicInput = {
+    terrain: TerrainType.Plains,
+    attackTroops: 0,
+    attacker: { type: PlayerType.Bot, numTiles: 0 },
+    defender: null,
+    defensePostLevel: 0,
+    falloutRatio: null,
+    borderSize: 0,
+  };
+  private readonly defenderScratch: NonNullable<AttackLogicInput["defender"]> =
+    {
+      type: PlayerType.Bot,
+      numTiles: 0,
+      troops: 0,
+      isTraitor: false,
+      isDisconnectedTeammate: false,
+    };
+  private readonly attackLogicResultScratch: AttackLogicResult = {
+    attackerTroopLoss: 0,
+    defenderTroopLoss: 0,
+    tickFraction: 0,
+  };
+
+  // Values that are constant for the duration of one tick. The defender's
+  // troop count and tile count still change per conquered tile, but its type,
+  // traitor/disconnected flags and the fallout ratio do not.
+  private tickDefenderType: PlayerType = PlayerType.Bot;
+  private tickDefenderIsTraitor = false;
+  private tickDefenderIsDisconnectedTeammate = false;
+  // undefined = not computed yet this tick.
+  private tickFalloutRatio: number | undefined = undefined;
 
   constructor(
     private startTroops: number | null = null,
@@ -153,21 +190,25 @@ export class AttackExecution implements Execution {
   private defenseLevelAt(tile: TileRef): number {
     const target = this.target;
     if (target === undefined || !target.isPlayer()) return 0;
+
+    const defender = target as Player;
+    // Fast path: a defender with no defense posts cannot defend any tile.
+    // unitCount() sums levels, so it is 0 exactly when they own none. Return
+    // before touching the cache: most attacks have an undefended defender, and
+    // caching a 0 for every queried tile grew the map to the whole frontier.
+    if (defender.unitCount(UnitType.DefensePost) === 0) {
+      return 0;
+    }
+
     const cached = this.defenseLevelCache.get(tile);
     if (cached !== undefined) return cached;
 
-    const defender = target as Player;
-    let level = 0;
-    // Fast path: a defender with no defense posts cannot defend any tile.
-    // unitCount() sums levels, so it is 0 exactly when they own none.
-    if (defender.unitCount(UnitType.DefensePost) > 0) {
-      level = this.mg.highestLevelNearby(
-        tile,
-        this.mg.config().defensePostRange(),
-        UnitType.DefensePost,
-        defender.id(),
-      );
-    }
+    const level = this.mg.highestLevelNearby(
+      tile,
+      this.mg.config().defensePostRange(),
+      UnitType.DefensePost,
+      defender.id(),
+    );
     this.defenseLevelCache.set(tile, level);
     return level;
   }
@@ -419,6 +460,10 @@ export class AttackExecution implements Execution {
     // heap always reflects current coverage.
     this.refreshDefenseTiers();
 
+    this.refreshTickCaches(targetPlayer);
+
+    const config = this.mg.config();
+    const map = this.map;
     const borderSize = this.attack.borderSize() + this.random.nextInt(0, 5);
     // Each tile consumes a fraction of the tick; conquer until it is spent.
     let tickBudget = 1;
@@ -447,27 +492,24 @@ export class AttackExecution implements Execution {
       }
 
       let onBorder = false;
-      const numNeighbors = this.map.neighbors4(tileToConquer, this.nbuf);
+      const numNeighbors = map.neighbors4(tileToConquer, this.nbuf);
       for (let i = 0; i < numNeighbors; i++) {
-        if (this.map.ownerID(this.nbuf[i]) === this.ownerSmallID) {
+        if (map.ownerID(this.nbuf[i]) === this.ownerSmallID) {
           onBorder = true;
           break;
         }
       }
-      if (this.map.ownerID(tileToConquer) !== this.targetSmallID || !onBorder) {
+      if (map.ownerID(tileToConquer) !== this.targetSmallID || !onBorder) {
         continue;
       }
-      if (
-        !this.map.isLand(tileToConquer) ||
-        this.map.isImpassable(tileToConquer)
-      ) {
+      if (!map.isLand(tileToConquer) || map.isImpassable(tileToConquer)) {
         continue;
       }
       this.addNeighbors(tileToConquer);
-      const { attackerTroopLoss, defenderTroopLoss, tickFraction } = this.mg
-        .config()
-        .attackLogic(
+      const { attackerTroopLoss, defenderTroopLoss, tickFraction } =
+        config.attackLogic(
           this.attackLogicInput(troopCount, tileToConquer, borderSize),
+          this.attackLogicResultScratch,
         );
       tickBudget -= tickFraction;
       troopCount -= attackerTroopLoss;
@@ -480,43 +522,65 @@ export class AttackExecution implements Execution {
     }
   }
 
+  /**
+   * Snapshot the values that cannot change while this execution conquers
+   * tiles. The defender's troops/tiles do change, so those stay live reads.
+   */
+  private refreshTickCaches(targetPlayer: Player | null): void {
+    this.tickFalloutRatio = undefined;
+    if (targetPlayer === null) return;
+    this.tickDefenderType = targetPlayer.type();
+    this.tickDefenderIsTraitor = targetPlayer.isTraitor();
+    this.tickDefenderIsDisconnectedTeammate =
+      targetPlayer.isDisconnected() && this._owner.isOnSameTeam(targetPlayer);
+  }
+
+  private falloutRatioForTick(): number {
+    let ratio = this.tickFalloutRatio;
+    if (ratio === undefined) {
+      const withFallout = this.mg.numTilesWithFallout();
+      ratio = withFallout > 0 ? withFallout / this.mg.numLandTiles() : 0;
+      this.tickFalloutRatio = ratio;
+    }
+    return ratio;
+  }
+
   private attackLogicInput(
     attackTroops: number,
     tile: TileRef,
     borderSize: number,
   ): AttackLogicInput {
-    const defender = this.target.isPlayer() ? this.target : null;
+    const input = this.attackLogicInputScratch;
+    const hasDefender = this.target.isPlayer();
+    input.terrain = this.map.terrainType(tile);
+    input.attackTroops = attackTroops;
+    input.attacker.type = this._owner.type();
+    input.attacker.numTiles = this._owner.numTilesOwned();
     // Same test as scanning nearbyUnits() for a post owned by the defender
     // (active, not under construction, within range), without building a
     // result array per conquered tile — this runs for every tile of every
     // attack on the map. Uses the highest-level post in range. The value is
     // cached for the tick so the conquest ordering and the combat formula
     // agree.
-    const defensePostLevel = defender === null ? 0 : this.defenseLevelAt(tile);
-    return {
-      terrain: this.map.terrainType(tile),
-      attackTroops,
-      attacker: {
-        type: this._owner.type(),
-        numTiles: this._owner.numTilesOwned(),
-      },
-      defender:
-        defender === null
-          ? null
-          : {
-              type: defender.type(),
-              numTiles: defender.numTilesOwned(),
-              troops: defender.troops(),
-              isTraitor: defender.isTraitor(),
-              isDisconnectedTeammate:
-                defender.isDisconnected() && this._owner.isOnSameTeam(defender),
-            },
-      defensePostLevel,
-      falloutRatio: this.mg.hasFallout(tile)
-        ? this.mg.numTilesWithFallout() / this.mg.numLandTiles()
-        : null,
-      borderSize,
-    };
+    input.defensePostLevel = hasDefender ? this.defenseLevelAt(tile) : 0;
+    input.falloutRatio = this.mg.hasFallout(tile)
+      ? this.falloutRatioForTick()
+      : null;
+    input.borderSize = borderSize;
+
+    if (!hasDefender) {
+      input.defender = null;
+    } else {
+      const defender = this.target as Player;
+      const d = this.defenderScratch;
+      d.type = this.tickDefenderType;
+      d.numTiles = defender.numTilesOwned();
+      d.troops = defender.troops();
+      d.isTraitor = this.tickDefenderIsTraitor;
+      d.isDisconnectedTeammate = this.tickDefenderIsDisconnectedTeammate;
+      input.defender = d;
+    }
+    return input;
   }
 
   private rejectIncomingAllianceRequests(target: Player) {
@@ -584,6 +648,11 @@ export class AttackExecution implements Execution {
   private handleDeadDefender() {
     if (!(this.target.isPlayer() && this.target.numTilesOwned() < 100)) return;
     const target: Player = this.target;
+    // The first conquest below 100 tiles redistributes the whole remaining
+    // territory, so every later conquered tile in the same tick would call
+    // conquerPlayer again on an already-eliminated player. That repeated work
+    // (messages, stats, tile scans) showed up in long-game profiles.
+    if (target.numTilesOwned() === 0) return;
 
     this.mg.conquerPlayer(this._owner, target);
 
