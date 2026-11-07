@@ -19,6 +19,7 @@
     "perf": "npx tsx tests/perf/run-all.ts",
     "perf:game": "npx tsx tests/perf/fullgame/FullGamePerf.ts",
     "perf:quick": "npx tsx tests/perf/fullgame/QuickBench.ts",
+    "perf:entities": "npx tsx tests/perf/entity/EntityStressPerf.ts",
     "replay:game": "npx tsx tests/replay/ReplayGame.ts",
     "perf:client": "npx tsx tests/perf/client/ClientUpdatePerf.ts",
     "perf:client-mem": "npx tsx tests/perf/client/ClientMemoryPerf.ts",

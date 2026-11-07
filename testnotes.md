@@ -912,3 +912,74 @@ identical before/after.
   too** (verified by stashing this work) with `Error: Player has no tiles` in
   `beforeEach`; it is a spawn/map setup issue in this environment, unrelated to
   these changes.
+
+## Entity-heavy stress: trains, stations, defense posts and defense tiers
+
+`tests/perf/entity/EntityStressPerf.ts` (`npm run perf:entities`) is a dedicated
+late-game-style stress harness. On `big_plains` (200x200) it:
+
+- splits the map between an attacker (left 25%) and defender (rest),
+- builds 70 Factories + 70 Cities (a connected rail network) and 5 Railroad
+  Centers; factories create 209 train stations in one cluster,
+- builds 320 defense posts (levels 1-5) across the front and defender territory,
+- keeps ~120 live trains alive (5 cars each = 7 units per train),
+- runs a sustained attack on the defended frontier. By default one defense
+  post's `underConstruction` flag is flipped every tick, so the attack's
+  defense-post signature changes every tick and `retier()` runs on the whole
+  conquest heap every attack tick (worst case),
+- optionally reports execution/CPU/GC profiles and checkpoint capture, plain
+  JSON encode, and wire (gzip) encode time/size.
+
+Flags: `--ticks --posts --buildings --trains --train-min-dist --map --seed
+--toggle-post/--no-toggle-post --attack-troops --profile --cpu-profile --gc
+--no-checkpoint`.
+
+### Measured result (3 runs each, medians)
+
+Scenario: 600 ticks, 320 posts, 160 buildings, 120 target trains. Final state:
+1,816 units, 209 stations, 117 live trains, 1,685 trains spawned over the run,
+320 defense posts, 1 active attack. Checkpoint hash `1655327024` is identical
+before/after.
+
+| metric       | before | after |      delta |
+| ------------ | -----: | ----: | ---------: |
+| mean ms/tick |   1.08 |  0.63 | **-41.7%** |
+| p95 ms/tick  |   2.06 |  1.07 | **-48.1%** |
+| p99 ms/tick  |   3.30 |  2.15 | **-34.8%** |
+
+Checkpoint (autosave) is unchanged, as expected:
+
+| metric       |                before |                 after |
+| ------------ | --------------------: | --------------------: |
+| capture      |           ~4.1-4.6 ms |           ~4.1-4.7 ms |
+| plain encode | 18.8-21.6 ms, 1.89 MB | 18.6-21.3 ms, 1.89 MB |
+| wire encode  | 48.7-54.7 ms, 0.14 MB | 51.1-61.1 ms, 0.14 MB |
+
+So the tick path got much faster in an entity-heavy game while save size and
+encode cost did not move (the checkpoint format is untouched).
+
+### What changed for this scenario
+
+- `UnitImpl.delete()`/`captureUnit()` replaced `owner._units =
+owner._units.filter(...)` with `indexOf` + `splice`. The old form copied the
+  owner's entire unit array for every deleted/captured unit; a 600-tick run
+  deletes ~6,000 train units, so this was ~18% of profiled self time.
+  `PlayerExecution`'s two loops that delete/capture while iterating
+  `player.units()` now use index loops that do not advance after an in-place
+  removal (the live array shrinks under them). Order is preserved, so hashes
+  are unchanged.
+- `UnitGrid.highestLevelNearby` hoists the query point and inlines the
+  active/construction/owner/distance checks instead of calling
+  `unitIsInRange`/`squaredDistanceFromTile` per candidate unit. This is the
+  defense-tier lookup used by every `retier()` and every conquered tile.
+
+### Verification
+
+- `npx tsc --noEmit` and `npm run lint` clean.
+- `tests/core` + `tests/Attack.test.ts` + `PlayerUpdateDiff` +
+  `PackedPlayerUpdates`: 498 passed, only the documented pre-existing
+  `SAMLauncherExecution` dynamic-range failure.
+- Full-game hash unchanged: `npm run perf:quick -- --runs 1` still ends at
+  `966774948`.
+- Entity-stress checkpoint hash unchanged (`1655327024`) before/after.
+- `node e2e/run.mjs --map Benelux --bots 10` -> SMOKE OK.

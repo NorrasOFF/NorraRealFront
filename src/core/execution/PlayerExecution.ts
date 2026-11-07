@@ -68,8 +68,15 @@ export class PlayerExecution implements Execution {
     // before anything in this tick reads it; behavior-neutral by construction.
     this.player.pruneTransient();
     this.player.decayRelations();
-    for (const u of this.player.units()) {
+    // Index loop over the live unit array: deleting/capturing a structure
+    // removes it in place (order-preserving splice), so do not advance after a
+    // removal. A for..of over player.units() would otherwise skip the unit that
+    // shifts into the removed slot.
+    const units = this.player.units();
+    for (let i = 0; i < units.length; ) {
+      const u = units[i];
       if (!Structures.has(u.type())) {
+        i++;
         continue;
       }
 
@@ -79,6 +86,7 @@ export class PlayerExecution implements Execution {
         continue;
       }
       if (owner === this.player) {
+        i++;
         continue;
       }
 
@@ -598,16 +606,22 @@ export class PlayerExecution implements Execution {
     const gold = this.player.gold();
     this.player.removeGold(gold);
 
-    this.player.units().forEach((u) => {
+    // Same in-place-removal contract as the structure loop above: skip the
+    // increment when a unit is deleted (the next unit shifts into its slot).
+    const units = this.player.units();
+    for (let i = 0; i < units.length; ) {
+      const u = units[i];
       if (
-        u.type() !== UnitType.AtomBomb &&
-        u.type() !== UnitType.HydrogenBomb &&
-        u.type() !== UnitType.MIRVWarhead &&
-        u.type() !== UnitType.MIRV
+        u.type() === UnitType.AtomBomb ||
+        u.type() === UnitType.HydrogenBomb ||
+        u.type() === UnitType.MIRVWarhead ||
+        u.type() === UnitType.MIRV
       ) {
-        u.delete();
+        i++;
+        continue;
       }
-    });
+      u.delete();
+    }
 
     this.player.removeAllAlliances();
   }
