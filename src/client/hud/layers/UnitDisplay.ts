@@ -403,6 +403,11 @@ export class UnitDisplay extends LitElement implements Controller {
             if (selected) {
               this.uiState.ghostStructure = null;
             } else if (this.canBuild(unitType)) {
+              // Selecting a different buildable starts at x1; a bulk amount
+              // armed by double-tapping a hotkey must not leak across types
+              // (it would otherwise silently bulk-build warships after, e.g.,
+              // arming a x5 city upgrade).
+              this.uiState.upgradeMultiplier = 1;
               this.uiState.ghostStructure = unitType;
             }
             this.requestUpdate();

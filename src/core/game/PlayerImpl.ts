@@ -42,6 +42,7 @@ import {
   Unit,
   UnitParams,
   UnitType,
+  WarShips,
 } from "./Game";
 import { GameImpl } from "./GameImpl";
 import { andFN, manhattanDistFN, TileRef } from "./GameMap";
@@ -1836,12 +1837,27 @@ export class PlayerImpl implements Player {
         }
       }
 
+      // Ships can be built in bulk (double-tap the build hotkey for x5) and
+      // their price escalates with the number owned, so the same cumulative
+      // pricing applies. Only ships get this: every other buildable has a flat
+      // per-copy cost.
+      let buildCosts: Gold[] | undefined;
+      if (buildNew && WarShips.has(u)) {
+        buildCosts = new Array<Gold>(MAX_UPGRADE_AMOUNT);
+        let total = 0n;
+        for (let n = 0; n < MAX_UPGRADE_AMOUNT; n++) {
+          total += config.unitInfo(u).cost(mg, this, n);
+          buildCosts[n] = total;
+        }
+      }
+
       result[i] = {
         type: u,
         canBuild,
         canUpgrade,
         cost,
         upgradeCosts,
+        buildCosts,
         overlappingRailroads: buildNew
           ? rail.overlappingRailroads(u, canBuild as TileRef)
           : [],

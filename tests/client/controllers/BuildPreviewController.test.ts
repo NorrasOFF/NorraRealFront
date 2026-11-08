@@ -1,11 +1,59 @@
 import { describe, expect, test } from "vitest";
 import {
+  bulkBuildAmount,
   distanceSqToSegment,
   planDefenseLineActions,
   samThreatensNukePreview,
   shouldPreserveGhostAfterBuild,
+  supportsBulkAmount,
 } from "../../../src/client/controllers/BuildPreviewController";
-import { UnitType } from "../../../src/core/game/Game";
+import { BuildableUnit, UnitType } from "../../../src/core/game/Game";
+
+function buildable(
+  type: UnitType,
+  canUpgrade: number | false = false,
+): BuildableUnit {
+  return {
+    type: type as BuildableUnit["type"],
+    canBuild: 0,
+    canUpgrade,
+    cost: 1n,
+    overlappingRailroads: [],
+    ghostRailPaths: [],
+  };
+}
+
+describe("bulk ship build amount (double-tap the warship hotkey)", () => {
+  test("ships carry the armed multiplier into the build intent", () => {
+    for (const type of [
+      UnitType.Warship,
+      UnitType.MissileShip,
+      UnitType.MissileDefenseShip,
+    ]) {
+      expect(bulkBuildAmount(type, 5)).toBe(5);
+      expect(bulkBuildAmount(type, 1)).toBe(1);
+    }
+  });
+
+  test("AtomBombs stay stackable, other builds send no amount", () => {
+    expect(bulkBuildAmount(UnitType.AtomBomb, 5)).toBe(5);
+    expect(bulkBuildAmount(UnitType.City, 5)).toBeUndefined();
+    expect(bulkBuildAmount(UnitType.Port, 5)).toBeUndefined();
+    expect(bulkBuildAmount(UnitType.MIRV, 5)).toBeUndefined();
+  });
+
+  test("supportsBulkAmount covers upgrades, AtomBombs and ships only", () => {
+    expect(supportsBulkAmount(buildable(UnitType.City, 42))).toBe(true);
+    expect(supportsBulkAmount(buildable(UnitType.AtomBomb))).toBe(true);
+    expect(supportsBulkAmount(buildable(UnitType.Warship))).toBe(true);
+    expect(supportsBulkAmount(buildable(UnitType.MissileShip))).toBe(true);
+    expect(supportsBulkAmount(buildable(UnitType.MissileDefenseShip))).toBe(
+      true,
+    );
+    expect(supportsBulkAmount(buildable(UnitType.City))).toBe(false);
+    expect(supportsBulkAmount(buildable(UnitType.Port))).toBe(false);
+  });
+});
 
 describe("BuildPreviewController ghost preservation (locked nuke / Enter confirm)", () => {
   describe("shouldPreserveGhostAfterBuild", () => {

@@ -17,6 +17,7 @@ import {
   bulkCost,
   PlayerBuildableUnitType,
   UnitType,
+  WarShips,
 } from "../../core/game/Game";
 import { TileRef } from "../../core/game/GameMap";
 import { UserSettings } from "../../core/game/UserSettings";
@@ -43,6 +44,30 @@ import { GameView } from "../view";
 /** True for nuke types (AtomBomb, HydrogenBomb): ghost is preserved after placement so user can place multiple or keep selection (Enter/key confirm). */
 export function shouldPreserveGhostAfterBuild(unitType: UnitType): boolean {
   return unitType === UnitType.AtomBomb || unitType === UnitType.HydrogenBomb;
+}
+
+/**
+ * Buildables that honour `uiState.upgradeMultiplier` as a bulk amount: units
+ * that can be upgraded in place, stackable AtomBombs, and ships. A warship x5
+ * comes from double-tapping its build hotkey (the same gesture that arms a
+ * 5-level structure upgrade), and the click then sends `amount: 5` so the core
+ * spawns five ships.
+ */
+export function supportsBulkAmount(bu: BuildableUnit): boolean {
+  return bu.canUpgrade !== false || isStackableBuild(bu.type);
+}
+
+function isStackableBuild(unitType: UnitType): boolean {
+  return unitType === UnitType.AtomBomb || WarShips.has(unitType);
+}
+
+/** Amount to send in a build intent: the armed bulk amount for stackable
+ * builds, otherwise undefined (a normal single build). */
+export function bulkBuildAmount(
+  unitType: UnitType,
+  upgradeMultiplier: number,
+): number | undefined {
+  return isStackableBuild(unitType) ? upgradeMultiplier || 1 : undefined;
 }
 
 /** A single placement decision for one tile of a dragged defense-post line. */
@@ -568,8 +593,8 @@ export class BuildPreviewController implements Controller {
     }
 
     const isNuke = u.type === UnitType.AtomBomb;
-    const supportsBulkAmount = u.canUpgrade !== false || isNuke;
-    const multiplier = supportsBulkAmount
+    const supportsBulk = supportsBulkAmount(u);
+    const multiplier = supportsBulk
       ? (this.uiState.upgradeMultiplier ?? 1)
       : undefined;
     const amount = multiplier ?? 1;
@@ -646,7 +671,6 @@ export class BuildPreviewController implements Controller {
         return;
       }
 
-      const isNuke = unitType === UnitType.AtomBomb;
       const rocketDirectionUp =
         unitType === UnitType.AtomBomb || unitType === UnitType.HydrogenBomb
           ? this.uiState.rocketDirectionUp
@@ -656,7 +680,7 @@ export class BuildPreviewController implements Controller {
           unitType,
           targetTile,
           rocketDirectionUp,
-          isNuke ? this.uiState.upgradeMultiplier || 1 : undefined,
+          bulkBuildAmount(unitType, this.uiState.upgradeMultiplier || 1),
         ),
       );
       if (!shouldPreserveGhostAfterBuild(unitType)) {

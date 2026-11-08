@@ -983,3 +983,66 @@ owner._units.filter(...)` with `indexOf` + `splice`. The old form copied the
   `966774948`.
 - Entity-stress checkpoint hash unchanged (`1655327024`) before/after.
 - `node e2e/run.mjs --map Benelux --bots 10` -> SMOKE OK.
+
+## Bulk warship build: double-tap the warship hotkey for x5
+
+Warship (`CapsLock+Digit1` by default; Caps Lock is a toggle, not part of the
+double-tap) now uses the same "press the active build hotkey again" gesture
+that already arms a 5-level structure upgrade. Double-tapping the warship
+hotkey sets `uiState.upgradeMultiplier = 5`, and the next water click sends one
+`build_unit` intent with `amount: 5`. The ghost also shows the usual `x5` badge
+and the 5-ship cumulative price. The same applies to `MissileShip` and
+`MissileDefenseShip` (the other two `WarShips`) so the three ship hotkeys behave
+consistently; structures and nukes keep their existing behavior.
+
+Wire/sim: no schema change — `BuildUnitIntent.amount` already existed (nukes).
+`ConstructionExecution` now loops the `Warship`/`MissileShip`/
+`MissileDefenseShip` cases `amount` times, each spawning the existing execution,
+which validates and charges separately. So the player pays the escalating
+per-ship price (`250k / 500k / 750k-capped`) for exactly the ships they can
+afford; with gold for only one ship, one spawns.
+
+Client:
+
+- `BuildPreviewController`: exported `supportsBulkAmount(bu)` and
+  `bulkBuildAmount(unitType, upgradeMultiplier)`; ships now report/consume the
+  armed multiplier. `createStructure` sends the amount for ships (and still for
+  AtomBomb). Selecting a different hotbar buildable resets the multiplier to 1
+  (`UnitDisplay` click) so a stale x5 cannot leak into another type. Do **not**
+  reset it in `createGhostStructure`: a double-tap faster than one controller
+  tick would be wiped out.
+- `BuildableUnit.buildCosts?: Gold[]` (core): cumulative 1..50 ship prices,
+  computed only when `buildNew && WarShips.has(type)`. `bulkCost` /
+  `maxBulkAmount` prefer `upgradeCosts`, then `buildCosts`, then flat `cost *
+amount`, so the x5 label shows the true 3,000,000 for five fresh warships.
+
+Tests:
+
+- `tests/economy/ConstructionBulkShips.test.ts`: 5 ships from amount 5, correct
+  patrol tile, escalating charge, single spawn with no amount, affordability
+  cap, and `buildableUnits` cumulative `buildCosts`
+  (`[250k, 750k, 1.5M, 2.25M, 3M]`).
+- `tests/InputHandler.test.ts`: double-tapping the warship hotkey arms 5.
+- `tests/client/controllers/BuildPreviewController.test.ts`: ships carry the
+  amount, structures/MIRV do not, `supportsBulkAmount` matrix.
+
+Verification (this session):
+
+- `npx tsc --noEmit`, Oxlint, ESLint, Prettier clean.
+- `tests/core` + `tests/economy`: 461 passed, only the documented pre-existing
+  `SAMLauncherExecution` dynamic-range failure.
+- `tests/nukes` + `tests/client/controllers`: 63 passed.
+- `tests/InputHandler.test.ts` with a working `localStorage`
+  (`NODE_OPTIONS=--localstorage-file=...`): 68/69 pass. The one failure,
+  `Shift keydown discards active ghostStructure`, **also fails on the clean
+  HEAD** (verified by stashing) — the keydown handler deliberately no longer
+  clears the ghost (see the comment at `InputHandler`'s shift keydown), so the
+  test is stale. It is not caused by these changes.
+- Browser-verified in headless Chrome (throwaway `e2e` driver reusing
+  `e2e/driver.mjs` + `.claude/skills/run-openfront/game.mjs`, deleted after):
+  spawned on a coastal Benelux tile, built a port (hotkey 3 + click), fired two
+  synthetic `keyup` events for `CapsLock+Digit1` with `getModifierState`
+  overridden to true. Result: `ghost=Warship`, `multiplier=5`; one click on the
+  adjacent water spawned exactly 5 warships and cleared the ghost. Note the
+  build keybinds run on **keyup**, not keydown. Artifact:
+  `e2e/artifacts/warship-x5.png`.

@@ -138,6 +138,12 @@ describe("InputHandler AutoUpgrade", () => {
       inputHandler["setGhostStructure"](UnitType.City);
       expect(uiState.upgradeMultiplier).toBe(5);
     });
+
+    test("double-tapping the warship hotkey arms five ships", () => {
+      inputHandler["setGhostStructure"](UnitType.Warship);
+      inputHandler["setGhostStructure"](UnitType.Warship);
+      expect(uiState.upgradeMultiplier).toBe(5);
+    });
   });
 
   describe("Caps Lock build hotkey layers", () => {
