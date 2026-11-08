@@ -1480,6 +1480,11 @@ export const SavedLobbySchema = z.object({
   stage: SavedLobbyStageSchema,
   visibleAt: zb.uint().optional(),
   seats: SavedLobbySeatSchema.array(),
+  // ClientIDs that were alive in the latest host checkpoint when this save was
+  // written. A resumed ranked game only stays rated when every one of these
+  // seats is reclaimed by its original account. Optional for saves written
+  // before this field existed; those fall back to every non-spectator seat.
+  aliveClientIDs: z.array(ID).optional(),
   // Frozen player list, present exactly when the game had started. Saved turns
   // reference these clientIDs, so restoring must reuse it verbatim.
   gameStartInfo: GameStartInfoSchema.optional(),

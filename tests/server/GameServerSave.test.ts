@@ -358,6 +358,129 @@ describe("GameServer restore", () => {
   });
 });
 
+describe("ranked resume eligibility", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(T0);
+  });
+  afterEach(() => {
+    vi.clearAllTimers();
+    vi.useRealTimers();
+  });
+
+  function rankedStartedSnapshot(aliveClientIDs?: string[]) {
+    const game = makeGame({ creatorPersistentID: "host-pid" });
+    game.setListed(true);
+    const host = makeClient({
+      clientID: cid("host"),
+      persistentID: "host-pid",
+      publicId: "host-acc",
+    });
+    const p2 = makeClient({
+      clientID: cid("p2"),
+      persistentID: "p2-pid",
+      publicId: "p2-acc",
+    });
+    expect(game.joinClient(host)).toBe("joined");
+    expect(game.joinClient(p2)).toBe("joined");
+    startGame(game);
+    vi.advanceTimersByTime(3 * TURN_MS);
+    const snap = game.snapshot()!;
+    return {
+      ...snap,
+      aliveClientIDs: aliveClientIDs ?? [cid("host"), cid("p2")],
+    };
+  }
+
+  it("keeps the ranking when every saved survivor rejoins", () => {
+    const restored = makeGame({ restore: rankedStartedSnapshot() });
+    expect(restored.isRanked()).toBe(true);
+
+    const host = makeClient({
+      clientID: cid("host2"),
+      persistentID: "host-pid",
+      publicId: "host-acc",
+    });
+    const p2 = makeClient({
+      clientID: cid("p2b"),
+      persistentID: "p2-pid",
+      publicId: "p2-acc",
+    });
+    expect(restored.joinClient(host)).toBe("joined");
+    expect(restored.joinClient(p2)).toBe("joined");
+
+    hostStart(restored);
+    vi.advanceTimersByTime(GameServer.RESUME_START_DELAY_MS + 10);
+    expect(restored.isRanked()).toBe(true);
+  });
+
+  it("drops the ranking when a saved survivor is missing", () => {
+    const restored = makeGame({ restore: rankedStartedSnapshot() });
+    expect(restored.isRanked()).toBe(true);
+
+    const host = makeClient({
+      clientID: cid("host2"),
+      persistentID: "host-pid",
+      publicId: "host-acc",
+    });
+    expect(restored.joinClient(host)).toBe("joined");
+
+    hostStart(restored);
+    vi.advanceTimersByTime(GameServer.RESUME_START_DELAY_MS + 10);
+    expect(restored.isRanked()).toBe(false);
+    // The archived record must be unranked too.
+    expect(restored.snapshot()!.gameStartInfo!.config.ranked).toBeUndefined();
+  });
+
+  it("does not count a different account that grabbed the seat", () => {
+    const restored = makeGame({ restore: rankedStartedSnapshot() });
+    const impostor = makeClient({
+      clientID: cid("host2"),
+      persistentID: "host-pid",
+      publicId: "other-acc",
+    });
+    expect(restored.joinClient(impostor)).toBe("joined");
+
+    hostStart(restored);
+    vi.advanceTimersByTime(GameServer.RESUME_START_DELAY_MS + 10);
+    expect(restored.isRanked()).toBe(false);
+  });
+
+  it("requires every non-spectator seat when the save has no alive set", () => {
+    const snap = rankedStartedSnapshot();
+    const restored = makeGame({
+      restore: { ...snap, aliveClientIDs: undefined },
+    });
+    const host = makeClient({
+      clientID: cid("host2"),
+      persistentID: "host-pid",
+      publicId: "host-acc",
+    });
+    expect(restored.joinClient(host)).toBe("joined");
+
+    hostStart(restored);
+    vi.advanceTimersByTime(GameServer.RESUME_START_DELAY_MS + 10);
+    expect(restored.isRanked()).toBe(false);
+  });
+
+  it("persists the checkpoint's alive set in the snapshot", () => {
+    const game = makeGame({ creatorPersistentID: "host-pid" });
+    game.setListed(true);
+    const host = makeClient({
+      clientID: cid("host"),
+      persistentID: "host-pid",
+      publicId: "host-acc",
+    });
+    game.joinClient(host);
+    startGame(game);
+    // The checkpoint upload path writes this field; pin the snapshot handoff.
+    (
+      game as unknown as { checkpointAliveClientIDs: string[] }
+    ).checkpointAliveClientIDs = [cid("host")];
+    expect(game.snapshot()!.aliveClientIDs).toEqual([cid("host")]);
+  });
+});
+
 describe("GameServer creator-leave save", () => {
   beforeEach(() => {
     vi.useFakeTimers();

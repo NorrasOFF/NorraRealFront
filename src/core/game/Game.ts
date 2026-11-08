@@ -1064,24 +1064,34 @@ export interface BuildableUnit {
   // escalate per level, so a bulk total is NOT cost * amount). Only set when
   // canUpgrade is not false.
   upgradeCosts?: Gold[];
+  // Cumulative cost of building 1..MAX_UPGRADE_AMOUNT copies in one intent.
+  // Only set for bulk-buildable ships, whose per-ship cost escalates with the
+  // number already owned (so a bulk total is NOT cost * amount).
+  buildCosts?: Gold[];
   overlappingRailroads: TileRef[];
   ghostRailPaths: TileRef[][];
 }
 
-// Total price of buying `amount` of a buildable in one intent. Upgrades use
-// the escalating totals from core; flat-cost units (nukes) scale linearly.
+// Total price of buying `amount` of a buildable in one intent. Upgrades and
+// escalating ship builds use the precomputed totals from core; flat-cost units
+// (nukes) scale linearly.
 export function bulkCost(bu: BuildableUnit, amount: number): Gold {
-  return bu.upgradeCosts?.[amount - 1] ?? bu.cost * BigInt(amount);
+  return (
+    bu.upgradeCosts?.[amount - 1] ??
+    bu.buildCosts?.[amount - 1] ??
+    bu.cost * BigInt(amount)
+  );
 }
 
 // Largest amount (up to MAX_UPGRADE_AMOUNT) whose bulk total fits in `gold`.
 // 0 when not even a single purchase is affordable.
 export function maxBulkAmount(bu: BuildableUnit, gold: Gold): number {
   let max = 0;
+  // Never price amounts past the shipped totals — beyond the array, bulkCost
+  // would silently fall back to linear pricing.
+  const bulkCosts = bu.upgradeCosts ?? bu.buildCosts;
   for (let n = 1; n <= MAX_UPGRADE_AMOUNT; n++) {
-    // Never price upgrades past the shipped totals — beyond the array,
-    // bulkCost would silently fall back to linear pricing.
-    if (bu.upgradeCosts !== undefined && n > bu.upgradeCosts.length) {
+    if (bulkCosts !== undefined && n > bulkCosts.length) {
       break;
     }
     if (bulkCost(bu, n) > gold) {

@@ -5,14 +5,23 @@ import { z } from "zod";
 import type { RankedLeaderboardEntry } from "../../core/ApiSchemas";
 import { authDataDir } from "../AuthPaths";
 import { gameApiCors } from "../GameApiCors";
+import type { RankedPlacement } from "./Placements";
 
 // The single ranked ladder. Games that produce a rating are private lobbies
 // whose host listed them publicly ("ranked lobbies"). The computation is
-// intentionally isolated behind RatingAlgorithm so the provisional formula
-// below can be replaced without touching persistence, the wire or the UI.
+// intentionally isolated behind RatingAlgorithm so the formula can be retuned
+// without touching persistence, the wire or the UI.
 
 export const RANKED_START_ELO = 1200;
-export const RANKED_K_FACTOR = 32;
+// Elo awarded to the winner of a full lobby. Every place below first loses
+// RANKED_PLACEMENT_SLOPE * this amount, so 15th in a 15-player lobby earns
+// 100 * (1 - 0.05 * 14) = 30. Teams divide the place award by their size.
+export const RANKED_WINNER_ELO = 100;
+export const RANKED_PLACEMENT_SLOPE = 0.05;
+// Lazy inactivity decay: after each full week without a rated game, the part
+// of the rating above RANKED_START_ELO is multiplied by (1 - 0.1) = 0.9.
+export const RANKED_IDLE_DECAY_PER_WEEK = 0.1;
+export const RANKED_WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 export const RANKED_MIN_ELO = 100;
 // Older match ids are forgotten once the log grows past this. They only exist
 // to make a retried archive upload idempotent.
@@ -32,6 +41,9 @@ export interface RankedMatch {
   // Public ids of the winning player (FFA/1v1) or every member of the winning
   // team (team games). Empty means no winner, and the match is not rated.
   winnerPublicIds: string[];
+  // Dense finishing places from the game's stats (see Placements.ts). When
+  // omitted the fallback is winner = 1st and everyone else in join order.
+  placements?: RankedPlacement[];
 }
 
 export interface PlayerRating {
@@ -89,63 +101,110 @@ function clampElo(elo: number): number {
   return Math.max(RANKED_MIN_ELO, Math.round(elo * 100) / 100);
 }
 
-function expectedScore(rating: number, opponent: number): number {
-  return 1 / (1 + Math.pow(10, (opponent - rating) / 400));
+/**
+ * Placement award before any team split: `RANKED_WINNER_ELO * (1 - slope *
+ * (place - 1))`, clamped at zero. First place therefore receives the full
+ * winner constant, second 95 at the current tuning, and 15th 30.
+ */
+export function placementAward(place: number): number {
+  const safePlace = Number.isFinite(place) ? Math.max(1, Math.floor(place)) : 1;
+  const raw =
+    RANKED_WINNER_ELO * (1 - RANKED_PLACEMENT_SLOPE * (safePlace - 1));
+  return Math.max(0, Math.round(raw * 100) / 100);
 }
 
 /**
- * Provisional, deliberately simple Elo. Winners are compared pairwise against
- * every loser; same-outcome pairs (two teammates or two losers) are skipped so
- * a team result does not inflate or deflate teammates against each other. Each
- * player's swing is averaged over the cross-outcome opponents they faced.
- *
- * Replace this function (or pass another RatingAlgorithm to the store) once
- * the real balancing model is ready. Team games use winnerPublicIds; no team
- * membership beyond the winner set is required by this formula.
+ * Lazy inactivity decay. Only whole weeks count, the decay is applied to the
+ * part of the rating above RANKED_START_ELO, and a rating at or below the
+ * start value never moves. The stored value is updated when the player next
+ * finishes a rated game; reads use this same function.
  */
-export const provisionalElo: RatingAlgorithm = (match, ratings) => {
-  const winners = new Set(match.winnerPublicIds);
-  const participants = new Map<string, RankedParticipant>();
-  for (const p of match.participants) {
-    if (!participants.has(p.publicId)) participants.set(p.publicId, p);
+export function decayElo(
+  elo: number,
+  lastRatedAt: number,
+  now: number,
+): number {
+  const excess = elo - RANKED_START_ELO;
+  if (excess <= 0 || !Number.isFinite(lastRatedAt) || now <= lastRatedAt) {
+    return elo;
   }
-  const relevantWinners = [...participants.keys()].filter((id) =>
-    winners.has(id),
+  const weeks = Math.floor((now - lastRatedAt) / RANKED_WEEK_MS);
+  if (weeks <= 0) return elo;
+  return clampElo(
+    RANKED_START_ELO + excess * Math.pow(1 - RANKED_IDLE_DECAY_PER_WEEK, weeks),
   );
-  const losers = [...participants.keys()].filter((id) => !winners.has(id));
-  const updates = new Map<string, number>();
-  if (relevantWinners.length === 0 || losers.length === 0) {
+}
+
+interface ResolvedPlace {
+  place: number;
+  teamSize: number;
+}
+
+// Places supplied by the game win; anything the caller omitted is treated as
+// last. With no placements at all, fall back to winner = 1st and the rest in
+// join order so older callers/tests still rate a match.
+function resolvePlaces(
+  match: RankedMatch,
+  participants: Map<string, RankedParticipant>,
+): Map<string, ResolvedPlace> {
+  const resolved = new Map<string, ResolvedPlace>();
+  for (const placement of match.placements ?? []) {
+    if (!participants.has(placement.publicId)) continue;
+    if (!Number.isFinite(placement.place) || placement.place < 1) continue;
+    resolved.set(placement.publicId, {
+      place: Math.floor(placement.place),
+      teamSize: Math.max(1, Math.floor(placement.teamSize ?? 1)),
+    });
+  }
+
+  if (resolved.size > 0) {
+    const lastPlace = participants.size;
     for (const id of participants.keys()) {
-      updates.set(id, ratings.get(id)?.elo ?? RANKED_START_ELO);
+      if (!resolved.has(id))
+        resolved.set(id, { place: lastPlace, teamSize: 1 });
     }
-    return updates;
+    return resolved;
   }
 
-  const deltas = new Map<string, { total: number; games: number }>();
-  const add = (id: string, delta: number) => {
-    const entry = deltas.get(id) ?? { total: 0, games: 0 };
-    entry.total += delta;
-    entry.games += 1;
-    deltas.set(id, entry);
-  };
+  const winners = new Set(match.winnerPublicIds);
+  let nextPlace = 2;
+  for (const id of participants.keys()) {
+    if (winners.has(id)) {
+      resolved.set(id, { place: 1, teamSize: 1 });
+    } else {
+      resolved.set(id, { place: nextPlace++, teamSize: 1 });
+    }
+  }
+  return resolved;
+}
 
-  for (const winnerId of relevantWinners) {
-    const winnerRating = ratings.get(winnerId)?.elo ?? RANKED_START_ELO;
-    for (const loserId of losers) {
-      const loserRating = ratings.get(loserId)?.elo ?? RANKED_START_ELO;
-      const winnerExpected = expectedScore(winnerRating, loserRating);
-      add(winnerId, RANKED_K_FACTOR * (1 - winnerExpected));
-      add(loserId, -RANKED_K_FACTOR * winnerExpected);
+/**
+ * Placement-based ranked points. Every finisher gains something (the ladder
+ * is deliberately positive-sum so attendance matters), the award falls by
+ * 5% of the winner constant per place, and a team splits its place award
+ * evenly between its members.
+ *
+ * There is no pairwise opponent-rating term: the outcome is fully determined
+ * by finishing place, so a hidden ladder is stable and easy to explain.
+ */
+export const placementElo: RatingAlgorithm = (match, ratings) => {
+  const participants = new Map<string, RankedParticipant>();
+  for (const participant of match.participants) {
+    if (!participants.has(participant.publicId)) {
+      participants.set(participant.publicId, participant);
     }
   }
 
+  const places = resolvePlaces(match, participants);
+  const updates = new Map<string, number>();
   for (const id of participants.keys()) {
     const start = ratings.get(id)?.elo ?? RANKED_START_ELO;
-    const delta = deltas.get(id);
-    updates.set(
-      id,
-      clampElo(delta === undefined ? start : start + delta.total / delta.games),
-    );
+    const resolved = places.get(id);
+    const award =
+      resolved === undefined
+        ? 0
+        : placementAward(resolved.place) / resolved.teamSize;
+    updates.set(id, clampElo(start + award));
   }
   return updates;
 };
@@ -190,7 +249,7 @@ export class RankedRatingsStore {
 
   constructor(
     private readonly dir: string = authDataDir(),
-    private readonly algorithm: RatingAlgorithm = provisionalElo,
+    private readonly algorithm: RatingAlgorithm = placementElo,
   ) {}
 
   private get file(): string {
@@ -253,7 +312,11 @@ export class RankedRatingsStore {
   async player(publicId: string): Promise<PlayerRating | null> {
     await this.init();
     const rating = this.players.get(publicId);
-    return rating === undefined ? null : { ...rating };
+    if (rating === undefined) return null;
+    return {
+      ...rating,
+      elo: decayElo(rating.elo, rating.updatedAt, Date.now()),
+    };
   }
 
   async leaderboard(
@@ -263,18 +326,31 @@ export class RankedRatingsStore {
     await this.init();
     const safePage = Number.isFinite(page) ? Math.max(1, Math.floor(page)) : 1;
     const safeSize = Math.max(1, Math.min(200, Math.floor(pageSize)));
-    const sorted = [...this.players.values()].sort((a, b) => {
-      if (b.elo !== a.elo) return b.elo - a.elo;
-      return a.publicId < b.publicId ? -1 : a.publicId > b.publicId ? 1 : 0;
-    });
+    const now = Date.now();
+    // Decay is lazy: the stored value is only rewritten when the player next
+    // plays. Sorting and display use the same effective value so a returning
+    // player cannot appear at a stale peak.
+    const sorted = [...this.players.values()]
+      .map((rating) => ({
+        rating,
+        elo: decayElo(rating.elo, rating.updatedAt, now),
+      }))
+      .sort((a, b) => {
+        if (b.elo !== a.elo) return b.elo - a.elo;
+        return a.rating.publicId < b.rating.publicId
+          ? -1
+          : a.rating.publicId > b.rating.publicId
+            ? 1
+            : 0;
+      });
     const start = (safePage - 1) * safeSize;
-    return sorted.slice(start, start + safeSize).map((rating, index) => ({
+    return sorted.slice(start, start + safeSize).map((entry, index) => ({
       rank: start + index + 1,
-      elo: rating.elo,
-      peakElo: rating.peakElo,
-      total: rating.games,
-      public_id: rating.publicId,
-      accountUsername: rating.username,
+      elo: entry.elo,
+      peakElo: entry.rating.peakElo,
+      total: entry.rating.games,
+      public_id: entry.rating.publicId,
+      accountUsername: entry.rating.username,
     }));
   }
 
@@ -302,11 +378,17 @@ export class RankedRatingsStore {
 
       const now = Date.now();
       for (const participant of unique.values()) {
-        if (!this.players.has(participant.publicId)) {
+        const existing = this.players.get(participant.publicId);
+        if (existing === undefined) {
           this.players.set(
             participant.publicId,
             defaultRating(participant.publicId, participant.username, now),
           );
+        } else {
+          // Apply every full week of inactivity before this game's award, so
+          // a returning player is rated from their decayed value. Duplicate
+          // uploads return above, before this can run twice.
+          existing.elo = decayElo(existing.elo, existing.updatedAt, now);
         }
       }
 

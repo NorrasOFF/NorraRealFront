@@ -15,6 +15,7 @@ import {
 import { GameEnv } from "../core/configuration/Config";
 import { GameType, RankedType } from "../core/game/Game";
 import {
+  AllPlayersStats,
   ClientCheckpointChunkMessage,
   ClientCheckpointMessage,
   ClientID,
@@ -67,7 +68,12 @@ import {
 import { ListingState } from "./ListingState";
 import { identityFor, MatchTelemetryRecorder } from "./MatchTelemetryRecorder";
 import { friendsLookup, NameVisibility } from "./NameVisibility";
+import { computeRankedPlacements } from "./ranking/Placements";
 import { getRankedRatings, type RankedMatch } from "./ranking/RankedRatings";
+import {
+  aliveClientIdsFromCheckpoint,
+  rankedResumeRequiredSeats,
+} from "./ranking/ResumeEligibility";
 import { Roster } from "./Roster";
 import { noopSaveStore, type ServerSaveStore } from "./SaveStore";
 import { ServerEnv } from "./ServerEnv";
@@ -214,6 +220,12 @@ export class GameServer {
   // Seat -> the persistentID currently holding it. Used to stop two players
   // claiming the same nation. Persists across a holder's disconnect.
   private readonly seatClaimants = new Map<ClientID, string>();
+  // Account behind each seat claimant, so a resume can tell the original
+  // account from someone who merely grabbed the seat under another login.
+  private readonly seatClaimantPublicIds = new Map<
+    ClientID,
+    string | undefined
+  >();
   // Countdown armed on the first join of a restored game; until it elapses (or
   // if nobody ever joins) the saved turn loop stays unarmed so players can
   // pick a nation.
@@ -238,6 +250,14 @@ export class GameServer {
   // means full-history resume.
   private checkpoint?: string;
   private checkpointTurn = -1;
+  // ClientIDs alive in the latest accepted checkpoint. Persisted with the save
+  // so a resume can require exactly the surviving players to come back before
+  // the game may still count as ranked. Absent when no checkpoint was ever
+  // uploaded (resume then falls back to requiring every seat).
+  private checkpointAliveClientIDs?: string[];
+  // Seats that must be reclaimed for a restored started game to stay ranked.
+  // Empty for ordinary and unranked games, and for restored lobby-stage saves.
+  private readonly rankedRejoinSeats = new Set<ClientID>();
   // Set when a host checkpoint is accepted, so the next `persistSave` reports
   // its write result back to the host (`save_ack`). Without this the host's
   // "Checkpoint saved" toast is the only feedback and an empty save list has no
@@ -411,10 +431,10 @@ export class GameServer {
     this.restored = true;
     this.durationBase = Date.now();
     this.gameConfig = save.gameConfig;
-    // A resumed save is a continuation, not a fresh ranked match. Clearing the
-    // flag here (and from the frozen start info below) prevents a resumed game
-    // from re-rating players or archiving as ranked.
-    delete this.gameConfig.ranked;
+    // A resumed save keeps its ranked flag so a clean resume can still rate
+    // the game. The flag is stripped at start unless every player who was
+    // alive in the saved checkpoint has reclaimed their seat; see
+    // startResumedGame(). Unranked games are unaffected.
     this.creatorPersistentID = save.creatorPersistentID;
     this.visibleAt = save.visibleAt;
     // "prestart" is a transient countdown state with no frozen player list;
@@ -446,11 +466,22 @@ export class GameServer {
 
     if (save.stage === "started" && save.gameStartInfo !== undefined) {
       this.gameStartInfo = save.gameStartInfo;
-      delete this.gameStartInfo.config.ranked;
       this.buildWireGameStartInfo();
       this.zbinCtx = createGameWireContext(this.gameStartInfo.players);
       this._startTime = Date.now();
       this.lastPingUpdate = Date.now();
+      // A resumed ranked game only rates when every player who was alive at
+      // the save comes back. Requires the saved checkpoint's alive set; older
+      // saves without one require every non-spectator seat. Checked when the
+      // host's resume countdown actually starts play.
+      if (this.isRanked()) {
+        for (const clientID of rankedResumeRequiredSeats(
+          save.seats,
+          save.aliveClientIDs,
+        )) {
+          this.rankedRejoinSeats.add(clientID);
+        }
+      }
       // Nobody is connected at restore: mark every original nation
       // disconnected so the sim hands them to AI instead of leaving them
       // idle. A player who then reconnects/claims pushes the opposite mark.
@@ -518,6 +549,7 @@ export class GameServer {
     }
     this.checkpoint = save.checkpoint;
     this.checkpointTurn = ticks;
+    this.checkpointAliveClientIDs = save.aliveClientIDs;
   }
 
   // Build a snapshot of this game for persistence, or null when it must not be
@@ -541,6 +573,10 @@ export class GameServer {
       checkpoint: this.checkpoint,
       ...(this.checkpoint !== undefined
         ? { checkpointTurn: this.checkpointTurn }
+        : {}),
+      ...(this.stage === "started" &&
+      this.checkpointAliveClientIDs !== undefined
+        ? { aliveClientIDs: [...this.checkpointAliveClientIDs] }
         : {}),
       savedAt: Date.now(),
       gitCommit: this.deps.telemetryBuildHash,
@@ -697,6 +733,7 @@ export class GameServer {
   private tryClaimSeat(
     clientID: ClientID | undefined,
     persistentID: string,
+    publicId?: string,
   ): SavedLobbySeat | null {
     if (!this.restored || clientID === undefined) {
       return null;
@@ -710,6 +747,9 @@ export class GameServer {
       return null;
     }
     this.seatClaimants.set(clientID, persistentID);
+    if (publicId !== undefined) {
+      this.seatClaimantPublicIds.set(clientID, publicId);
+    }
     return seat;
   }
 
@@ -948,7 +988,11 @@ export class GameServer {
     // nations never had a clientID, so they can never be claimed.
     const requestedSeat =
       claimClientID ?? this.seatToPersistent.get(client.persistentID);
-    const claimedSeat = this.tryClaimSeat(requestedSeat, client.persistentID);
+    const claimedSeat = this.tryClaimSeat(
+      requestedSeat,
+      client.persistentID,
+      client.publicId,
+    );
     if (claimedSeat !== null) {
       client.clientID = claimedSeat.clientID;
       client.spectator = false;
@@ -1116,6 +1160,7 @@ export class GameServer {
         seat.trusted,
       );
       this.seatClaimants.set(clientID, persistentID);
+      this.seatClaimantPublicIds.set(clientID, seat.publicId);
       this.clients.add(client);
     }
 
@@ -1519,6 +1564,7 @@ export class GameServer {
     }
     this.checkpoint = wire;
     this.checkpointTurn = checkpoint.ticks;
+    this.checkpointAliveClientIDs = aliveClientIdsFromCheckpoint(checkpoint);
     this.log.info("accepted host checkpoint, persisting save", {
       gameID: this.id,
       ticks: checkpoint.ticks,
@@ -1927,6 +1973,41 @@ export class GameServer {
     this.startsAt = undefined;
   }
 
+  // Whether the original account behind a saved seat has reclaimed it. A
+  // different login on the same browser (same persistentID, different
+  // publicId) does NOT count for a ranked resume; with no publicId stored we
+  // fall back to the persistentID.
+  private restoredSeatRejoined(clientID: ClientID): boolean {
+    const seat = this.restoredSeats.get(clientID);
+    if (seat === undefined) return false;
+    if (this.seatClaimants.get(clientID) === undefined) return false;
+    if (seat.publicId !== undefined) {
+      return this.seatClaimantPublicIds.get(clientID) === seat.publicId;
+    }
+    return this.seatClaimants.get(clientID) === seat.persistentID;
+  }
+
+  // A resumed ranked game keeps its rating only when every player who was
+  // alive at save time is back. Otherwise the game continues for fun but is
+  // stripped of the ranked flag (and therefore archives unrated), which stops
+  // a host from resuming a reduced field and farming placement points.
+  private enforceResumedRankedEligibility(): void {
+    if (!this.isRanked() || this.rankedRejoinSeats.size === 0) return;
+    const missing = [...this.rankedRejoinSeats].filter(
+      (clientID) => !this.restoredSeatRejoined(clientID),
+    );
+    if (missing.length === 0) return;
+    delete this.gameConfig.ranked;
+    delete this.gameStartInfo.config.ranked;
+    this.buildWireGameStartInfo();
+    this.rankedRoster.clear();
+    this.log.info("resumed ranked game is unranked: players did not rejoin", {
+      gameID: this.id,
+      required: this.rankedRejoinSeats.size,
+      missing: missing.length,
+    });
+  }
+
   // The countdown elapsed: hand everyone the saved history and arm the turn
   // loop. A normal game never reaches this (it starts through GameManager).
   private startResumedGame(): void {
@@ -1940,6 +2021,8 @@ export class GameServer {
     if (this.clients.active().length === 0) {
       return;
     }
+    this.enforceResumedRankedEligibility();
+    this.captureRankedRoster();
     this.resumeStarted = true;
     this.startsAt = undefined;
     this.stopLobbyInfoBroadcast();
@@ -2612,7 +2695,7 @@ export class GameServer {
       gameID: this.id,
       winner: winner?.winner,
     });
-    this.applyRankedResult(winner?.winner);
+    this.applyRankedResult(winner?.winner, winner?.allPlayersStats);
 
     // Players must stay in the same order as the game start info.
     const playerRecords: PlayerRecord[] = this.gameStartInfo.players.map(
@@ -2658,9 +2741,13 @@ export class GameServer {
 
   // Feed a finished ranked lobby into the single ladder. The winner tuple
   // carries the winning player's clientID, or (for a team win) every winning
-  // member's clientID after the team name, which is exactly what the store
-  // needs. A nation winner has no account and is not rated.
-  private applyRankedResult(winner: Winner | undefined): void {
+  // member's clientID after the team name. Finishing places for everyone else
+  // come from the same stats record that is archived with the game. A nation
+  // winner has no account and is not rated.
+  private applyRankedResult(
+    winner: Winner | undefined,
+    allPlayersStats: AllPlayersStats | undefined,
+  ): void {
     if (this.rankedResultApplied || !this.isRanked()) return;
     if (winner === undefined || this.rankedRoster.size < 2) return;
 
@@ -2684,10 +2771,27 @@ export class GameServer {
     if (winnerPublicIds.length === 0) return;
 
     this.rankedResultApplied = true;
+    // Places come from the core's own finishing data (deathPosition for the
+    // eliminated, finalTiles for survivors), normalised to the rated roster so
+    // bots/nations do not consume places. See ranking/Placements.ts.
+    const teamIndexByClient = new Map<ClientID, number | undefined>();
+    for (const player of this.gameStartInfo.players) {
+      teamIndexByClient.set(player.clientID, player.teamIndex);
+    }
+    const placements = computeRankedPlacements(
+      [...this.rankedRoster.entries()].map(([clientID, participant]) => ({
+        clientID,
+        publicId: participant.publicId,
+        teamIndex: teamIndexByClient.get(clientID),
+      })),
+      allPlayersStats ?? {},
+      winnerPublicIds,
+    );
     const match: RankedMatch = {
       gameId: this.id,
       participants: [...this.rankedRoster.values()],
       winnerPublicIds,
+      placements,
     };
     void this.deps.ranked(match).catch((error) =>
       this.log.error("failed to apply ranked result", {

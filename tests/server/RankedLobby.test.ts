@@ -71,12 +71,62 @@ describe("ranked lobbies", () => {
     const match = ranked.mock.calls[0][0];
     expect(match.gameId).toBe(game.id);
     expect(match.winnerPublicIds).toEqual(["winner-account"]);
+    expect(match.placements).toEqual([
+      { publicId: "winner-account", place: 1, teamSize: 1 },
+      { publicId: "loser-account", place: 2, teamSize: 1 },
+    ]);
     expect(match.participants).toEqual(
       expect.arrayContaining([
         { publicId: "winner-account", username: "Winner" },
         { publicId: "loser-account", username: "Loser" },
       ]),
     );
+  });
+
+  test("places finishers from the game's archived stats", async () => {
+    const ranked = vi.fn(async (_match: RankedMatch) => true);
+    const game = makeGame({ deps: { ranked } });
+    game.setListed(true);
+
+    const make = (name: string, ip: string) =>
+      makeClient({
+        clientID: cid(name),
+        publicId: `${name}-account`,
+        username: name,
+        ip,
+        claims: signedIn,
+      });
+    const winner = make("winner", "10.0.1.1");
+    const survivor = make("survivor", "10.0.1.2");
+    const third = make("third", "10.0.1.3");
+    const fourth = make("fourth", "10.0.1.4");
+    for (const client of [winner, survivor, third, fourth]) {
+      expect(game.joinClient(client)).toBe("joined");
+    }
+    startGame(game);
+
+    const vote = {
+      type: "winner" as const,
+      winner: ["player", winner.clientID] as ["player", string],
+      allPlayersStats: {
+        [winner.clientID]: { finalTiles: 1000n },
+        [survivor.clientID]: { finalTiles: 500n },
+        [third.clientID]: { deathPosition: 2 },
+        [fourth.clientID]: { deathPosition: 3 },
+      },
+    };
+    for (const client of [winner, survivor, third, fourth]) {
+      await mockWsOf(client).emit(vote);
+    }
+
+    expect(ranked).toHaveBeenCalledTimes(1);
+    const match = ranked.mock.calls[0][0];
+    expect(match.placements).toEqual([
+      { publicId: "winner-account", place: 1, teamSize: 1 },
+      { publicId: "survivor-account", place: 2, teamSize: 1 },
+      { publicId: "third-account", place: 3, teamSize: 1 },
+      { publicId: "fourth-account", place: 4, teamSize: 1 },
+    ]);
   });
 
   test("an unranked lobby never reports a rating", async () => {

@@ -166,24 +166,40 @@ export class ConstructionExecution implements Execution {
       case UnitType.MIRV:
         this.mg.addExecution(new MirvExecution(player, this.tile));
         break;
-      case UnitType.Warship:
-        this.mg.addExecution(
-          new WarshipExecution({ owner: player, patrolTile: this.tile }),
-        );
+      case UnitType.Warship: {
+        // `amount` > 1 comes from the bulk-build gesture (double-tapping the
+        // warship hotkey). Each spawn is validated and charged separately by
+        // WarshipExecution, so the player pays the escalating per-ship price
+        // and gets as many ships as their gold covers.
+        const count = this.amount ?? 1;
+        for (let i = 0; i < count; i++) {
+          this.mg.addExecution(
+            new WarshipExecution({ owner: player, patrolTile: this.tile }),
+          );
+        }
         break;
-      case UnitType.MissileShip:
-        this.mg.addExecution(
-          new MissileShipExecution({ owner: player, patrolTile: this.tile }),
-        );
+      }
+      case UnitType.MissileShip: {
+        const count = this.amount ?? 1;
+        for (let i = 0; i < count; i++) {
+          this.mg.addExecution(
+            new MissileShipExecution({ owner: player, patrolTile: this.tile }),
+          );
+        }
         break;
-      case UnitType.MissileDefenseShip:
-        this.mg.addExecution(
-          new MissileDefenseShipExecution({
-            owner: player,
-            patrolTile: this.tile,
-          }),
-        );
+      }
+      case UnitType.MissileDefenseShip: {
+        const count = this.amount ?? 1;
+        for (let i = 0; i < count; i++) {
+          this.mg.addExecution(
+            new MissileDefenseShipExecution({
+              owner: player,
+              patrolTile: this.tile,
+            }),
+          );
+        }
         break;
+      }
       case UnitType.Port:
         this.mg.addExecution(new PortExecution(this.structure!));
         break;
