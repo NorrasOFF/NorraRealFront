@@ -78,9 +78,30 @@ the game unrated (unchanged).
   `RANKED_PLACEMENT_SLOPE`, `RANKED_IDLE_DECAY_PER_WEEK`, `RANKED_WEEK_MS`;
   `RankedMatch.placements` (optional, for old callers/tests).
 - `src/server/GameServer.ts`: `applyRankedResult` now also receives
-  `allPlayersStats` and builds placements from the ranked roster. No wire,
-  schema, checkpoint or `src/core` change; `ranked-ratings.json` stays
-  version 1 (old files load, decay starts from their `updatedAt`).
+  `allPlayersStats` and builds placements from the ranked roster.
+- `src/server/ranking/ResumeEligibility.ts` (new): derives the alive clientIDs
+  from a host checkpoint and the seats a resumed ranked game must reclaim.
+- `src/core/Schemas.ts`: `SavedLobbySchema.aliveClientIDs?: string[]`, written
+  by `GameServer.snapshot()` only when a started game has an accepted
+  checkpoint. It is a JSON save field only; no wire/checkpoint-format change.
+
+### Resumed ranked lobbies
+
+A started save now **keeps** its ranked flag. When the host's resume countdown
+actually starts play (`startResumedGame`), the game stays ranked only if every
+required seat was reclaimed **by its original account**:
+
+- required seats are the checkpoint's alive human clientIDs
+  (`aliveClientIdsFromCheckpoint`: `playerInfo.clientID` without a
+  `deathPosition` in `checkpoint.stats`);
+- if the save has no checkpoint/alive set (older saves), every non-spectator
+  seat is required (stricter fallback);
+- a claim counts only when the claimant's `publicId` matches the saved seat's
+  (`persistentID` fallback for seats without a publicId), so a different login
+  grabbing the seat does not count;
+- on any missing required seat the ranked flag is deleted from `gameConfig`
+  and `gameStartInfo.config`, `rankedRoster` is cleared, and the game archives
+  unrated. Players can still play it for fun.
 
 ## 4. Verification
 
@@ -90,10 +111,13 @@ the game unrated (unchanged).
   placements, decay-before-award and decayed leaderboard ordering.
 - `tests/server/RankedLobby.test.ts` 5 pass, including a stats-driven
   placement integration case.
-- `npx vitest run tests/server`: **705 passed, 3 failed** — the three failures
-  are the documented pre-existing ones (`GameServerWire` `numTurns` snapshot,
-  `HostedLobbyListing`, `GameServerPhase`). No new failures.
-- Not browser-tested: server-only change, no UI/input/wire path touched.
+- `tests/server/RankedResumeEligibility.test.ts` and the `ranked resume
+eligibility` block in `tests/server/GameServerSave.test.ts` cover all-rejoined,
+  missing-survivor, wrong-account, no-alive-set fallback and snapshot handoff.
+- `npx vitest run tests/server tests/zbin`: **866 passed, 3 failed** — the three
+  failures are the documented pre-existing ones (`GameServerWire` `numTurns`
+  snapshot, `HostedLobbyListing`, `GameServerPhase`). No new failures.
+- Not browser-tested: server-only changes, no UI/input/wire path touched.
 
 ## 5. Open items
 
@@ -108,5 +132,16 @@ the game unrated (unchanged).
 - **Deploy required** for the new formula/decay to run in production. Existing
   `ranked-ratings.json` is compatible; the first match after deploy applies
   decay from each player's stored `updatedAt`.
+- **Resume gating limits**: the alive set comes from the latest accepted host
+  checkpoint, which can be older than the save, so a player who died after that
+  checkpoint is still required to rejoin (stricter, never more permissive). A
+  save with no checkpoint requires every non-spectator seat. There is no client
+  UI explaining that a resume lost its ranked status; the server log line
+  `resumed ranked game is unranked: players did not rejoin` is the only signal.
+- **Leaderboard ties**: equal effective Elo sorts by `publicId` ascending, and
+  the client shows the first five rows of page 1. Tied players at the five-row
+  cutoff are therefore chosen by opaque account id. Change the comparator in
+  `RankedRatingsStore.leaderboard()` if a fairer tie-break is wanted (e.g. more
+  games first, then recent activity).
 - The leaderboard endpoint still returns `elo`; hiding it in the UI is a
   separate client change.
