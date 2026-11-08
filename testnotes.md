@@ -1046,3 +1046,20 @@ Verification (this session):
   adjacent water spawned exactly 5 warships and cleared the ghost. Note the
   build keybinds run on **keyup**, not keydown. Artifact:
   `e2e/artifacts/warship-x5.png`.
+
+## Pre-existing failure: NewsBox expects a tournament entry
+
+`tests/client/components/NewsBox.test.ts` > "contains a tournament entry" fails
+on clean HEAD (verified by stashing): `resources/news.json` only contains
+`announcement` items, so `items.some((i) => i.type === "tournament")` is false.
+Either add a tournament item when one is scheduled or drop that assertion. The
+other `NewsBox` tests are content-agnostic and pass.
+
+## Release v2.00.03 (ranked news)
+
+`resources/version.txt` is now `2.00.03`, `resources/changelog.md` has the
+matching entry, and `resources/news.json` gained a first item
+`id: "ranked-live"` announcing that ranked works. Remember the release
+convention: bump only `resources/version.txt` (not `static/version.txt`, which
+the v2.00.02 release also left untouched), and the deployed build overwrites it
+from the deploy version tag anyway.
