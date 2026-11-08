@@ -106,6 +106,11 @@ export class GameRunner {
   private isExecuting = false;
 
   private playerViewData: Record<PlayerID, NameViewData> = {};
+  // Last tileChangeVersion each player's name placement was computed for.
+  // placeName() flood-fills grids and finds an inscribed rectangle; skipping
+  // players whose territory did not change since the last rebuild cuts that
+  // work substantially in large games.
+  private playerNameVersion: Record<PlayerID, number> = {};
 
   constructor(
     public game: Game,
@@ -235,8 +240,19 @@ export class GameRunner {
       this.game.ticks() < 3 ||
       this.game.ticks() % 30 === 0
     ) {
+      // On the first rebuild (and at spawn end / resume) every placement must
+      // be recomputed even if no tiles moved. Between those, only players
+      // whose territory changed can have a different name placement.
+      const forceRefresh = spawnJustEnded || fullViewSync;
+      if (forceRefresh) this.playerNameVersion = {};
       for (const p of this.game.players()) {
-        this.playerViewData[p.id()] = placeName(this.game, p);
+        const id = p.id();
+        const version = p.tileChangeVersion();
+        if (!forceRefresh && this.playerNameVersion[id] === version) {
+          continue;
+        }
+        this.playerNameVersion[id] = version;
+        this.playerViewData[id] = placeName(this.game, p);
       }
       viewDataChanged = true;
     }

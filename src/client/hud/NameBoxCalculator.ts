@@ -67,8 +67,8 @@ export function placeName(game: Game, player: Player): NameViewData {
     scalingFactor = 32;
   }
 
-  const grid = createGrid(game, player, boundingBox, scalingFactor);
-  const largestRectangle = findLargestInscribedRectangle(grid);
+  const grid = createFlatGrid(game, player, boundingBox, scalingFactor);
+  const largestRectangle = findLargestInscribedRectangleFlat(grid);
   largestRectangle.x = largestRectangle.x * scalingFactor;
   largestRectangle.y = largestRectangle.y * scalingFactor;
   largestRectangle.width = largestRectangle.width * scalingFactor;
@@ -91,6 +91,99 @@ export function placeName(game: Game, player: Player): NameViewData {
     y: Math.ceil(center.y),
     size: fontSize,
   };
+}
+
+/**
+ * Flat (Uint8Array-backed) variant of createGrid used by placeName. The public
+ * createGrid stays for callers/tests that want a boolean[][]; the name rebuild
+ * runs for every player every 30 ticks in the worker, where one typed array
+ * plus no per-cell Cell allocation is materially cheaper.
+ */
+export interface FlatGrid {
+  cells: Uint8Array;
+  width: number;
+  height: number;
+}
+
+function createFlatGrid(
+  game: Game,
+  player: Player,
+  boundingBox: { min: Point; max: Point },
+  scalingFactor: number,
+): FlatGrid {
+  const minX = Math.floor(boundingBox.min.x / scalingFactor);
+  const minY = Math.floor(boundingBox.min.y / scalingFactor);
+  const maxX = Math.floor(boundingBox.max.x / scalingFactor);
+  const maxY = Math.floor(boundingBox.max.y / scalingFactor);
+  const width = maxX - minX + 1;
+  const height = maxY - minY + 1;
+  if (width <= 0 || height <= 0) {
+    return { cells: new Uint8Array(0), width: 0, height: 0 };
+  }
+  const cells = new Uint8Array(width * height);
+  const mapWidth = game.width();
+  const mapHeight = game.height();
+
+  for (let gy = minY; gy <= maxY; gy++) {
+    const py = gy * scalingFactor;
+    if (py < 0 || py >= mapHeight) continue;
+    const rowBase = (gy - minY) * width;
+    for (let gx = minX; gx <= maxX; gx++) {
+      const px = gx * scalingFactor;
+      if (px < 0 || px >= mapWidth) continue;
+      const tile = game.ref(px, py);
+      cells[rowBase + (gx - minX)] =
+        game.isShore(tile) ||
+        (game.isOcean(tile) && game.magnitude(tile) < 10) ||
+        game.owner(tile) === player ||
+        game.hasFallout(tile)
+          ? 1
+          : 0;
+    }
+  }
+
+  return { cells, width, height };
+}
+
+export function findLargestInscribedRectangleFlat(grid: FlatGrid): Rectangle {
+  const { cells, width, height } = grid;
+  const heights = new Int32Array(width);
+  const stack = new Int32Array(width + 1);
+  let bestArea = 0;
+  let bestX = 0;
+  let bestY = 0;
+  let bestWidth = 0;
+  let bestHeight = 0;
+
+  for (let row = 0; row < height; row++) {
+    const base = row * width;
+    for (let col = 0; col < width; col++) {
+      heights[col] = cells[base + col] ? heights[col] + 1 : 0;
+    }
+
+    // largestRectangleInHistogram, inlined with a reusable stack.
+    let sp = 0;
+    for (let i = 0; i <= width; i++) {
+      const h = i === width ? 0 : heights[i];
+      while (sp > 0 && h < heights[stack[sp - 1]]) {
+        const top = stack[--sp];
+        const rectHeight = heights[top];
+        const left = sp === 0 ? 0 : stack[sp - 1] + 1;
+        const rectWidth = i - left;
+        const area = rectHeight * rectWidth;
+        if (area > bestArea) {
+          bestArea = area;
+          bestX = left;
+          bestY = row - rectHeight + 1;
+          bestWidth = rectWidth;
+          bestHeight = rectHeight;
+        }
+      }
+      stack[sp++] = i;
+    }
+  }
+
+  return { x: bestX, y: bestY, width: bestWidth, height: bestHeight };
 }
 
 export function createGrid(

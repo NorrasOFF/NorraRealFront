@@ -135,23 +135,6 @@ function largeTerritoryBonus(numTiles: number, depth: number): number {
   );
 }
 
-function terrainAttackBase(terrain: TerrainType): {
-  mag: number;
-  tileCost: number;
-} {
-  switch (terrain) {
-    case TerrainType.Plains:
-      return { mag: 80, tileCost: 16.5 };
-    case TerrainType.Highland:
-      return { mag: 100, tileCost: 20 };
-    case TerrainType.Mountain:
-      return { mag: 120, tileCost: 25 };
-    case TerrainType.Impassable:
-      throw new Error(`impassable terrain cannot be attacked`);
-    default:
-      throw new Error(`terrain type ${terrain} not supported`);
-  }
-}
 const DEFAULT_SPAWN_IMMUNITY_TICKS = 5 * 10;
 
 export const JwksSchema = z.object({
@@ -927,9 +910,34 @@ export class Config {
    * budget; each tile consumes `tileCost`, scaled by how outnumbered the
    * attack is. The result reports that as a fraction of the tick.
    */
-  attackLogic(input: AttackLogicInput): AttackLogicResult {
+  attackLogic(
+    input: AttackLogicInput,
+    out?: AttackLogicResult,
+  ): AttackLogicResult {
     const { attackTroops, attacker, defender } = input;
-    let { mag, tileCost } = terrainAttackBase(input.terrain);
+    // Inlined terrainAttackBase: this runs once per conquered tile, and
+    // returning a fresh { mag, tileCost } object was a measurable allocation
+    // site in late-game attacks.
+    let mag: number;
+    let tileCost: number;
+    switch (input.terrain) {
+      case TerrainType.Plains:
+        mag = 80;
+        tileCost = 16.5;
+        break;
+      case TerrainType.Highland:
+        mag = 100;
+        tileCost = 20;
+        break;
+      case TerrainType.Mountain:
+        mag = 120;
+        tileCost = 25;
+        break;
+      case TerrainType.Impassable:
+        throw new Error(`impassable terrain cannot be attacked`);
+      default:
+        throw new Error(`terrain type ${input.terrain} not supported`);
+    }
 
     if (defender !== null && input.defensePostLevel > 0) {
       mag *= this.defensePostDefenseBonus(input.defensePostLevel);
@@ -943,16 +951,23 @@ export class Config {
 
     if (defender === null) {
       const tickBudget = input.borderSize * 2;
-      return {
-        attackerTroopLoss: mag / (attacker.type === PlayerType.Bot ? 10 : 5),
+      // Callers in hot loops pass a reusable result object; allocate only when
+      // they don't (tests, one-off calls).
+      const result = out ?? {
+        attackerTroopLoss: 0,
         defenderTroopLoss: 0,
-        tickFraction:
-          within(
-            (TERRA_NULLIUS_COST_SCALE * tileCost) / attackTroops,
-            TERRA_NULLIUS_MIN_COST,
-            TERRA_NULLIUS_MAX_COST,
-          ) / tickBudget,
+        tickFraction: 0,
       };
+      result.attackerTroopLoss =
+        mag / (attacker.type === PlayerType.Bot ? 10 : 5);
+      result.defenderTroopLoss = 0;
+      result.tickFraction =
+        within(
+          (TERRA_NULLIUS_COST_SCALE * tileCost) / attackTroops,
+          TERRA_NULLIUS_MIN_COST,
+          TERRA_NULLIUS_MAX_COST,
+        ) / tickBudget;
+      return result;
     }
 
     if (defender.isDisconnectedTeammate) {
@@ -1002,17 +1017,21 @@ export class Config {
     const speedCost =
       (within(troopRatio, 1, 7.5) * within(troopRatio / 20, 1, 50)) /
       SPEED_COST_DIVISOR;
-    return {
-      attackerTroopLoss,
-      defenderTroopLoss,
-      tickFraction:
-        (speedCost *
-          tileCost *
-          largeAttackerBonus *
-          largeDefenderBonus *
-          traitorCostMod) /
-        input.borderSize,
+    const result = out ?? {
+      attackerTroopLoss: 0,
+      defenderTroopLoss: 0,
+      tickFraction: 0,
     };
+    result.attackerTroopLoss = attackerTroopLoss;
+    result.defenderTroopLoss = defenderTroopLoss;
+    result.tickFraction =
+      (speedCost *
+        tileCost *
+        largeAttackerBonus *
+        largeDefenderBonus *
+        traitorCostMod) /
+      input.borderSize;
+    return result;
   }
 
   boatAttackAmount(attacker: Player, defender: Player | TerraNullius): number {
@@ -1069,16 +1088,20 @@ export class Config {
   }
 
   maxTroops(player: Player | PlayerView): number {
+    let cityLevels = 0;
+    // Loop instead of units().filter().map().reduce(): this runs for every
+    // player every tick via troopIncreaseRate, and the chained array helpers
+    // allocated two intermediate arrays per call.
+    for (const unit of player.units(UnitType.City)) {
+      if (!unit.isUnderConstruction()) {
+        cityLevels += unit.level();
+      }
+    }
     const maxTroops =
       player.type() === PlayerType.Human && this.hasInfiniteTroopsFor(player)
         ? 1_000_000_000
         : 2 * (pow(player.numTilesOwned(), 0.6) * 1000 + 50000) +
-          player
-            .units(UnitType.City)
-            .filter((u) => !u.isUnderConstruction())
-            .map((city) => city.level())
-            .reduce((a, b) => a + b, 0) *
-            this.cityTroopIncrease();
+          cityLevels * this.cityTroopIncrease();
 
     if (player.type() === PlayerType.Bot) {
       return maxTroops / 3;

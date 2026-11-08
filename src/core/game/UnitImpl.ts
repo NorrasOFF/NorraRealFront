@@ -424,7 +424,11 @@ export class UnitImpl implements Unit {
         break;
     }
     this._lastOwner = this._owner;
-    this._lastOwner._units = this._lastOwner._units.filter((u) => u !== this);
+    // Remove in place, preserving unit order (the old filter allocated a new
+    // array and copied every surviving unit on each captured unit).
+    const fromUnits = this._lastOwner._units;
+    const fromIndex = fromUnits.indexOf(this);
+    if (fromIndex !== -1) fromUnits.splice(fromIndex, 1);
     this._lastOwner._myUnitsVersion++;
     this._owner = newOwner;
     this._owner._units.push(this);
@@ -504,7 +508,12 @@ export class UnitImpl implements Unit {
     this._wasDestroyedByEnemy = destroyer !== undefined;
     this._destroyer = destroyer ?? undefined;
 
-    this._owner._units = this._owner._units.filter((b) => b !== this);
+    // Remove in place, preserving order (a filter() here copied the owner's
+    // whole unit array once per deleted unit; train-heavy games delete
+    // thousands of units per game).
+    const ownerUnits = this._owner._units;
+    const ownerIndex = ownerUnits.indexOf(this);
+    if (ownerIndex !== -1) ownerUnits.splice(ownerIndex, 1);
     this._owner._myUnitsVersion++;
     this._active = false;
     this.mg.addUpdate(this.toUpdate());

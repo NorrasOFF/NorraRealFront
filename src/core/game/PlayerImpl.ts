@@ -49,7 +49,6 @@ import {
   ATTACK_DELTA_INCOMING,
   ATTACK_DELTA_OUTGOING,
   diffPlayerUpdate,
-  packAttackTroopDeltas,
 } from "./GameUpdateUtils";
 import {
   AllianceView,
@@ -90,6 +89,13 @@ function dropBefore<T>(
   return drop === 0 ? items : items.slice(drop);
 }
 
+// Hoisted extractors for pruneTransient(): it runs for every player every
+// tick, and inline arrow functions allocated four closures per call.
+const tickOfItem = (item: { tick: number }) => item.tick;
+const createdAtOfItem = (item: { createdAt: number }) => item.createdAt;
+const allianceRequestCreatedAt = (item: { createdAt(): number }) =>
+  item.createdAt();
+
 interface Target {
   tick: Tick;
   target: Player;
@@ -116,6 +122,9 @@ const EMPTY_ALLIANCE_VIEWS: AllianceView[] = [];
 const EMPTY_EMOJIS: EmojiMessage[] = [];
 const EMPTY_EMBARGOES = new Set<string>();
 const EMPTY_TOLLS: TollRateUpdate[] = [];
+// Shared empty result for getEmbargoes(): PlayerExecution asks every player
+// every tick, and almost every player has no embargoes.
+const EMPTY_EMBARGO_LIST: Embargo[] = [];
 // Highest toll percentage a nation may charge. The HUD sliders use the same
 // cap, so an intent from an unmodified client never exceeds it.
 const MAX_TOLL_RATE = 40;
@@ -133,6 +142,49 @@ Object.freeze(EMPTY_ATTACK_UPDATES);
 Object.freeze(EMPTY_ALLIANCE_VIEWS);
 Object.freeze(EMPTY_EMOJIS);
 Object.freeze(EMPTY_TOLLS);
+Object.freeze(EMPTY_EMBARGO_LIST);
+
+/**
+ * True when `prev` describes exactly the same attacks, in the same order and
+ * with the same retreating flags as `attacks`. Troop counts are excluded: they
+ * travel as packed deltas (and are refreshed in place by toFullUpdate) unless
+ * the membership changed, in which case the whole array is resent.
+ */
+function sameAttackMembership(
+  prev: AttackUpdate[] | undefined,
+  attacks: readonly Attack[],
+): boolean {
+  if (prev === undefined || prev.length !== attacks.length) return false;
+  for (let i = 0; i < attacks.length; i++) {
+    const p = prev[i];
+    const a = attacks[i];
+    if (
+      p.attackerID !== a.attacker().smallID() ||
+      p.targetID !== a.target().smallID() ||
+      p.id !== a.id() ||
+      p.retreating !== a.retreating()
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/** Push a troop-count delta for every attack whose count changed. */
+function pushAttackTroopDeltas(
+  prev: AttackUpdate[],
+  attacks: readonly Attack[],
+  ownerSmallID: number,
+  direction: typeof ATTACK_DELTA_OUTGOING | typeof ATTACK_DELTA_INCOMING,
+  out: number[],
+): void {
+  for (let i = 0; i < attacks.length; i++) {
+    const troops = attacks[i].troops();
+    if (prev[i].troops !== troops) {
+      out.push(ownerSmallID, direction, i, troops);
+    }
+  }
+}
 
 export class PlayerImpl implements Player {
   public _lastTileChange: number = 0;
@@ -260,48 +312,138 @@ export class PlayerImpl implements Player {
     statsOut?: number[],
     attackTroopsOut?: number[],
   ): PlayerUpdate | null {
-    const full = this.toFullUpdate();
     const prev = this.lastSentUpdate;
-    this.lastSentUpdate = full;
-    if (prev === undefined) return full;
+    if (prev === undefined) {
+      const full = this.toFullUpdate();
+      this.lastSentUpdate = full;
+      return full;
+    }
+
+    // A dead player's observable state is final: the death tick already sent
+    // isAlive/killedBy/deathPosition, and no further tiles, troops, gold,
+    // alliances or attacks can change. Skip rebuilding the full snapshot every
+    // tick for the rest of the game (roughly half the players in a long game).
+    // Traitor/doomsday/decay timers are time-derived, so keep sending while
+    // any of them is active.
+    if (
+      prev.isAlive === false &&
+      !this.isAlive() &&
+      this._outgoingAttacks.length === 0 &&
+      this._incomingAttacks.length === 0 &&
+      !this.isTraitor() &&
+      !this.inDoomsdayClock() &&
+      !this.isDecaying()
+    ) {
+      return null;
+    }
+
+    const tilesOwned = this.numTilesOwned();
+    const troops = this.troops();
     if (
       statsOut !== undefined &&
-      (prev.tilesOwned !== full.tilesOwned ||
-        prev.gold !== full.gold ||
-        prev.troops !== full.troops ||
-        prev.goldEarned !== full.goldEarned)
+      (prev.tilesOwned !== tilesOwned ||
+        prev.gold !== this._gold ||
+        prev.troops !== troops ||
+        prev.goldEarned !== this._goldEarned)
     ) {
       // goldEarned gets its own comparison: it can change even when gold
       // nets back to its previous value within one tick (addGold followed
       // by removeGold), and the quint must still flush then.
       statsOut.push(
-        full.smallID!,
-        full.tilesOwned!,
-        Number(full.gold),
-        full.troops!,
-        Number(full.goldEarned),
+        this.smallID(),
+        tilesOwned,
+        Number(this._gold),
+        troops,
+        Number(this._goldEarned),
       );
     }
+
+    const incoming =
+      this._incomingAttacks.length === 0
+        ? this._incomingAttacks
+        : this.liveIncomingAttacks();
     if (attackTroopsOut !== undefined) {
-      packAttackTroopDeltas(
-        prev.outgoingAttacks,
-        full.outgoingAttacks,
-        full.smallID!,
-        ATTACK_DELTA_OUTGOING,
-        attackTroopsOut,
-      );
-      packAttackTroopDeltas(
-        prev.incomingAttacks,
-        full.incomingAttacks,
-        full.smallID!,
-        ATTACK_DELTA_INCOMING,
-        attackTroopsOut,
-      );
+      if (sameAttackMembership(prev.outgoingAttacks, this._outgoingAttacks)) {
+        pushAttackTroopDeltas(
+          prev.outgoingAttacks!,
+          this._outgoingAttacks,
+          this.smallID(),
+          ATTACK_DELTA_OUTGOING,
+          attackTroopsOut,
+        );
+      }
+      if (sameAttackMembership(prev.incomingAttacks, incoming)) {
+        pushAttackTroopDeltas(
+          prev.incomingAttacks!,
+          incoming,
+          this.smallID(),
+          ATTACK_DELTA_INCOMING,
+          attackTroopsOut,
+        );
+      }
     }
+
+    const full = this.toFullUpdate(prev, this._outgoingAttacks, incoming);
+    this.lastSentUpdate = full;
     return diffPlayerUpdate(prev, full);
   }
 
-  private toFullUpdate(): PlayerUpdate {
+  /**
+   * Build an AttackUpdate array for `attacks`, reusing `prev` (updating its
+   * troop counts in place) when the membership is unchanged. Packed troop
+   * deltas are emitted by toUpdate before this runs, so mutating `prev` here
+   * cannot hide a change.
+   */
+  private attackUpdates(
+    attacks: readonly Attack[],
+    prev: AttackUpdate[] | undefined,
+  ): AttackUpdate[] {
+    if (prev !== undefined && sameAttackMembership(prev, attacks)) {
+      for (let i = 0; i < attacks.length; i++) {
+        prev[i].troops = attacks[i].troops();
+      }
+      return prev;
+    }
+    if (attacks.length === 0) return EMPTY_ATTACK_UPDATES;
+    return attacks.map((a) => {
+      return {
+        attackerID: a.attacker().smallID(),
+        targetID: a.target().smallID(),
+        troops: a.troops(),
+        id: a.id(),
+        retreating: a.retreating(),
+      } satisfies AttackUpdate;
+    });
+  }
+
+  private incomingScratch: Attack[] = [];
+
+  /**
+   * Incoming attacks whose attacker is still alive. Fills a reusable buffer
+   * instead of allocating a filtered array every tick (toUpdate runs for every
+   * player every tick). Callers consume it synchronously; it is never retained
+   * (attackUpdates copies into fresh AttackUpdate objects when membership
+   * changes).
+   */
+  private liveIncomingAttacks(): readonly Attack[] {
+    const all = this._incomingAttacks;
+    const scratch = this.incomingScratch;
+    let n = 0;
+    for (let i = 0; i < all.length; i++) {
+      const attack = all[i];
+      if (attack.attacker().isAlive()) {
+        scratch[n++] = attack;
+      }
+    }
+    scratch.length = n;
+    return scratch;
+  }
+
+  private toFullUpdate(
+    prev?: PlayerUpdate,
+    outgoingList?: readonly Attack[],
+    incomingList?: readonly Attack[],
+  ): PlayerUpdate {
     // Empty collections reuse shared singletons (EMPTY_*) so
     // diffPlayerUpdate's reference fast paths hit and nothing is allocated.
     // This runs for every player every tick; most collections are empty for
@@ -368,34 +510,17 @@ export class PlayerImpl implements Player {
       }
     }
 
-    const outgoingAttacks =
-      this._outgoingAttacks.length === 0
-        ? EMPTY_ATTACK_UPDATES
-        : this._outgoingAttacks.map((a) => {
-            return {
-              attackerID: a.attacker().smallID(),
-              targetID: a.target().smallID(),
-              troops: a.troops(),
-              id: a.id(),
-              retreating: a.retreating(),
-            } satisfies AttackUpdate;
-          });
-
-    let incomingAttacks = EMPTY_ATTACK_UPDATES;
-    if (this._incomingAttacks.length > 0) {
-      const incoming = this.incomingAttacks();
-      if (incoming.length > 0) {
-        incomingAttacks = incoming.map((a) => {
-          return {
-            attackerID: a.attacker().smallID(),
-            targetID: a.target().smallID(),
-            troops: a.troops(),
-            id: a.id(),
-            retreating: a.retreating(),
-          } satisfies AttackUpdate;
-        });
-      }
-    }
+    const outgoingAttacks = this.attackUpdates(
+      outgoingList ?? this._outgoingAttacks,
+      prev?.outgoingAttacks,
+    );
+    const incomingAttacks = this.attackUpdates(
+      incomingList ??
+        (this._incomingAttacks.length === 0
+          ? this._incomingAttacks
+          : this.liveIncomingAttacks()),
+      prev?.incomingAttacks,
+    );
 
     // OFM live standings: elimination info is stored on the player's stats
     // (set live in the sim via mg.stats()), surfaced here so it rides the live
@@ -685,9 +810,9 @@ export class PlayerImpl implements Player {
         }
       }
     };
-    for (const border of this.borderTiles()) {
-      map.forEachNeighbor(border, visit);
-    }
+    // forEach, not for..of: TileSet.values() is a generator and this runs on
+    // every nearby() cache miss.
+    this.borderTiles().forEach((border) => map.forEachNeighbor(border, visit));
     for (const n of this.shoreReachableNeighbors()) {
       ns.add(n);
     }
@@ -700,12 +825,14 @@ export class PlayerImpl implements Player {
   private shoreReachableNeighbors(): Set<Player | TerraNullius> {
     const ns: Set<Player | TerraNullius> = new Set();
     const map = this.mg.map();
+    const smallID = this.smallID();
 
     let shoreIdx = 0;
-    for (const border of this.borderTiles()) {
-      if (!map.isShore(border)) continue;
+    // forEach, not for..of: TileSet.values() is a generator (see computeNearby).
+    this.borderTiles().forEach((border) => {
+      if (!map.isShore(border)) return;
       // Visit every 10th shore tile.
-      if (shoreIdx++ % 10 !== 0) continue;
+      if (shoreIdx++ % 10 !== 0) return;
 
       const bx = map.x(border);
       const by = map.y(border);
@@ -728,13 +855,13 @@ export class PlayerImpl implements Player {
         if (map.isImpassable(tile)) continue;
         if (!map.hasOwner(tile) && map.hasFallout(tile)) continue;
         const owner = map.ownerID(tile);
-        if (owner !== this.smallID()) {
+        if (owner !== smallID) {
           ns.add(
             this.mg.playerBySmallID(owner) satisfies Player | TerraNullius,
           );
         }
       }
-    }
+    });
 
     return ns;
   }
@@ -1047,22 +1174,22 @@ export class PlayerImpl implements Player {
     this.targets_ = dropBefore(
       this.targets_,
       ticks - config.targetCooldown(),
-      (t) => t.tick,
+      tickOfItem,
     );
     this.outgoingEmojis_ = dropBefore(
       this.outgoingEmojis_,
       ticks - config.emojiMessageCooldown(),
-      (e) => e.createdAt,
+      createdAtOfItem,
     );
     this.sentDonations = dropBefore(
       this.sentDonations,
       ticks - config.donateCooldown(),
-      (d) => d.tick,
+      tickOfItem,
     );
     this.pastOutgoingAllianceRequests = dropBefore(
       this.pastOutgoingAllianceRequests,
       ticks - config.allianceRequestCooldown(),
-      (r) => r.createdAt(),
+      allianceRequestCreatedAt,
     );
   }
 
@@ -1337,7 +1464,9 @@ export class PlayerImpl implements Player {
   }
 
   getEmbargoes(): Embargo[] {
-    return [...this.embargoes.values()];
+    return this.embargoes.size === 0
+      ? EMPTY_EMBARGO_LIST
+      : [...this.embargoes.values()];
   }
 
   addEmbargo(other: Player, isTemporary: boolean): void {

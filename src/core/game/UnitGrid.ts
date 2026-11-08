@@ -290,23 +290,26 @@ export class UnitGrid {
       searchRange,
     );
     const rangeSquared = searchRange * searchRange;
+    // Hoist the query point and inline unitIsInRange: this runs for every
+    // frontier tile of every attack on every forced defense-tier retier.
+    const gm = this.gm;
+    const x = gm.x(tile);
+    const y = gm.y(tile);
     let highestLevel = 0;
     for (let cy = startGridY; cy <= endGridY; cy++) {
       for (let cx = startGridX; cx <= endGridX; cx++) {
         const unitSet = this.grid[cy][cx].get(type);
         if (unitSet === undefined) continue;
         for (const unit of unitSet) {
-          if (
-            !this.unitIsInRange(
-              unit,
-              tile,
-              rangeSquared,
-              playerId,
-              includeUnderConstruction,
-            )
-          ) {
+          if (!unit.isActive()) continue;
+          if (!includeUnderConstruction && unit.isUnderConstruction()) continue;
+          if (playerId !== undefined && unit.owner().id() !== playerId) {
             continue;
           }
+          const unitTile = unit.tile();
+          const dx = gm.x(unitTile) - x;
+          const dy = gm.y(unitTile) - y;
+          if (dx * dx + dy * dy > rangeSquared) continue;
           const level = unit.level();
           if (level > highestLevel) {
             highestLevel = level;
