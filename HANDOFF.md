@@ -1,4 +1,4 @@
-# Handoff — account tiers and the home ranked-lobby browser
+# Handoff — placement-based ranked rating with inactivity decay
 
 > Future sessions: this file holds the current handoff. Overwrite it rather than
 > appending; keep only the latest handoff. Write one only when the session leaves
@@ -9,146 +9,104 @@ Companion notes: `testnotes.md`.
 ## 1. Where things are
 
 - Repo: `C:\Users\ai51940\OpenFrontIO`.
-- Tokens (all authenticate as **`hexfront-dev`**):
-  - `H:\Documents\Hexfront-token.txt` — write to the fork (`origin`).
-  - `H:\Documents\Norrasoff-token.txt` — read-only on NorrasOFF.
-  - `H:\Documents\Fly.io-token.txt` — Fly deploy token (app `openfrontio`).
-- Remotes: `origin` = `hexfront-dev/NorraRealFront-Remus-`,
-  `norrasoff` = `NorrasOFF/NorraRealFront`, `upstream` = `openfrontio/OpenFrontIO`,
-  `hexfront` = `hexfront-dev/OpenFrontIO`.
-- Ship target is **`origin/main`**.
+- Token `H:\Documents\Hexfront-token.txt` authenticates as **`hexfront-dev`**
+  and can push to the fork.
+- Remotes: `origin` = `hexfront-dev/NorraRealFront-Remus-` (ship target
+  `origin/main`), `norrasoff` = `NorrasOFF/NorraRealFront`,
+  `upstream` = `openfrontio/OpenFrontIO`.
+- GitHub credential-manager prompts fail in this shell; push with a
+  credential-in-URL remote instead of `http.extraHeader`.
 
-## 2. What landed this session
+## 2. Exact ranked rating formula (implemented)
 
-### Account tiers replace the subscription gate for ranked hosting
+```
+P = finishing place, 1-indexed, dense over rated accounts (1..N)
+T = number of rated teammates sharing P (1 in FFA)
+W = RANKED_WINNER_ELO = 100
+S = RANKED_PLACEMENT_SLOPE = 0.05
 
-All account records now have an optional `tier` in `accounts.json`
-(`src/server/LocalAuth.ts`):
+placeAward(P) = max(0, W * (1 - S * (P - 1)))
+award(P, T)   = placeAward(P) / T
+newElo        = clampElo(oldElo + award(P, T))       // clampElo = min 100, 2 d.p.
 
-- `player` (default, also the value for every existing account) — cannot list a
-  ranked lobby.
-- `host` — can list a ranked lobby.
-- `admin` — can list and can grant/revoke tiers.
-- `OWNER_USERNAME` / `OWNER_USERNAMES` (comma-separated, case-insensitive) is a
-  bootstrap override: matching accounts always resolve to `admin`. The Fly app
-  `openfrontio` now has the secret `OWNER_USERNAME=Remus`, so **Remus is the
-  owner** once this code is deployed.
-- `/api/users/@me` maps `canCreatePublicLobbies` to `tierCanHostRanked(tier)`,
-  so the existing host-modal Ranked toggle reflects the tier.
-- The Worker listing endpoint (`src/server/Worker.ts`,
-  `POST /api/game/:id/listing`) rejects non-host accounts with
-  `403 { error: "host_tier_required" }`. **The old `GAME_ENV=dev` bypass is
-  gone for local-auth deployments.** Non-local deployments still use the
-  upstream `canCreatePublicLobbies` API entitlement.
-- Master is the only writer of `accounts.json`. Worker processes reload it
-  when its mtime changes (`ensureAccountsFresh`), so grants take effect on the
-  next request without restarting workers.
-- `UserMeResponse` is unchanged; `trustTier`/`unlimitedRanked` remain as before.
-  Tier `admin` does **not** set the JWT `role`, so it does not grant existing
-  in-game admin powers; it only grants host + tier management.
-
-### Admin tier-grant endpoint
-
-Mounted on the master by `registerAccountTierRoutes` in
-`src/server/AccountTierRoutes.ts` (local auth only):
-
-- `GET /api/admin/accounts?query=<username|publicId>&limit=25`
-- `GET /api/admin/account-tier?identifier=<publicId|username>`
-- `POST /api/admin/account-tier` with
-  `{ "publicId"?: "...", "username"?: "...", "tier": "player"|"host"|"admin" }`
-- `POST /api/admin/account-password` with
-  `{ "publicId"?: "...", "username"?: "...", "password": "..." }` — resets the
-  password, clears every refresh session for that account, and never returns or
-  logs the password. Existing access JWTs remain valid for up to 15 minutes.
-- Authorization: `x-admin-bot-key: <ADMIN_BOT_API_KEY>` **or** a Bearer token
-  whose account currently has tier `admin`.
-- Responses: `{ publicId, username, tier, canHostRanked, canManageTiers }`;
-  the search route returns `{ accounts: [...] }`;
-  `401 unauthorized`, `403 admin_required`, `404 account_not_found`.
-
-### In-game admin panel
-
-`AccountTierModal.ts` (`<account-tier-modal>`, router `account-tiers`) is a
-nav-profile-menu item shown only when `/users/@me` returns
-`canManageAccountTiers: true` (local auth sets it for tier `admin`). It searches
-accounts (username substring / publicId prefix, empty query = first accounts
-alphabetically), has Player / Host / Admin buttons per row, and a **Reset
-password** row form (admin types the new password; minimum 8 characters). It
-uses the same admin endpoints; the server re-checks admin on every request, so
-opening the modal by URL without the tier only shows "Only admin accounts can
-manage tiers." Client API helpers live in `src/client/Api.ts`
-(`searchAccountTiers`, `updateAccountTier`, `resetAccountPassword`).
-
-Examples:
-
-```powershell
-curl.exe -X POST http://localhost:3000/api/admin/account-tier `
-  -H "Content-Type: application/json" `
-  -H "x-admin-bot-key: $env:ADMIN_BOT_API_KEY" `
-  -d '{"username":"Alice","tier":"host"}'
-
-curl.exe http://localhost:3000/api/admin/account-tier?identifier=Alice `
-  -H "Authorization: Bearer <admin-or-owner-jwt>"
+P:      1    2    3    4    5    6    7    8    9   10   11   12   13   14   15
+award: 100   95   90   85   80   75   70   65   60   55   50   45   40   35   30
 ```
 
-### Ranked lobbies on the home screen
+`placeAward(21) = 0`; larger places are clamped to 0. Teams split one place
+award equally: a 2-player team win pays 50 each, a 3-player win 33.33 each.
 
-`src/client/GameModeSelector.ts` now renders all `games.hosted` entries (listed
-= ranked lobbies) as map cards in the center of the home screen:
+If the literal `1 - 0.05 * P` is wanted instead (winner 95, 15th 25), change
+`(P - 1)` to `P` in `placementAward` (`src/server/ranking/RankedRatings.ts`).
+The `P - 1` form makes the "winner elo constant" the actual first-place award.
 
-- While at least one ranked lobby is open, they **replace** the scheduled
-  FFA/Team/Special playlist cards.
-- With none open, the playlist cards render exactly as before (fallback).
-- Clicking a card uses the existing `join-lobby` → `JoinLobbyModal` path.
-- Cards show "Waiting for players" until the host starts, then the countdown.
-- The Join Lobby modal's own bottom "Ranked Lobbies" list still exists.
-- Cluster-wide cap is still `MAX_HOSTED_LOBBIES = 10`
-  (`src/core/Schemas.ts`); raise it if more concurrent ranked lobbies are needed.
+### Inactivity decay
 
-### Client text
+```
+excess      = elo - RANKED_START_ELO            // 1200
+weeks       = floor((now - lastRatedAt) / 7 days)
+decayedElo  = 1200 + max(0, excess) * 0.9 ^ weeks
+```
 
-- The local sign-in/create-account password field shows a warning
-  (`account_modal.local_password_warning`) not to reuse an email/banking/
-  sensitive password.
-- New key `private_lobby.listing_host_tier_required`.
-- The host modal's explanation dialog now says ranked hosting is not enabled
-  for the account and uses `host_modal.ranked_host_{ok,required_body,required_title}`.
-  The old subscription-required keys and `view_subscriptions` were removed
-  from `resources/lang/en.json` (only `en.json` is edited; Crowdin owns the rest).
+Applied lazily, only for whole weeks:
 
-## 3. Verification
+- `leaderboard()` sorts and returns the decayed value (stored value untouched);
+- `player()` returns the decayed value;
+- `applyMatch()` decays each returning participant from their stored
+  `updatedAt` **before** adding this game's award, then sets
+  `updatedAt = now`.
 
-- `npx tsc --noEmit` — clean.
-- `npm run lint` — clean.
-- Prettier on all changed files — clean.
-- `npx vitest run tests/server/AccountTiers.test.ts tests/server/LocalAuth.test.ts tests/server/LocalAuthRoutes.test.ts tests/GameModeSelectorGatingWiring.test.ts tests/EnJsonSorted.test.ts tests/client/AccountTierModal.test.ts`
-  — 40 passed.
-- `npx vitest run tests/server` — **689 passed, 3 failed**, all verified
-  pre-existing on the clean tip by stashing this work:
-  - `GameServerWire.test.ts` golden `numTurns` snapshot drift.
-  - `HostedLobbyListing.test.ts` "never schedules or sets countdowns..."
-  - `GameServerPhase.test.ts` "prunes on tick, not on a lobby-browser read".
-  - `tests/TranslationSystem.test.ts` still reports 4 unused keys
-    (`error_modal.turnstile_error`, `events_display.attack_cancelled_retreat`,
-    `main.clans`, `main.inventory`); also pre-existing.
-- `node e2e/run.mjs --observe` — SMOKE OK; home + solo modal render, so the
-  playlist fallback is intact.
+Ratings at/below 1200 never move. Duplicate match uploads return before decay,
+so a retried archive cannot decay twice.
 
-## 4. Open items
+### Where places come from
 
-- **Deploy**: the tier backend commit is deployed, but the in-game admin panel
-  commit must be redeployed for the nav item to appear. The Fly secret
-  `OWNER_USERNAME=Remus` is already set; Remus is `admin` (host + tier
-  management) and every other account is `player`.
-- **Password reset is admin-only**: there is no self-service/email reset and no
-  in-game change-password flow. A reset logs out the target's refresh sessions,
-  but an access JWT already in flight can live for up to 15 minutes.
-- **Grants are cluster-local**: tiers live in `accounts.json`, which is a
-  single-volume file suitable for this Fly deployment. Multi-machine
-  deployments need shared storage.
-- **Join is unchanged**: anyone signed in may still join ranked lobbies; only
-  hosting is tier-gated.
-- `MAX_HOSTED_LOBBIES` is 10; the home browser shows all of those but cannot
-  show delisted overflow.
-- Owner bootstrap is by username, so renaming the owner account would require
-  updating the Fly secret. Local accounts currently have no rename endpoint.
+`computeRankedPlacements()` (`src/server/ranking/Placements.ts`) uses the
+core's existing stats: eliminated players by `deathPosition`, survivors by
+`finalTiles` (winner first). Places are dense over `rankedRoster`, so bots and
+nations do not consume places. Teammates share the best place reached by the
+team (`teamSize` is recorded for the split). Duplicate accounts collapse to
+one entry; deterministic tie-break is `publicId`. A nation winner still leaves
+the game unrated (unchanged).
+
+## 3. What changed
+
+- `src/server/ranking/Placements.ts` (new): pure placement resolver + tests.
+- `src/server/ranking/RankedRatings.ts`: replaced the provisional pairwise
+  `provisionalElo`/`RANKED_K_FACTOR` with `placementElo`; added
+  `placementAward`, `decayElo`, `RANKED_WINNER_ELO`,
+  `RANKED_PLACEMENT_SLOPE`, `RANKED_IDLE_DECAY_PER_WEEK`, `RANKED_WEEK_MS`;
+  `RankedMatch.placements` (optional, for old callers/tests).
+- `src/server/GameServer.ts`: `applyRankedResult` now also receives
+  `allPlayersStats` and builds placements from the ranked roster. No wire,
+  schema, checkpoint or `src/core` change; `ranked-ratings.json` stays
+  version 1 (old files load, decay starts from their `updatedAt`).
+
+## 4. Verification
+
+- `npx tsc --noEmit` clean; ESLint, Oxlint and Prettier clean.
+- `tests/server/RankedRatings.test.ts` (19) and
+  `tests/server/RankedPlacements.test.ts` pass, including team split, fallback
+  placements, decay-before-award and decayed leaderboard ordering.
+- `tests/server/RankedLobby.test.ts` 5 pass, including a stats-driven
+  placement integration case.
+- `npx vitest run tests/server`: **705 passed, 3 failed** — the three failures
+  are the documented pre-existing ones (`GameServerWire` `numTurns` snapshot,
+  `HostedLobbyListing`, `GameServerPhase`). No new failures.
+- Not browser-tested: server-only change, no UI/input/wire path touched.
+
+## 5. Open items
+
+- **Tuning**: `RANKED_WINNER_ELO = 100` is a first guess; revisit after a few
+  months of weekly lobbies.
+- **Decay is soft, not a hard cap**: a long win streak can still lead for a few
+  weeks (roughly `0.58 * streak` missed lobbies without decay). An eligibility
+  window (e.g. last 21 days) was deliberately not added.
+- **Team split semantics**: a team's total is one place award, so per-player
+  value falls with team size. If teams should instead sum/average individual
+  places, change `Placements.ts` + `placementElo`.
+- **Deploy required** for the new formula/decay to run in production. Existing
+  `ranked-ratings.json` is compatible; the first match after deploy applies
+  decay from each player's stored `updatedAt`.
+- The leaderboard endpoint still returns `elo`; hiding it in the UI is a
+  separate client change.

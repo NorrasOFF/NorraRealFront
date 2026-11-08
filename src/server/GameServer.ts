@@ -15,6 +15,7 @@ import {
 import { GameEnv } from "../core/configuration/Config";
 import { GameType, RankedType } from "../core/game/Game";
 import {
+  AllPlayersStats,
   ClientCheckpointChunkMessage,
   ClientCheckpointMessage,
   ClientID,
@@ -67,6 +68,7 @@ import {
 import { ListingState } from "./ListingState";
 import { identityFor, MatchTelemetryRecorder } from "./MatchTelemetryRecorder";
 import { friendsLookup, NameVisibility } from "./NameVisibility";
+import { computeRankedPlacements } from "./ranking/Placements";
 import { getRankedRatings, type RankedMatch } from "./ranking/RankedRatings";
 import { Roster } from "./Roster";
 import { noopSaveStore, type ServerSaveStore } from "./SaveStore";
@@ -2612,7 +2614,7 @@ export class GameServer {
       gameID: this.id,
       winner: winner?.winner,
     });
-    this.applyRankedResult(winner?.winner);
+    this.applyRankedResult(winner?.winner, winner?.allPlayersStats);
 
     // Players must stay in the same order as the game start info.
     const playerRecords: PlayerRecord[] = this.gameStartInfo.players.map(
@@ -2658,9 +2660,13 @@ export class GameServer {
 
   // Feed a finished ranked lobby into the single ladder. The winner tuple
   // carries the winning player's clientID, or (for a team win) every winning
-  // member's clientID after the team name, which is exactly what the store
-  // needs. A nation winner has no account and is not rated.
-  private applyRankedResult(winner: Winner | undefined): void {
+  // member's clientID after the team name. Finishing places for everyone else
+  // come from the same stats record that is archived with the game. A nation
+  // winner has no account and is not rated.
+  private applyRankedResult(
+    winner: Winner | undefined,
+    allPlayersStats: AllPlayersStats | undefined,
+  ): void {
     if (this.rankedResultApplied || !this.isRanked()) return;
     if (winner === undefined || this.rankedRoster.size < 2) return;
 
@@ -2684,10 +2690,27 @@ export class GameServer {
     if (winnerPublicIds.length === 0) return;
 
     this.rankedResultApplied = true;
+    // Places come from the core's own finishing data (deathPosition for the
+    // eliminated, finalTiles for survivors), normalised to the rated roster so
+    // bots/nations do not consume places. See ranking/Placements.ts.
+    const teamIndexByClient = new Map<ClientID, number | undefined>();
+    for (const player of this.gameStartInfo.players) {
+      teamIndexByClient.set(player.clientID, player.teamIndex);
+    }
+    const placements = computeRankedPlacements(
+      [...this.rankedRoster.entries()].map(([clientID, participant]) => ({
+        clientID,
+        publicId: participant.publicId,
+        teamIndex: teamIndexByClient.get(clientID),
+      })),
+      allPlayersStats ?? {},
+      winnerPublicIds,
+    );
     const match: RankedMatch = {
       gameId: this.id,
       participants: [...this.rankedRoster.values()],
       winnerPublicIds,
+      placements,
     };
     void this.deps.ranked(match).catch((error) =>
       this.log.error("failed to apply ranked result", {
