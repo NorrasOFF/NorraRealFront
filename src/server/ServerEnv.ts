@@ -171,6 +171,28 @@ export class ServerEnv {
   static subdomain(): string {
     return process.env.SUBDOMAIN ?? "";
   }
+  // Discord webhook that receives a message when a ranked match starts (see
+  // RankedLobbyNotifier.ts). Unset disables the notification entirely.
+  static discordRankedWebhookUrl(): string | undefined {
+    const value = process.env.DISCORD_RANKED_WEBHOOK_URL?.trim();
+    return value !== undefined && value.length > 0 ? value : undefined;
+  }
+  // Public origin of the web app, used for outbound links (the ranked
+  // notification's join URL). PUBLIC_SITE_URL wins so a deployment behind a
+  // different hostname can override the DOMAIN-derived default.
+  static publicSiteUrl(): string {
+    const explicit = process.env.PUBLIC_SITE_URL?.trim();
+    if (explicit !== undefined && explicit.length > 0) {
+      return explicit.replace(/\/+$/, "");
+    }
+    const domain = ServerEnv.domain();
+    if (domain.length === 0) return "";
+    // DOMAIN may already carry a scheme in some deployments.
+    if (/^https?:\/\//i.test(domain)) return domain.replace(/\/+$/, "");
+    const subdomain = ServerEnv.subdomain();
+    const host = subdomain.length > 0 ? `${subdomain}.${domain}` : domain;
+    return `https://${host}`;
+  }
   static otelEnabled(): boolean {
     return (
       ServerEnv.gameEnv !== GameEnv.Dev &&

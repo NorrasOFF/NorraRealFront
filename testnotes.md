@@ -1087,3 +1087,39 @@ identical patrol paths forever: every `WarshipExecution` /
   `tests/core` + `tests/economy` 465 passed with only the documented
   pre-existing SAM dynamic-range failure; `node e2e/run.mjs --map Benelux
 --bots 10` -> SMOKE OK.
+
+## Ranked match announcements on Discord
+
+Every time a ranked match starts, the server posts one message to the community
+Discord server whose invite is linked in the page footer
+(`https://discord.gg/SJSyRbVA`, `src/client/components/Footer.ts`).
+
+- **Trigger:** `GameServer.start()` when the game is ranked (`isRanked()`,
+  i.e. the private lobby was listed), plus `startResumedGame()` for a resumed
+  save that keeps its ranked status. `notifyRankedStart()` is guarded by
+  `rankedStartNotified`, so each game announces at most once. Unranked lobbies,
+  delisted-before-start lobbies and resumed games that lost ranked status stay
+  silent.
+- **Config:** `DISCORD_RANKED_WEBHOOK_URL` (unset = feature off, no request is
+  made at all). `PUBLIC_SITE_URL` overrides the link origin; otherwise it is
+  `https://[SUBDOMAIN.]DOMAIN`. Both are documented in `example.env`.
+- **Message:** embed titled "Ranked match started" (`Hexfront Ranked` as the
+  webhook username) with map, mode, `players/maxPlayers`, host username, and a
+  clickable link to `/w<N>/game/<id>`. `allowed_mentions: { parse: [] }` means
+  the post can never ping anyone, even if a username looks like `@everyone`.
+- **Robustness:** `postDiscordWebhook` uses a 5 s AbortController timeout,
+  treats a non-2xx or network error as `false` + a `warn` log, and never
+  throws. `GameServer` also wraps the injected dep in try/catch, so Discord
+  being down cannot block or fail a game start.
+- **Code:** `src/server/RankedLobbyNotifier.ts` (`buildRankedMatchStartedPayload`,
+  `postDiscordWebhook`, `rankedGameUrl`, `notifyRankedMatchStarted`),
+  `ServerEnv.discordRankedWebhookUrl()` / `ServerEnv.publicSiteUrl()`, and
+  `GameServerDeps.rankedStarted` (default is the real notifier; tests inject a
+  spy).
+- **Tests:** `tests/server/RankedLobbyNotifier.test.ts` (payload, link
+  derivation, no-mention guarantee, POST/timeout/non-2xx handling, no-op when
+  unconfigured) and `tests/server/RankedStartNotification.test.ts` (ranked start
+  once with details, unranked and delisted silent, failing notifier
+  non-blocking, resumed ranked save). `npx tsc --noEmit` and `npm run lint`
+  clean; `tests/server` 732 passed with only the three documented pre-existing
+  failures (`GameServerWire`, `HostedLobbyListing`, `GameServerPhase`).
