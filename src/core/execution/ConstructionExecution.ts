@@ -174,7 +174,13 @@ export class ConstructionExecution implements Execution {
         const count = this.amount ?? 1;
         for (let i = 0; i < count; i++) {
           this.mg.addExecution(
-            new WarshipExecution({ owner: player, patrolTile: this.tile }),
+            new WarshipExecution({
+              owner: player,
+              patrolTile: this.tile,
+              // Bulk builds spawn on distinct nearby water tiles and use
+              // per-index PRNG seeds, so the group does not stack on one tile.
+              bulkSpawnIndex: count > 1 ? i : undefined,
+            }),
           );
         }
         break;
@@ -183,7 +189,11 @@ export class ConstructionExecution implements Execution {
         const count = this.amount ?? 1;
         for (let i = 0; i < count; i++) {
           this.mg.addExecution(
-            new MissileShipExecution({ owner: player, patrolTile: this.tile }),
+            new MissileShipExecution({
+              owner: player,
+              patrolTile: this.tile,
+              bulkSpawnIndex: count > 1 ? i : undefined,
+            }),
           );
         }
         break;
@@ -195,6 +205,7 @@ export class ConstructionExecution implements Execution {
             new MissileDefenseShipExecution({
               owner: player,
               patrolTile: this.tile,
+              bulkSpawnIndex: count > 1 ? i : undefined,
             }),
           );
         }

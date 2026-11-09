@@ -1063,3 +1063,27 @@ matching entry, and `resources/news.json` gained a first item
 convention: bump only `resources/version.txt` (not `static/version.txt`, which
 the v2.00.02 release also left untouched), and the deployed build overwrites it
 from the deploy version tag anyway.
+
+## Bulk-spawned ships fan out instead of stacking on one tile
+
+Five ships from the x5 gesture used to spawn on the port tile and then follow
+identical patrol paths forever: every `WarshipExecution` /
+`MissileShipExecution` / `MissileDefenseShipExecution` was seeded with
+`mg.ticks()`, so each picked the same random patrol target and moved in lockstep.
+
+- `FleetFormation.findWaterTilesNear` / `bulkShipSpawnTile`: a bulk build spawns
+  on the nearest distinct water tiles around the port, filtered to the click's
+  water component (no ship lands on the far side of an isthmus).
+- `FleetFormation.shipRandomSeed(tick, index)`: index 0 (and single builds,
+  which pass no index) keep the historical `mg.ticks()` seed; indices 1..n are
+  offset so their random patrol streams differ.
+- `ConstructionExecution` passes `bulkSpawnIndex: count > 1 ? i : undefined` to
+  all three ship executions. It is init-only and not checkpointed; the PRNG
+  state and unit tiles were already part of the checkpoint.
+- Tests: `tests/economy/ConstructionBulkShips.test.ts` (five distinct spawn
+  tiles, all in the patrol water component; no lockstep after 10 ticks) and
+  `tests/core/FleetFormation.test.ts` (`shipRandomSeed`).
+- Verification: `npx tsc --noEmit`, `npm run lint` and Prettier clean;
+  `tests/core` + `tests/economy` 465 passed with only the documented
+  pre-existing SAM dynamic-range failure; `node e2e/run.mjs --map Benelux
+--bots 10` -> SMOKE OK.

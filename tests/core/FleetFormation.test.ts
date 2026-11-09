@@ -1,5 +1,6 @@
 import {
   shipMoveInterval,
+  shipRandomSeed,
   shipShouldMove,
 } from "../../src/core/execution/FleetFormation";
 import { UnitType } from "../../src/core/game/Game";
@@ -38,5 +39,17 @@ describe("shipShouldMove", () => {
     for (let t = 0; t < 12; t++) {
       expect(shipShouldMove(2, t)).toBe(t % 2 === 0);
     }
+  });
+});
+
+describe("shipRandomSeed", () => {
+  test("index 0 and a missing index keep the historical tick seed", () => {
+    expect(shipRandomSeed(1234)).toBe(1234);
+    expect(shipRandomSeed(1234, 0)).toBe(1234);
+  });
+
+  test("each bulk-spawn index gets a distinct seed", () => {
+    const seeds = new Set([0, 1, 2, 3, 4].map((i) => shipRandomSeed(500, i)));
+    expect(seeds.size).toBe(5);
   });
 });

@@ -62,6 +62,55 @@ describe("Bulk warship construction", () => {
     }
   });
 
+  test("a bulk build spreads the five ships over distinct tiles", () => {
+    game.addExecution(
+      new ConstructionExecution(
+        player,
+        UnitType.Warship,
+        patrolTile(),
+        undefined,
+        5,
+      ),
+    );
+    // init -> completeConstruction -> WarshipExecution init/build
+    runTicks(2);
+
+    const ships = player.units(UnitType.Warship);
+    expect(ships).toHaveLength(5);
+
+    const tiles = ships.map((ship) => ship.tile());
+    // No two ships may share the spawn tile: a bulk build fans out over the
+    // water around the port instead of stacking on it.
+    expect(new Set(tiles).size).toBe(5);
+
+    const component = game.getWaterComponent(patrolTile());
+    expect(component).not.toBeNull();
+    for (const tile of tiles) {
+      expect(game.isWater(tile)).toBe(true);
+      expect(game.hasWaterComponent(tile, component!)).toBe(true);
+    }
+  });
+
+  test("bulk-built ships do not sail in lockstep", () => {
+    game.addExecution(
+      new ConstructionExecution(
+        player,
+        UnitType.Warship,
+        patrolTile(),
+        undefined,
+        5,
+      ),
+    );
+    runTicks(10);
+
+    const ships = player.units(UnitType.Warship);
+    expect(ships).toHaveLength(5);
+    // With identical PRNG seeds every ship would follow the exact same path
+    // and keep sharing one tile forever.
+    const tiles = new Set(ships.map((ship) => ship.tile()));
+    expect(tiles.size).toBeGreaterThan(1);
+  });
+
   test("bulk construction charges the escalating per-ship price", () => {
     const costBefore = player.gold();
     // 1st ship 250k, 2nd 500k, 3rd+ 750k (capped) = 3,000,000 for five.
