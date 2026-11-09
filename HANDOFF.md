@@ -86,17 +86,26 @@ possible, instead of leaving the split to join order / clan / friend grouping.
 
 ## 5. Deployment note (2026-11-09)
 
-- `NorrasOFF/NorraRealFront` `main` is the Fly auto-deploy source, but on this
-  date the app had **no deployment source connected**
-  (`App.hasDeploymentSource = false`): the PR #35 merge `b949a4e04` never
-  triggered a deploy, and the live site stayed on release v187 (PR #34).
+- `NorrasOFF/NorraRealFront` `main` is the Fly auto-deploy source. The PR #35
+  merge `b949a4e04` (09:55:46Z) produced **no Fly deployment**: the last
+  Fly-created GitHub deployment is `2026-11-09T08:09:59Z` for `da85d4922`
+  (release **v187**). Nothing exists for `b949a4e04`.
+- The Fly settings page still shows `NorrasOFF/NorraRealFront` attached, branch
+  `main`, so the link is **not** unlinked. An app-scoped Fly API token cannot
+  read or change the integration (`saveDeploymentSource` returns
+  `UNAUTHORIZED`, and `App.hasDeploymentSource` reads false for it), so use the
+  dashboard for this.
 - Shipped manually instead with
   `flyctl deploy --remote-only --ha=false --build-arg GIT_COMMIT=b949a4e04…`
-  (release **v188**; `/commit.txt` now serves the merge SHA).
-- Reconnect the GitHub source at https://fly.io/apps/openfrontio/settings
-  (Fly GitHub App on `NorrasOFF/NorraRealFront`, branch `main`). The API token
-  in `H:\Documents\fly-token.txt` can deploy but `saveDeploymentSource`
-  returns `UNAUTHORIZED`, so the dashboard is required. Until then, pushes to
-  `main` do not auto-deploy.
+  (release **v188**; `/commit.txt` serves the merge SHA and the live bundle
+  contains `ranked-points`).
+- If the next push to `main` still does not deploy, check, in order:
+  1. "Auto-Deploy on push" checkbox on
+     https://fly.io/apps/openfrontio/settings (tick it and press **Update**).
+  2. GitHub App delivery: org/repo Settings → GitHub Apps → Fly.io →
+     Advanced → **Recent Deliveries** for the 09:55:46Z push. No delivery =
+     the app lost repo access (re-link); a 4xx/5xx = Fly rejected it.
+- The `hexfront-dev` token has **no push access** to `NorrasOFF/NorraRealFront`
+  (403 on push), so a probe push must be made by the owner.
 - Windows tooling: flyctl at `C:\Users\ai51940\.fly\bin\flyctl.exe`; set
-  `$env:FLY_API_TOKEN` from that token file before using it.
+  `$env:FLY_API_TOKEN` from `H:\Documents\fly-token.txt` before using it.
