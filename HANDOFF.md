@@ -12,7 +12,8 @@ points".
 - Repo: `C:\Users\ai51940\OpenFrontIO`.
 - Token `H:\Documents\Hexfront-token.txt` authenticates as **`hexfront-dev`**.
 - Ship target: `origin` = `hexfront-dev/NorraRealFront-Remus-`, branch `main`.
-  This work is commit **`c4dc284bf`** on top of `3027aa072`.
+  `main` is at **`2762aafcb`** (feature commit `c4dc284bf` on top of
+  `3027aa072`).
 - The checked-out branch is `defense-post-priority`, whose tip is `origin/main`;
   local `main` is stale (`2189bf96f`). Push with `git push origin HEAD:main`.
 - GitHub credential-manager prompts fail in this shell; push with a
