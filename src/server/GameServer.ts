@@ -163,7 +163,7 @@ export interface GameServerDeps {
   ranked: (match: RankedMatch) => Promise<boolean>;
   // Effective ranked points for account publicIds (see ranking/RankedRatings).
   // Read when a ranked lobby's roster changes and again before it starts, to
-  // balance teams and show points in the lobby. Tests inject a map.
+  // balance teams. Tests inject a map.
   rankedPoints: (publicIds: readonly string[]) => Promise<Map<string, number>>;
   // Announce a started ranked match to the community Discord (see
   // RankedLobbyNotifier.ts). The default posts to DISCORD_RANKED_WEBHOOK_URL
@@ -362,8 +362,8 @@ export class GameServer {
   // One Discord announcement per game, from whichever start path runs.
   private rankedStartNotified = false;
   // Effective ranked points by account publicId, refreshed as the roster of a
-  // ranked lobby changes. Feeds the lobby's points display and the balanced
-  // team split; absent entries fall back to RANKED_START_ELO.
+  // ranked lobby changes. Feeds the balanced team split only; absent entries
+  // fall back to RANKED_START_ELO.
   private rankedPoints = new Map<string, number>();
   // clientID -> team slot chosen by the points balancer for this ranked team
   // lobby (see ranking/TeamBalancing.ts). Recomputed on every roster change
@@ -420,7 +420,6 @@ export class GameServer {
       config: () => this.gameConfig,
       clients: () => this.clients.all(),
       teamIndex: (c) => this.teamIndexFor(c),
-      rankedPoints: (c) => this.rankedPointsFor(c),
     });
     this.log = opts.log.child({ gameID: opts.id });
     this.ingress = new SocketIngress(this.log, this.telemetry, {
@@ -2239,15 +2238,6 @@ export class GameServer {
     if (matchmade !== undefined) return matchmade;
     if (!this.isRanked() || this.rankedTeamPins === undefined) return undefined;
     return this.rankedTeamPins.get(c.clientID);
-  }
-
-  // Effective ranked points of a client, for the lobby roster. Undefined
-  // outside a ranked lobby (or before the first points refresh lands). Rounded
-  // to a whole point because the wire carries a uint.
-  private rankedPointsFor(c: Client): number | undefined {
-    if (!this.isRanked() || c.publicId === undefined) return undefined;
-    const points = this.rankedPoints.get(c.publicId);
-    return points === undefined ? undefined : Math.round(points);
   }
 
   // True once start() has frozen the roster. A method rather than a bare

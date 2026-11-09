@@ -36,7 +36,6 @@ export class MatchmakingModal extends BaseModal {
   @state() private limitReached = false;
   @state() private queueSize: number | null = null;
   private selectedClanTag: string | null = null;
-  private elo: number | string = "...";
 
   constructor() {
     super();
@@ -60,14 +59,9 @@ export class MatchmakingModal extends BaseModal {
   }
 
   protected renderBody() {
-    const eloDisplay = html`
-      <p class="text-center mt-2 mb-4 text-white/60">
-        ${translateText("matchmaking_modal.elo", { elo: this.elo })}
-      </p>
-    `;
     return html`
       <div class="flex flex-col items-center justify-center gap-6 p-6">
-        ${eloDisplay} ${this.renderInner()}
+        ${this.renderInner()}
       </div>
     `;
   }
@@ -397,11 +391,6 @@ export class MatchmakingModal extends BaseModal {
       return;
     }
 
-    const row =
-      this.mode === "2v2"
-        ? userMe.player.leaderboard?.twoVtwo
-        : userMe.player.leaderboard?.oneVone;
-    this.elo = row?.elo ?? translateText("matchmaking_modal.no_elo");
     this.selectedClanTag = this.selectedClanFrom(userMe);
 
     this.connected = false;

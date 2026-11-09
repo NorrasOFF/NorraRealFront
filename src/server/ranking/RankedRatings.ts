@@ -12,17 +12,16 @@ import type { RankedPlacement } from "./Placements";
 // intentionally isolated behind RatingAlgorithm so the formula can be retuned
 // without touching persistence, the wire or the UI.
 
-export const RANKED_START_ELO = 1200;
-// Elo awarded to the winner of a full lobby. Every place below first loses
-// RANKED_PLACEMENT_SLOPE * this amount, so 15th in a 15-player lobby earns
-// 100 * (1 - 0.05 * 14) = 30. Teams divide the place award by their size.
+// The ladder starts everyone at zero and only ever adds awarded points. There
+// is no inactivity decay: a player keeps every point they have earned.
+export const RANKED_START_ELO = 0;
+// Points awarded to the winner of a full lobby before the place reduction.
+// Every place below first loses RANKED_PLACEMENT_SLOPE of this amount, so 15th
+// in a 15-player lobby earns 100 * (1 - 0.05 * 14) = 30. Teams divide this
+// base by their size before the place reduction is applied.
 export const RANKED_WINNER_ELO = 100;
 export const RANKED_PLACEMENT_SLOPE = 0.05;
-// Lazy inactivity decay: after each full week without a rated game, the part
-// of the rating above RANKED_START_ELO is multiplied by (1 - 0.1) = 0.9.
-export const RANKED_IDLE_DECAY_PER_WEEK = 0.1;
-export const RANKED_WEEK_MS = 7 * 24 * 60 * 60 * 1000;
-export const RANKED_MIN_ELO = 100;
+export const RANKED_MIN_ELO = 0;
 // Older match ids are forgotten once the log grows past this. They only exist
 // to make a retried archive upload idempotent.
 const MAX_APPLIED_MATCHES = 1000;
@@ -102,37 +101,21 @@ function clampElo(elo: number): number {
 }
 
 /**
- * Placement award before any team split: `RANKED_WINNER_ELO * (1 - slope *
- * (place - 1))`, clamped at zero. First place therefore receives the full
- * winner constant, second 95 at the current tuning, and 15th 30.
+ * Placement award: `(RANKED_WINNER_ELO / teamSize) * (1 - slope * (place -
+ * 1))`, clamped at zero. The team split is applied to the base constant
+ * before the place reduction, so a 2-player team win pays 50 each and a
+ * 3-player team win 33.33 each. First place therefore receives the full
+ * (split) winner constant, second 5% less, and 15th 30% of it.
  */
-export function placementAward(place: number): number {
+export function placementAward(place: number, teamSize = 1): number {
   const safePlace = Number.isFinite(place) ? Math.max(1, Math.floor(place)) : 1;
+  const safeTeamSize = Number.isFinite(teamSize)
+    ? Math.max(1, Math.floor(teamSize))
+    : 1;
   const raw =
-    RANKED_WINNER_ELO * (1 - RANKED_PLACEMENT_SLOPE * (safePlace - 1));
+    (RANKED_WINNER_ELO / safeTeamSize) *
+    (1 - RANKED_PLACEMENT_SLOPE * (safePlace - 1));
   return Math.max(0, Math.round(raw * 100) / 100);
-}
-
-/**
- * Lazy inactivity decay. Only whole weeks count, the decay is applied to the
- * part of the rating above RANKED_START_ELO, and a rating at or below the
- * start value never moves. The stored value is updated when the player next
- * finishes a rated game; reads use this same function.
- */
-export function decayElo(
-  elo: number,
-  lastRatedAt: number,
-  now: number,
-): number {
-  const excess = elo - RANKED_START_ELO;
-  if (excess <= 0 || !Number.isFinite(lastRatedAt) || now <= lastRatedAt) {
-    return elo;
-  }
-  const weeks = Math.floor((now - lastRatedAt) / RANKED_WEEK_MS);
-  if (weeks <= 0) return elo;
-  return clampElo(
-    RANKED_START_ELO + excess * Math.pow(1 - RANKED_IDLE_DECAY_PER_WEEK, weeks),
-  );
 }
 
 interface ResolvedPlace {
@@ -179,13 +162,14 @@ function resolvePlaces(
 }
 
 /**
- * Placement-based ranked points. Every finisher gains something (the ladder
- * is deliberately positive-sum so attendance matters), the award falls by
- * 5% of the winner constant per place, and a team splits its place award
- * evenly between its members.
+ * Placement-based ranked points. Everyone starts at zero, every finisher adds
+ * points (the ladder is deliberately positive-sum so attendance matters), the
+ * award falls by 5% of the winner constant per place, and a team divides the
+ * base constant by its size before the place reduction is applied.
  *
- * There is no pairwise opponent-rating term: the outcome is fully determined
- * by finishing place, so a hidden ladder is stable and easy to explain.
+ * There is no pairwise opponent-rating term and no inactivity decay: the
+ * outcome is fully determined by finishing place, so a hidden ladder is stable
+ * and easy to explain.
  */
 export const placementElo: RatingAlgorithm = (match, ratings) => {
   const participants = new Map<string, RankedParticipant>();
@@ -203,7 +187,7 @@ export const placementElo: RatingAlgorithm = (match, ratings) => {
     const award =
       resolved === undefined
         ? 0
-        : placementAward(resolved.place) / resolved.teamSize;
+        : placementAward(resolved.place, resolved.teamSize);
     updates.set(id, clampElo(start + award));
   }
   return updates;
@@ -312,11 +296,7 @@ export class RankedRatingsStore {
   async player(publicId: string): Promise<PlayerRating | null> {
     await this.init();
     const rating = this.players.get(publicId);
-    if (rating === undefined) return null;
-    return {
-      ...rating,
-      elo: decayElo(rating.elo, rating.updatedAt, Date.now()),
-    };
+    return rating === undefined ? null : { ...rating };
   }
 
   async leaderboard(
@@ -326,31 +306,18 @@ export class RankedRatingsStore {
     await this.init();
     const safePage = Number.isFinite(page) ? Math.max(1, Math.floor(page)) : 1;
     const safeSize = Math.max(1, Math.min(200, Math.floor(pageSize)));
-    const now = Date.now();
-    // Decay is lazy: the stored value is only rewritten when the player next
-    // plays. Sorting and display use the same effective value so a returning
-    // player cannot appear at a stale peak.
-    const sorted = [...this.players.values()]
-      .map((rating) => ({
-        rating,
-        elo: decayElo(rating.elo, rating.updatedAt, now),
-      }))
-      .sort((a, b) => {
-        if (b.elo !== a.elo) return b.elo - a.elo;
-        return a.rating.publicId < b.rating.publicId
-          ? -1
-          : a.rating.publicId > b.rating.publicId
-            ? 1
-            : 0;
-      });
+    const sorted = [...this.players.values()].sort((a, b) => {
+      if (b.elo !== a.elo) return b.elo - a.elo;
+      return a.publicId < b.publicId ? -1 : a.publicId > b.publicId ? 1 : 0;
+    });
     const start = (safePage - 1) * safeSize;
-    return sorted.slice(start, start + safeSize).map((entry, index) => ({
+    return sorted.slice(start, start + safeSize).map((rating, index) => ({
       rank: start + index + 1,
-      elo: entry.elo,
-      peakElo: entry.rating.peakElo,
-      total: entry.rating.games,
-      public_id: entry.rating.publicId,
-      accountUsername: entry.rating.username,
+      elo: rating.elo,
+      peakElo: rating.peakElo,
+      total: rating.games,
+      public_id: rating.publicId,
+      accountUsername: rating.username,
     }));
   }
 
@@ -378,17 +345,11 @@ export class RankedRatingsStore {
 
       const now = Date.now();
       for (const participant of unique.values()) {
-        const existing = this.players.get(participant.publicId);
-        if (existing === undefined) {
+        if (!this.players.has(participant.publicId)) {
           this.players.set(
             participant.publicId,
             defaultRating(participant.publicId, participant.username, now),
           );
-        } else {
-          // Apply every full week of inactivity before this game's award, so
-          // a returning player is rated from their decayed value. Duplicate
-          // uploads return above, before this can run twice.
-          existing.elo = decayElo(existing.elo, existing.updatedAt, now);
         }
       }
 
@@ -432,9 +393,9 @@ export function getRankedRatings(): RankedRatingsStore {
 }
 
 /**
- * Effective (decayed) ranked points for a set of accounts. Unknown accounts —
- * first-time ranked players — start at RANKED_START_ELO, which is also what the
- * ladder uses for their first rated game.
+ * Ranked points for a set of accounts. Unknown accounts — first-time ranked
+ * players — start at RANKED_START_ELO (zero), which is also what the ladder
+ * uses for their first rated game.
  */
 export async function rankedPointsFor(
   publicIds: readonly string[],

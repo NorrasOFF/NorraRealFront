@@ -227,7 +227,6 @@ describe("anonymizeNames: startInfoFor (in-game start payload)", () => {
       config: () => game.gameConfig,
       clients: () => new Map(roster().map((c) => [c.clientID, c])),
       teamIndex: () => undefined,
-      rankedPoints: () => undefined,
     });
     const players = [
       {

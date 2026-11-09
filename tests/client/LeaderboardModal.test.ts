@@ -393,7 +393,10 @@ describe("LeaderboardModal", () => {
         "player-1",
         "player-2",
       ]);
-      expect(playerList.playerData[1].elo).toBe(1100);
+      // The rating is never rendered.
+      const rendered = (playerList as unknown as HTMLElement).textContent ?? "";
+      expect(rendered).not.toContain("1100");
+      expect(rendered).not.toContain("Elo");
       expect(playerList.currentUserEntry?.playerId).toBe("player-2");
     });
 

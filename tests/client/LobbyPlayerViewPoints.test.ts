@@ -43,8 +43,8 @@ async function mount(clients: ClientInfo[], gameMode: GameMode) {
   return view as HTMLElement;
 }
 
-describe("lobby player view ranked points", () => {
-  it("shows each player's ranked points beside their name", async () => {
+describe("lobby player view ranked points are hidden", () => {
+  it("never renders the rating even when the wire still carries it", async () => {
     const view = await mount(
       [
         player({ clientID: "c1000000", username: "Alice", elo: 1850 }),
@@ -54,19 +54,13 @@ describe("lobby player view ranked points", () => {
     );
 
     expect(view.textContent).toContain("Alice");
-    expect(view.textContent).toContain("1850");
     expect(view.textContent).toContain("Bob");
-    expect(view.textContent).toContain("1420");
-    const badges = view.querySelectorAll(".ranked-points");
-    expect(badges.length).toBe(2);
-    expect([...badges].map((b) => b.textContent?.trim())).toEqual([
-      "1850",
-      "1420",
-    ]);
-    expect(badges[0].getAttribute("title")).toBeTruthy();
+    expect(view.textContent).not.toContain("1850");
+    expect(view.textContent).not.toContain("1420");
+    expect(view.querySelectorAll(".ranked-points").length).toBe(0);
   });
 
-  it("shows no points outside a ranked lobby", async () => {
+  it("renders no points outside a ranked lobby", async () => {
     const view = await mount(
       [
         player({ clientID: "c1000000", username: "Alice" }),
@@ -79,12 +73,13 @@ describe("lobby player view ranked points", () => {
     expect(view.querySelectorAll(".ranked-points").length).toBe(0);
   });
 
-  it("shows points in FFA rosters too", async () => {
+  it("hides points in FFA rosters too", async () => {
     const view = await mount(
       [player({ clientID: "c1000000", username: "Alice", elo: 1999 })],
       GameMode.FFA,
     );
 
-    expect(view.textContent).toContain("1999");
+    expect(view.textContent).toContain("Alice");
+    expect(view.textContent).not.toContain("1999");
   });
 });

@@ -4,10 +4,8 @@ import os from "os";
 import path from "path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import {
-  decayElo,
   placementAward,
   RANKED_START_ELO,
-  RANKED_WEEK_MS,
   RANKED_WINNER_ELO,
   RankedRatingsStore,
 } from "../../src/server/ranking/RankedRatings";
@@ -45,6 +43,14 @@ describe("placementAward", () => {
     expect(placementAward(2)).toBe(95);
     expect(placementAward(15)).toBe(30);
     expect(placementAward(21)).toBe(0);
+  });
+
+  test("divides the base by team size before the place reduction", () => {
+    // (100 / 2) * (1 - 0.05 * (place - 1))
+    expect(placementAward(1, 2)).toBe(50);
+    expect(placementAward(3, 2)).toBe(45);
+    expect(placementAward(1, 3)).toBe(33.33);
+    expect(placementAward(10, 4)).toBe(13.75);
   });
 });
 
@@ -236,21 +242,12 @@ describe("RankedRatingsStore", () => {
   });
 });
 
-describe("inactivity decay", () => {
-  test("drops 10% of the excess over the start Elo per full week", () => {
-    // 2000 is 800 above the start.
-    expect(decayElo(2000, 0, RANKED_WEEK_MS)).toBe(1920);
-    expect(decayElo(2000, 0, 2 * RANKED_WEEK_MS)).toBeCloseTo(1848, 2);
-    // No full week has passed.
-    expect(decayElo(2000, 0, 6 * 24 * 60 * 60 * 1000)).toBe(2000);
-    // At or below the start value, nothing moves.
-    expect(decayElo(RANKED_START_ELO, 0, 10 * RANKED_WEEK_MS)).toBe(
-      RANKED_START_ELO,
-    );
-    expect(decayElo(1000, 0, 10 * RANKED_WEEK_MS)).toBe(1000);
+describe("zero baseline and no decay", () => {
+  test("a new player starts at zero", () => {
+    expect(RANKED_START_ELO).toBe(0);
   });
 
-  test("decays before the next award is applied", async () => {
+  test("keeps stored points after a long idle period", async () => {
     const now = Date.now();
     await fs.writeFile(
       path.join(dir, "ranked-ratings.json"),
@@ -262,12 +259,45 @@ describe("inactivity decay", () => {
             elo: 2000,
             peakElo: 2000,
             games: 5,
-            updatedAt: now - 2 * RANKED_WEEK_MS,
+            updatedAt: now - 365 * 24 * 60 * 60 * 1000,
           },
           [bob.publicId]: {
             ...bob,
-            elo: 1300,
-            peakElo: 1300,
+            elo: 1900,
+            peakElo: 1900,
+            games: 5,
+            updatedAt: now,
+          },
+        },
+        appliedMatches: [],
+      }),
+    );
+
+    const store = new RankedRatingsStore(dir);
+    const ladder = await store.leaderboard();
+    expect(ladder[0].elo).toBe(2000);
+    expect(ladder[1].elo).toBe(1900);
+    expect((await store.player(alice.publicId))?.elo).toBe(2000);
+  });
+
+  test("adds the next award to the full stored total", async () => {
+    const now = Date.now();
+    await fs.writeFile(
+      path.join(dir, "ranked-ratings.json"),
+      JSON.stringify({
+        version: 1,
+        players: {
+          [alice.publicId]: {
+            ...alice,
+            elo: 500,
+            peakElo: 500,
+            games: 5,
+            updatedAt: now - 365 * 24 * 60 * 60 * 1000,
+          },
+          [bob.publicId]: {
+            ...bob,
+            elo: 400,
+            peakElo: 400,
             games: 2,
             updatedAt: now,
           },
@@ -287,45 +317,8 @@ describe("inactivity decay", () => {
       ]),
     });
 
-    // 1200 + 800 * 0.9^2 = 1848, then +95 for second place.
-    expect((await store.player(alice.publicId))?.elo).toBe(1943);
-    expect((await store.player(bob.publicId))?.elo).toBe(1300 + 100);
-  });
-
-  test("leaderboard orders by the decayed rating", async () => {
-    const now = Date.now();
-    await fs.writeFile(
-      path.join(dir, "ranked-ratings.json"),
-      JSON.stringify({
-        version: 1,
-        players: {
-          [alice.publicId]: {
-            ...alice,
-            elo: 2000,
-            peakElo: 2000,
-            games: 10,
-            updatedAt: now - 4 * RANKED_WEEK_MS,
-          },
-          [bob.publicId]: {
-            ...bob,
-            elo: 1900,
-            peakElo: 1900,
-            games: 10,
-            updatedAt: now,
-          },
-        },
-        appliedMatches: [],
-      }),
-    );
-
-    const store = new RankedRatingsStore(dir);
-    const ladder = await store.leaderboard();
-    expect(ladder.map((entry) => entry.public_id)).toEqual([
-      bob.publicId,
-      alice.publicId,
-    ]);
-    // Alice: 1200 + 800 * 0.9^4 = 1724.88.
-    expect(ladder[1].elo).toBeCloseTo(1724.88, 2);
-    expect(ladder[0].elo).toBe(1900);
+    // No decay: 500 + 95 for second place.
+    expect((await store.player(alice.publicId))?.elo).toBe(595);
+    expect((await store.player(bob.publicId))?.elo).toBe(400 + 100);
   });
 });

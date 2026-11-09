@@ -1,99 +1,19 @@
 import { html } from "lit";
-import { customElement, state } from "lit/decorators.js";
-import { UserMeResponse } from "../../core/ApiSchemas";
-import { responseHasLinkedIdentity } from "../AccountIdentity";
-import { getUserMe } from "../Api";
+import { customElement } from "lit/decorators.js";
 import { userAuth } from "../Auth";
-import { crazyGamesSDK } from "../CrazyGamesSDK";
 import { translateText } from "../Utils";
 import { BaseModal } from "./BaseModal";
 import { modalHeader } from "./ui/ModalHeader";
 
+// Mode picker for ranked matchmaking. The rating itself is deliberately not
+// displayed anywhere (not here, not in the leaderboard, not in lobbies).
 @customElement("ranked-modal")
 export class RankedModal extends BaseModal {
   protected routerName = "ranked";
 
-  @state() private elo: number | string = "...";
-  @state() private elo2v2: number | string = "...";
-  @state() private userMeResponse: UserMeResponse | false = false;
-  @state() private errorMessage: string | null = null;
-  // CrazyGames players authenticate through the SDK, not a linked
-  // Discord/Google/email account, so track that separately for ranked.
-  @state() private crazyGamesSignedIn = false;
-
-  // Eligible to see/play ranked: a linked account or a signed-in CrazyGames one.
-  private isRankedEligible(): boolean {
-    return (
-      responseHasLinkedIdentity(this.userMeResponse) || this.crazyGamesSignedIn
-    );
-  }
-
   constructor() {
     super();
     this.id = "page-ranked";
-  }
-
-  connectedCallback() {
-    super.connectedCallback();
-    document.addEventListener(
-      "userMeResponse",
-      this.handleUserMeResponse as EventListener,
-    );
-  }
-
-  disconnectedCallback() {
-    document.removeEventListener(
-      "userMeResponse",
-      this.handleUserMeResponse as EventListener,
-    );
-    super.disconnectedCallback();
-  }
-
-  private handleUserMeResponse = (
-    event: CustomEvent<UserMeResponse | false>,
-  ) => {
-    this.errorMessage = null;
-    this.userMeResponse = event.detail;
-    this.updateElo();
-  };
-
-  private updateElo() {
-    if (this.errorMessage) {
-      this.elo = translateText("map_component.error");
-      this.elo2v2 = translateText("map_component.error");
-      return;
-    }
-
-    if (this.isRankedEligible()) {
-      const leaderboard = this.userMeResponse
-        ? this.userMeResponse.player.leaderboard
-        : undefined;
-      const noElo = translateText("matchmaking_modal.no_elo");
-      this.elo = leaderboard?.oneVone?.elo ?? noElo;
-      this.elo2v2 = leaderboard?.twoVtwo?.elo ?? noElo;
-    }
-  }
-
-  protected override async onOpen(): Promise<void> {
-    this.elo = "...";
-    this.elo2v2 = "...";
-    this.errorMessage = null;
-
-    try {
-      const userMe = await getUserMe();
-      this.userMeResponse = userMe;
-      this.crazyGamesSignedIn =
-        crazyGamesSDK.isOnCrazyGames() &&
-        (await crazyGamesSDK.getUserProfile()) !== null;
-    } catch (error) {
-      console.error("Failed to fetch user profile for ranked modal", error);
-      this.userMeResponse = false;
-      this.errorMessage = translateText("map_component.error");
-      this.elo = translateText("map_component.error");
-      this.elo2v2 = translateText("map_component.error");
-    } finally {
-      this.updateElo();
-    }
   }
 
   createRenderRoot() {
@@ -114,18 +34,12 @@ export class RankedModal extends BaseModal {
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
           ${this.renderCard(
             translateText("mode_selector.ranked_1v1_title"),
-            this.errorMessage ??
-              (this.isRankedEligible()
-                ? translateText("matchmaking_modal.elo", { elo: this.elo })
-                : translateText("mode_selector.ranked_title")),
+            translateText("mode_selector.ranked_title"),
             () => this.handleRanked("1v1"),
           )}
           ${this.renderCard(
             translateText("mode_selector.ranked_2v2_title"),
-            this.errorMessage ??
-              (this.isRankedEligible()
-                ? translateText("matchmaking_modal.elo", { elo: this.elo2v2 })
-                : translateText("mode_selector.ranked_title")),
+            translateText("mode_selector.ranked_title"),
             () => this.handleRanked("2v2"),
           )}
           ${this.renderDisabledCard(

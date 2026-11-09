@@ -44,7 +44,6 @@ function visibility(
       );
       return i === -1 ? undefined : i;
     },
-    rankedPoints: () => undefined,
   });
 }
 
