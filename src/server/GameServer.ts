@@ -68,6 +68,10 @@ import {
 import { ListingState } from "./ListingState";
 import { identityFor, MatchTelemetryRecorder } from "./MatchTelemetryRecorder";
 import { friendsLookup, NameVisibility } from "./NameVisibility";
+import {
+  notifyRankedMatchStarted,
+  RankedMatchStartedNotice,
+} from "./RankedLobbyNotifier";
 import { computeRankedPlacements } from "./ranking/Placements";
 import { getRankedRatings, type RankedMatch } from "./ranking/RankedRatings";
 import {
@@ -140,6 +144,10 @@ export interface GameServerDeps {
   // Apply a finished ranked lobby's result to the single ladder. The default
   // writes the shared rankings store; tests inject a spy.
   ranked: (match: RankedMatch) => Promise<boolean>;
+  // Announce a started ranked match to the community Discord (see
+  // RankedLobbyNotifier.ts). The default posts to DISCORD_RANKED_WEBHOOK_URL
+  // and is a no-op when it is unset; tests inject a spy.
+  rankedStarted: (notice: RankedMatchStartedNotice) => void;
 }
 
 export function defaultGameServerDeps(): GameServerDeps {
@@ -152,6 +160,7 @@ export function defaultGameServerDeps(): GameServerDeps {
     telemetryBuildHash: "DEV",
     saveStore: noopSaveStore,
     ranked: (match) => getRankedRatings().applyMatch(match),
+    rankedStarted: (notice) => notifyRankedMatchStarted(notice),
   };
 }
 
@@ -328,6 +337,8 @@ export class GameServer {
     { publicId: string; username: string }
   >();
   private rankedResultApplied = false;
+  // One Discord announcement per game, from whichever start path runs.
+  private rankedStartNotified = false;
 
   private lobbyInfoIntervalId: ReturnType<typeof setInterval> | null = null;
 
@@ -1874,6 +1885,7 @@ export class GameServer {
     }
     this.gameStartInfo = result.data satisfies GameStartInfo;
     this.captureRankedRoster();
+    this.notifyRankedStart();
     this.telemetry.emit(
       "match_started",
       {
@@ -1912,6 +1924,32 @@ export class GameServer {
           username: client.username,
         });
       }
+    }
+  }
+
+  // Post a one-time note to the community Discord that this ranked match is
+  // starting. Both real start paths call it (a fresh start and a resumed saved
+  // game), and the flag keeps a game from announcing twice.
+  private notifyRankedStart(): void {
+    if (this.rankedStartNotified || !this.isRanked()) return;
+    this.rankedStartNotified = true;
+    const creator = [...this.clients.all().values()].find(
+      (client) => client.clientID === this.lobbyCreatorID,
+    );
+    try {
+      this.deps.rankedStarted({
+        gameID: this.id,
+        map: this.gameConfig.gameMap,
+        mode: this.gameConfig.gameMode,
+        players: this.clients.players().length,
+        maxPlayers: this.gameConfig.maxPlayers,
+        host: creator?.username,
+      });
+    } catch (error) {
+      // A notification is never allowed to block the start path.
+      this.log.warn("ranked start notification failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 
@@ -2023,6 +2061,7 @@ export class GameServer {
     }
     this.enforceResumedRankedEligibility();
     this.captureRankedRoster();
+    this.notifyRankedStart();
     this.resumeStarted = true;
     this.startsAt = undefined;
     this.stopLobbyInfoBroadcast();
