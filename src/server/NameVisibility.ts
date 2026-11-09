@@ -32,8 +32,6 @@ export interface NameVisibilityView {
   // The client's pinned matchmade or points-balanced ranked team, or
   // undefined outside one.
   teamIndex: (client: Client) => number | undefined;
-  // The client's effective ranked points, or undefined outside a ranked lobby.
-  rankedPoints: (client: Client) => number | undefined;
 }
 
 export type LobbyClient = NonNullable<GameInfo["clients"]>[number];
@@ -187,9 +185,6 @@ export class NameVisibility {
     const friendsFor = friendsLookup(active);
     const config = this.view.config();
     const hideClanTags = config.disableClanTags ?? false;
-    // Ranked points identify a player almost as well as a name, so they follow
-    // the same rule as the name: only when names are not anonymized.
-    const showPoints = !config.anonymizeNames;
     return active.map((c) => {
       if (!this.seesReal(viewer, c.clientID)) {
         return {
@@ -198,7 +193,6 @@ export class NameVisibility {
           clientID: c.clientID,
           spectator: c.spectator || undefined,
           teamIndex: this.view.teamIndex(c),
-          elo: showPoints ? this.view.rankedPoints(c) : undefined,
         };
       }
       // A TEAMMATE reveal is deliberately narrower than the others. Seeing a
@@ -217,7 +211,6 @@ export class NameVisibility {
         verified: c.cosmetics?.verified,
         spectator: c.spectator || undefined,
         teamIndex: this.view.teamIndex(c),
-        elo: showPoints ? this.view.rankedPoints(c) : undefined,
       };
     });
   }

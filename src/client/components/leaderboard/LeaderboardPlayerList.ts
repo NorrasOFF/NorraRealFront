@@ -258,9 +258,6 @@ export class LeaderboardPlayerList extends LitElement {
             </div>
           </td>
           <td class="py-3 px-4 text-right">
-            <span class="font-mono text-white font-bold">${entry.elo}</span>
-          </td>
-          <td class="py-3 px-4 text-right">
             <span class="font-mono text-white font-bold">${entry.games}</span>
           </td>
         </tr>
@@ -309,9 +306,6 @@ export class LeaderboardPlayerList extends LitElement {
               .onNameClick=${() => this.openProfile(player.playerId)}
             ></player-name>
           </div>
-        </td>
-        <td class="py-3 px-4 text-right">
-          <span class="font-mono text-white font-medium">${player.elo}</span>
         </td>
         <td class="py-3 px-4 text-right">
           <span class="font-mono text-white font-medium">${player.games}</span>
@@ -458,8 +452,7 @@ export class LeaderboardPlayerList extends LitElement {
             <table class="w-full text-sm border-collapse table-fixed">
               <colgroup>
                 <col style="width: 4rem" />
-                <col style="width: 12rem" />
-                <col style="width: 6rem" />
+                <col style="width: 18rem" />
                 <col style="width: 6rem" />
               </colgroup>
               <thead class="sticky top-0 z-10">
@@ -471,9 +464,6 @@ export class LeaderboardPlayerList extends LitElement {
                   </th>
                   <th class="py-4 px-4 text-left font-bold">
                     ${translateText("leaderboard_modal.player")}
-                  </th>
-                  <th class="py-4 px-4 text-right font-bold">
-                    ${translateText("leaderboard_modal.elo")}
                   </th>
                   <th class="py-4 px-4 text-right font-bold">
                     ${translateText("leaderboard_modal.games")}

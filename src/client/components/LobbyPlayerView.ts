@@ -237,18 +237,6 @@ export class LobbyTeamView extends LitElement {
     </button>`;
   }
 
-  // The effective ranked points of a player, shown only in ranked lobbies
-  // (the server fills `elo` then). A number needs no translation; the tooltip
-  // names what it is.
-  private renderRankedPoints(client: ClientInfo) {
-    if (client.elo === undefined) return html``;
-    return html`<span
-      class="ranked-points ml-1.5 text-[11px] text-white/60"
-      title=${translateText("host_modal.ranked_points")}
-      >${client.elo}</span
-    >`;
-  }
-
   private renderFreeForAll() {
     return html`${repeat(
       this.activePlayers,
@@ -263,7 +251,6 @@ export class LobbyTeamView extends LitElement {
           <span class="text-white"
             >${displayName} ${this.renderVerifiedBadge(client)}</span
           >
-          ${this.renderRankedPoints(client)}
           ${this.renderRevealToggle(client.clientID)}
           ${client.clientID === this.lobbyCreatorClientID
             ? html`<span class="host-badge"
@@ -336,7 +323,6 @@ export class LobbyTeamView extends LitElement {
                     <span class="truncate text-white"
                       >${displayName} ${this.renderVerifiedBadge(p)}</span
                     >
-                    ${this.renderRankedPoints(p)}
                     ${this.renderRevealToggle(p.clientID)}
                     ${p.clientID === this.lobbyCreatorClientID
                       ? html`<span class="ml-2 text-[11px] text-green-300"

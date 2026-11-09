@@ -123,24 +123,20 @@ describe("ranked lobbies balance teams by points", () => {
     expect(Math.max(...sums) - Math.min(...sums)).toBe(200);
   });
 
-  test("publishes each player's ranked points in the lobby roster", async () => {
+  test("does not publish ranked points in the lobby roster", async () => {
     const points = { alice: 2000, bob: 1875.4, carol: 1100, dave: 1000 };
-    const { game, clients } = makeLobby({ points });
+    const { game } = makeLobby({ points });
 
     await game.refreshRankedTeams();
 
     const roster = game.gameInfo().clients ?? [];
-    const eloOf = (clientID: string) =>
-      roster.find((c) => c.clientID === clientID)?.elo;
-    expect(eloOf(clients[0].clientID)).toBe(2000);
-    expect(eloOf(clients[1].clientID)).toBe(1875);
-    // Unlisted players still have a points display in a ranked lobby.
-    expect(eloOf(clients[3].clientID)).toBe(1000);
+    // Points are used only for the balanced split; they are never shown.
+    expect(roster.every((c) => c.elo === undefined)).toBe(true);
   });
 
   test("falls back to the normal assignment when every point total is equal", async () => {
     const points = { alice: 1200, bob: 1200, carol: 1200, dave: 1200 };
-    const { game, clients } = makeLobby({ points });
+    const { game } = makeLobby({ points });
 
     await game.refreshRankedTeams();
     startGame(game);
@@ -149,11 +145,6 @@ describe("ranked lobbies balance teams by points", () => {
     // No pins: the unranked assignment path (team fill, clan/friend
     // grouping) is what should run, not an arbitrary frozen split.
     expect(players.every((p) => p.teamIndex === undefined)).toBe(true);
-    // Points are still displayed.
-    const roster = game.gameInfo().clients ?? [];
-    expect(roster.find((c) => c.clientID === clients[0].clientID)?.elo).toBe(
-      1200,
-    );
   });
 
   test("does nothing for an unranked team lobby", async () => {
@@ -172,7 +163,7 @@ describe("ranked lobbies balance teams by points", () => {
 
   test("does nothing for a ranked FFA lobby (no teams to balance)", async () => {
     const points = { alice: 2000, bob: 1900, carol: 1100, dave: 1000 };
-    const { game, clients } = makeLobby({
+    const { game } = makeLobby({
       points,
       config: { gameMode: GameMode.FFA },
     });
@@ -182,11 +173,6 @@ describe("ranked lobbies balance teams by points", () => {
 
     const players = startInfoPlayers(game);
     expect(players.every((p) => p.teamIndex === undefined)).toBe(true);
-    // Points are still shown, though.
-    const roster = game.gameInfo().clients ?? [];
-    expect(roster.find((c) => c.clientID === clients[0].clientID)?.elo).toBe(
-      2000,
-    );
   });
 
   test("keeps the matchmaker's split when one is present", async () => {
