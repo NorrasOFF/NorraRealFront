@@ -431,6 +431,23 @@ export function getRankedRatings(): RankedRatingsStore {
   return singleton;
 }
 
+/**
+ * Effective (decayed) ranked points for a set of accounts. Unknown accounts —
+ * first-time ranked players — start at RANKED_START_ELO, which is also what the
+ * ladder uses for their first rated game.
+ */
+export async function rankedPointsFor(
+  publicIds: readonly string[],
+): Promise<Map<string, number>> {
+  const store = getRankedRatings();
+  const points = new Map<string, number>();
+  for (const publicId of new Set(publicIds)) {
+    const rating = await store.player(publicId);
+    points.set(publicId, rating?.elo ?? RANKED_START_ELO);
+  }
+  return points;
+}
+
 export function resetRankedRatingsForTests(): void {
   singleton = null;
 }

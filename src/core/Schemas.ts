@@ -329,10 +329,14 @@ const ClientInfoSchema = z.object({
   // Watching rather than playing. Listed like anyone else — a spectator sees the
   // lobby exactly as a player does — but not in the simulation.
   spectator: z.boolean().optional(),
-  // Server-pinned team slot for matchmade team games, so the lobby's team
-  // preview can honour the pins instead of re-deriving teams that the server
-  // will overrule at start. Absent when the game isn't matchmade.
+  // Server-pinned team slot for matchmade team games and points-balanced
+  // ranked lobbies, so the lobby's team preview can honour the pins instead of
+  // re-deriving teams that the server will overrule at start. Absent when the
+  // game isn't matchmade / ranked.
   teamIndex: zb.uint().optional(),
+  // Effective ranked points (the ladder ELO) for this account. Only sent for
+  // ranked lobbies; shown beside the player in the lobby roster.
+  elo: zb.uint().optional(),
 });
 
 export const GameInfoSchema = z.object({
@@ -424,6 +428,8 @@ export interface ClientInfo {
   spectator?: boolean;
   // Server-pinned team slot for matchmade team games; absent when not matchmade.
   teamIndex?: number;
+  // Effective ranked points, set for ranked lobbies only.
+  elo?: number;
 }
 export enum LogSeverity {
   Debug = "DEBUG",

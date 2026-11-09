@@ -234,6 +234,7 @@ function withStartInfo(matchmakingTeams?: string[][]) {
       );
       return i === -1 ? undefined : i;
     },
+    rankedPoints: () => undefined,
   });
   const players = [
     {
