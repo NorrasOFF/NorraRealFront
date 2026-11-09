@@ -83,3 +83,20 @@ possible, instead of leaving the split to join order / clan / friend grouping.
   balancing (it currently trusts `assignment.teams`).
 - **Tuning:** `rankedTeamCount` mirrors `GameImpl.populateTeams`; revisit it if
   the team-count config or nation defaults change.
+
+## 5. Deployment note (2026-11-09)
+
+- `NorrasOFF/NorraRealFront` `main` is the Fly auto-deploy source, but on this
+  date the app had **no deployment source connected**
+  (`App.hasDeploymentSource = false`): the PR #35 merge `b949a4e04` never
+  triggered a deploy, and the live site stayed on release v187 (PR #34).
+- Shipped manually instead with
+  `flyctl deploy --remote-only --ha=false --build-arg GIT_COMMIT=b949a4e04…`
+  (release **v188**; `/commit.txt` now serves the merge SHA).
+- Reconnect the GitHub source at https://fly.io/apps/openfrontio/settings
+  (Fly GitHub App on `NorrasOFF/NorraRealFront`, branch `main`). The API token
+  in `H:\Documents\fly-token.txt` can deploy but `saveDeploymentSource`
+  returns `UNAUTHORIZED`, so the dashboard is required. Until then, pushes to
+  `main` do not auto-deploy.
+- Windows tooling: flyctl at `C:\Users\ai51940\.fly\bin\flyctl.exe`; set
+  `$env:FLY_API_TOKEN` from that token file before using it.
