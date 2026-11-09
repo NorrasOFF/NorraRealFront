@@ -16,7 +16,11 @@ import {
 import { PathStatus } from "../pathfinding/types";
 import { PseudoRandom, PseudoRandomState } from "../PseudoRandom";
 import { findMinimumBy } from "../Util";
-import { shipShouldMove } from "./FleetFormation";
+import {
+  bulkShipSpawnTile,
+  shipRandomSeed,
+  shipShouldMove,
+} from "./FleetFormation";
 import { ShellExecution } from "./ShellExecution";
 
 export interface WarshipExecutionCheckpoint {
@@ -44,7 +48,12 @@ export class WarshipExecution implements Execution {
   private lastEmittedCombat = false;
 
   constructor(
-    private input: (UnitParams<UnitType.Warship> & OwnerComp) | Unit,
+    private input:
+      | (UnitParams<UnitType.Warship> &
+          OwnerComp & {
+            bulkSpawnIndex?: number;
+          })
+      | Unit,
   ) {}
 
   /** B2: capture the warship's patrol/combat state and cached route. */
@@ -103,7 +112,10 @@ export class WarshipExecution implements Execution {
   init(mg: Game, ticks: number): void {
     this.mg = mg;
     this.pathfinder = new WaterPathFinder(mg);
-    this.random = new PseudoRandom(mg.ticks());
+    const bulkSpawnIndex = isUnit(this.input)
+      ? undefined
+      : this.input.bulkSpawnIndex;
+    this.random = new PseudoRandom(shipRandomSeed(mg.ticks(), bulkSpawnIndex));
     if (isUnit(this.input)) {
       this.warship = this.input;
     } else {
@@ -117,9 +129,18 @@ export class WarshipExecution implements Execution {
         );
         return;
       }
+      const spawnTile =
+        bulkSpawnIndex === undefined
+          ? spawn
+          : bulkShipSpawnTile(
+              this.mg,
+              spawn,
+              this.input.patrolTile,
+              bulkSpawnIndex,
+            );
       this.warship = this.input.owner.buildUnit(
         UnitType.Warship,
-        spawn,
+        spawnTile,
         this.input,
       );
     }

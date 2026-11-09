@@ -65,6 +65,69 @@ function findWaterTile(
 }
 
 /**
+ * Collect up to `count` distinct water tiles near `anchor` in deterministic
+ * ring order (nearest first). When `component` is given, only tiles reachable
+ * through that water component are returned, so a bulk spawn cannot place a
+ * ship on the far side of a narrow isthmus.
+ */
+export function findWaterTilesNear(
+  mg: Game,
+  anchor: TileRef,
+  component: number | null,
+  count: number,
+): TileRef[] {
+  const result: TileRef[] = [];
+  const seen = new Set<TileRef>();
+  const anchorX = mg.x(anchor);
+  const anchorY = mg.y(anchor);
+  for (let r = 0; r < 20 && result.length < count; r++) {
+    for (let dy = -r; dy <= r && result.length < count; dy++) {
+      for (let dx = -r; dx <= r; dx++) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+        const x = anchorX + dx;
+        const y = anchorY + dy;
+        if (!mg.isValidCoord(x, y)) continue;
+        const tile = mg.ref(x, y);
+        if (!mg.isWater(tile) || seen.has(tile)) continue;
+        if (component !== null && !mg.hasWaterComponent(tile, component)) {
+          continue;
+        }
+        seen.add(tile);
+        result.push(tile);
+        if (result.length >= count) break;
+      }
+    }
+  }
+  return result;
+}
+
+/**
+ * Spawn tile for the `index`-th ship of a bulk build. The port tile is land,
+ * so spread the ships over the nearest distinct water tiles around it. Falls
+ * back to the port tile when the surrounding water is too small.
+ */
+export function bulkShipSpawnTile(
+  mg: Game,
+  portTile: TileRef,
+  patrolTile: TileRef,
+  index: number,
+): TileRef {
+  const component = mg.getWaterComponent(patrolTile);
+  const tiles = findWaterTilesNear(mg, portTile, component, index + 1);
+  return tiles[index] ?? portTile;
+}
+
+/**
+ * Seed for a ship's patrol PRNG. Ships built by one bulk gesture all initialise
+ * on the same tick, so without an index offset they would generate identical
+ * random patrol targets and travel in lockstep on the exact same tile. Index 0
+ * keeps the historical seed, so single-ship spawns are unchanged.
+ */
+export function shipRandomSeed(tick: number, bulkSpawnIndex?: number): number {
+  return tick + (bulkSpawnIndex ?? 0) * 1_000_003;
+}
+
+/**
  * Assign each ship a compact, evenly-spaced grid slot around `anchor`, with
  * missile ships (MissileShip + MissileDefenseShip) in the center. Sets each
  * ship's patrolTile and fleetMoveRate.

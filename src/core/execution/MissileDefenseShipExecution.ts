@@ -15,7 +15,12 @@ import {
 } from "../pathfinding/PathFinder";
 import { PathStatus } from "../pathfinding/types";
 import { PseudoRandom, PseudoRandomState } from "../PseudoRandom";
-import { shipMoveInterval, shipShouldMove } from "./FleetFormation";
+import {
+  bulkShipSpawnTile,
+  shipMoveInterval,
+  shipRandomSeed,
+  shipShouldMove,
+} from "./FleetFormation";
 import {
   SAMTargetingSystem,
   SAMTargetingSystemCheckpoint,
@@ -41,7 +46,12 @@ export class MissileDefenseShipExecution implements Execution {
   private readonly MIRV_PROTECTION_RADIUS = 50;
 
   constructor(
-    private input: (UnitParams<UnitType.MissileDefenseShip> & OwnerComp) | Unit,
+    private input:
+      | (UnitParams<UnitType.MissileDefenseShip> &
+          OwnerComp & {
+            bulkSpawnIndex?: number;
+          })
+      | Unit,
   ) {}
 
   /** B2: capture the anti-air ship's patrol/cooldown state and cached route. */
@@ -89,6 +99,9 @@ export class MissileDefenseShipExecution implements Execution {
   init(mg: Game): void {
     this.mg = mg;
     this.pathfinder = new WaterPathFinder(mg);
+    const bulkSpawnIndex = isUnit(this.input)
+      ? undefined
+      : this.input.bulkSpawnIndex;
 
     if (isUnit(this.input)) {
       this.warship = this.input;
@@ -104,13 +117,22 @@ export class MissileDefenseShipExecution implements Execution {
         this.active = false;
         return;
       }
+      const spawnTile =
+        bulkSpawnIndex === undefined
+          ? spawn
+          : bulkShipSpawnTile(
+              this.mg,
+              spawn,
+              this.input.patrolTile,
+              bulkSpawnIndex,
+            );
       this.warship = this.input.owner.buildUnit(
         UnitType.MissileDefenseShip,
-        spawn,
+        spawnTile,
         this.input,
       );
     }
-    this.random = new PseudoRandom(mg.ticks());
+    this.random = new PseudoRandom(shipRandomSeed(mg.ticks(), bulkSpawnIndex));
   }
 
   tick(ticks: number): void {
