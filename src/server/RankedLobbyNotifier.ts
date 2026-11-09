@@ -42,7 +42,7 @@ export interface DiscordWebhookPayload {
   embeds: DiscordEmbed[];
 }
 
-export const RANKED_NOTIFIER_USERNAME = "Hexfront Ranked";
+export const RANKED_NOTIFIER_USERNAME = "Norrasoff Ranked";
 
 // The blurple Discord uses for its own embeds.
 const RANKED_EMBED_COLOR = 0x5865f2;

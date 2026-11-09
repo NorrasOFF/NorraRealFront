@@ -1103,7 +1103,7 @@ Discord server whose invite is linked in the page footer
 - **Config:** `DISCORD_RANKED_WEBHOOK_URL` (unset = feature off, no request is
   made at all). `PUBLIC_SITE_URL` overrides the link origin; otherwise it is
   `https://[SUBDOMAIN.]DOMAIN`. Both are documented in `example.env`.
-- **Message:** embed titled "Ranked match started" (`Hexfront Ranked` as the
+- **Message:** embed titled "Ranked match started" (`Norrasoff Ranked` as the
   webhook username) with map, mode, `players/maxPlayers`, host username, and a
   clickable link to `/w<N>/game/<id>`. `allowed_mentions: { parse: [] }` means
   the post can never ping anyone, even if a username looks like `@everyone`.

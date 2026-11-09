@@ -26,7 +26,7 @@ Discord (the invite in the page footer, `https://discord.gg/SJSyRbVA`).
   status. `notifyRankedStart()` is guarded by `rankedStartNotified`, so a game
   announces at most once. Unranked, delisted-before-start and resumed games
   that lost ranked status are silent.
-- **Message:** `Hexfront Ranked` webhook username, embed "Ranked match started"
+- **Message:** `Norrasoff Ranked` webhook username, embed "Ranked match started"
   with map, mode, `players/maxPlayers`, host username, timestamp and a clickable
   `https://[SUBDOMAIN.]DOMAIN/w<N>/game/<id>` link. `allowed_mentions:
 { parse: [] }`, so it can never ping anyone.
