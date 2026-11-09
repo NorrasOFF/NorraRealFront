@@ -209,13 +209,11 @@ export class GameManager {
         if (!game.hasStarted() && !game.cancelShortHandedMatch()) {
           // Prestart tells clients to start loading the game.
           game.prestart();
-          // Start game on delay to allow time for clients to connect.
+          // Start game on delay to allow time for clients to connect. A ranked
+          // team lobby gets one async ladder read first so the team pins are
+          // computed from the points of everyone who made it in.
           setTimeout(() => {
-            try {
-              game.start();
-            } catch (error) {
-              this.log.error(`error starting game ${id}: ${error}`);
-            }
+            void this.startWhenReady(id, game);
           }, 2000);
         }
       }
@@ -231,5 +229,21 @@ export class GameManager {
       }
     }
     this.games = active;
+  }
+
+  // The delayed start path. Awaiting the ranked points refresh is the only
+  // async step; a failure there must never block the start, so it is caught
+  // and the game starts with whatever split is already known (possibly none).
+  private async startWhenReady(id: GameID, game: GameServer): Promise<void> {
+    try {
+      await game.refreshRankedTeams();
+    } catch (error) {
+      this.log.error(`error balancing ranked teams ${id}: ${error}`);
+    }
+    try {
+      game.start();
+    } catch (error) {
+      this.log.error(`error starting game ${id}: ${error}`);
+    }
   }
 }

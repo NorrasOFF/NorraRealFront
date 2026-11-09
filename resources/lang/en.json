@@ -982,6 +982,7 @@
     "ranked_host_ok": "OK",
     "ranked_host_required_body": "Your account is not allowed to list ranked lobbies yet. Ask an admin to grant you the host or admin tier.",
     "ranked_host_required_title": "Ranked hosting not enabled",
+    "ranked_points": "Ranked points",
     "remove_player": "Remove {username}",
     "resume_notice": "This is a saved game. Share the invite link so the original players can reclaim their nations, then press Start when everyone is ready.",
     "resume_title": "Resume Game",

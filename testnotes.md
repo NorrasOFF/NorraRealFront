@@ -1123,3 +1123,75 @@ Discord server whose invite is linked in the page footer
   non-blocking, resumed ranked save). `npx tsc --noEmit` and `npm run lint`
   clean; `tests/server` 732 passed with only the three documented pre-existing
   failures (`GameServerWire`, `HostedLobbyListing`, `GameServerPhase`).
+
+## Ranked teams are balanced by ladder points
+
+A ranked lobby is a listed private lobby. In a team game the server now assigns
+each human's team slot from the ranked ladder ("points") instead of leaving the
+split to join order, clan and friend grouping. The sum of each team's points is
+as close as possible across teams, with sizes kept equal (floor/ceil of
+players/teams).
+
+- **Points.** `RankedRatings.rankedPointsFor(publicIds)` reads the one ranked
+  Elo ladder (the same value the ranked leaderboard and the placement rating
+  use), including lazy inactivity decay. An account with no rated game yet
+  counts as `RANKED_START_ELO` (1200).
+- **Algorithm** (`src/server/ranking/TeamBalancing.ts`, pure). Objective:
+  minimize `max(team sum) - min(team sum)`, tie-break by the sum of squared
+  deviations from the mean. Rosters of up to `EXACT_SPLIT_LIMIT` (16) players
+  are solved exactly with branch and bound (symmetry-pruned: teams with the
+  same count and sum are interchangeable; seeded with a greedy split so a node
+  cap degrades gracefully). Larger rosters use the greedy split (emptiest, then
+  lightest team) followed by best-improvement local search over swaps and
+  moves. Deterministic: entries are sorted by points desc, then clientID.
+- **Equal points fallback.** When _every_ player has the same points
+  (`computeRankedTeamPins` in `GameServer`) no pins are produced at all, so the
+  normal assignment path runs exactly as in an unranked lobby (team fill,
+  clan/friend grouping). This was an explicit requirement: pinning an
+  arbitrary split would be worse than the existing behavior.
+- **What is skipped.** FFA lobbies (no teams), `HumansVsNations`, matchmade
+  games (the matcher's `matchmakingTeams` split wins), and Duos/Trios/Quads
+  with `nations: "default"` because the server cannot know the map's nation
+  count and therefore the number of teams (`GameImpl.populateTeams` counts
+  nations).
+- **Server flow.** `GameServer.refreshRankedTeams()` reads points for the
+  connected players, recomputes the pins and rebroadcasts lobby info. It is
+  fired (fire-and-forget) on listing, on join and on rejoin, and is awaited
+  once by `GameManager.startWhenReady` right before `game.start()`; the
+  generation counter drops a slow refresh that a newer one or the start
+  superseded. A ladder read failure only logs a warning: the game still starts,
+  using any previously computed split (or none).
+- **Pins.** `teamIndexFor` prefers the matchmaker's pin, then the balanced pin.
+  It is used for the start message (`GameStartInfo.players[].teamIndex`), the
+  lobby roster and telemetry. The core already honors `teamIndex` in
+  `assignTeams`, and `PlayerRecord.teamIndex` is archived, so a replay of the
+  recorded start reproduces the same teams. No checkpoint version change (team
+  assignment happens before the first checkpoint).
+- **Lobby display.** `ClientInfo.elo` is a new optional field appended to the
+  lobby-roster schema (zbin-safe). It is set only for ranked lobbies and only
+  when `anonymizeNames` is off (points identify a player nearly as well as a
+  name). `LobbyPlayerView` renders it beside the player name in both the FFA
+  and team lists, and the existing team preview already honors the pins, so
+  players see the balanced teams before the host presses Start.
+
+Tests: `tests/server/ranking/TeamBalancing.test.ts` (hand-computed split,
+brute-force optimality on 120 random small lobbies, equal sizes 3/2/2 for 7
+players/3 teams, order-independent determinism, team-count clamp, NaN points,
+empty roster, a 64-player lobby) and
+`tests/server/RankedTeamBalancing.test.ts` (optimal 2v2 split stamped into the
+start info, odd-roster sizes, points in the lobby roster, unranked and FFA
+untouched, matchmaker pins preserved, a late joiner is balanced in, equal
+points fall back with no pins, failing ladder read still starts).
+`tests/client/LobbyPlayerViewPoints.test.ts` renders the lobby (with the
+usual localStorage stub) and checks the points badges.
+
+Verification: `npx tsc --noEmit`, `npm run lint`, Prettier clean. `tests/server`
+749 passed with only the three documented pre-existing failures
+(`GameServerWire` golden transcript — its diff now also shows the new
+`elo: undefined` field; `HostedLobbyListing`; `GameServerPhase`). `tests/core`
+457 passed with the known `SAMLauncherExecution` dynamic-range failure;
+`TranslationSystem` still lists the four documented unused keys.
+`tests/client/LobbyPlayerViewPoints.test.ts` 3 passed. Not browser-tested:
+verification needs a listed lobby with two signed-in accounts from two
+browsers, which the single-player e2e harness cannot set up; the wire side is
+covered by the server tests and the render side by the component test.

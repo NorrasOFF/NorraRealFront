@@ -13,7 +13,14 @@ import {
   MAX_CHECKPOINT_TRANSFER_BYTES,
 } from "../core/CheckpointCodec";
 import { GameEnv } from "../core/configuration/Config";
-import { GameType, RankedType } from "../core/game/Game";
+import {
+  Duos,
+  GameMode,
+  GameType,
+  HumansVsNations,
+  RankedType,
+  Trios,
+} from "../core/game/Game";
 import {
   AllPlayersStats,
   ClientCheckpointChunkMessage,
@@ -73,11 +80,21 @@ import {
   RankedMatchStartedNotice,
 } from "./RankedLobbyNotifier";
 import { computeRankedPlacements } from "./ranking/Placements";
-import { getRankedRatings, type RankedMatch } from "./ranking/RankedRatings";
+import {
+  getRankedRatings,
+  RANKED_START_ELO,
+  rankedPointsFor,
+  type RankedMatch,
+} from "./ranking/RankedRatings";
 import {
   aliveClientIdsFromCheckpoint,
   rankedResumeRequiredSeats,
 } from "./ranking/ResumeEligibility";
+import {
+  balanceTeams,
+  EXACT_SPLIT_LIMIT,
+  type TeamBalanceEntry,
+} from "./ranking/TeamBalancing";
 import { Roster } from "./Roster";
 import { noopSaveStore, type ServerSaveStore } from "./SaveStore";
 import { ServerEnv } from "./ServerEnv";
@@ -144,6 +161,10 @@ export interface GameServerDeps {
   // Apply a finished ranked lobby's result to the single ladder. The default
   // writes the shared rankings store; tests inject a spy.
   ranked: (match: RankedMatch) => Promise<boolean>;
+  // Effective ranked points for account publicIds (see ranking/RankedRatings).
+  // Read when a ranked lobby's roster changes and again before it starts, to
+  // balance teams and show points in the lobby. Tests inject a map.
+  rankedPoints: (publicIds: readonly string[]) => Promise<Map<string, number>>;
   // Announce a started ranked match to the community Discord (see
   // RankedLobbyNotifier.ts). The default posts to DISCORD_RANKED_WEBHOOK_URL
   // and is a no-op when it is unset; tests inject a spy.
@@ -160,6 +181,7 @@ export function defaultGameServerDeps(): GameServerDeps {
     telemetryBuildHash: "DEV",
     saveStore: noopSaveStore,
     ranked: (match) => getRankedRatings().applyMatch(match),
+    rankedPoints: (publicIds) => rankedPointsFor(publicIds),
     rankedStarted: (notice) => notifyRankedMatchStarted(notice),
   };
 }
@@ -339,6 +361,17 @@ export class GameServer {
   private rankedResultApplied = false;
   // One Discord announcement per game, from whichever start path runs.
   private rankedStartNotified = false;
+  // Effective ranked points by account publicId, refreshed as the roster of a
+  // ranked lobby changes. Feeds the lobby's points display and the balanced
+  // team split; absent entries fall back to RANKED_START_ELO.
+  private rankedPoints = new Map<string, number>();
+  // clientID -> team slot chosen by the points balancer for this ranked team
+  // lobby (see ranking/TeamBalancing.ts). Recomputed on every roster change
+  // and once more just before start; undefined for non-team/non-ranked games.
+  private rankedTeamPins?: Map<ClientID, number>;
+  // Generation counter so a slow points refresh cannot overwrite the result of
+  // a newer one (joins/leaves can overlap).
+  private rankedRefreshVersion = 0;
 
   private lobbyInfoIntervalId: ReturnType<typeof setInterval> | null = null;
 
@@ -386,7 +419,8 @@ export class GameServer {
       gameID: opts.id,
       config: () => this.gameConfig,
       clients: () => this.clients.all(),
-      teamIndex: (c) => this.matchmakingTeamIndex(c),
+      teamIndex: (c) => this.teamIndexFor(c),
+      rankedPoints: (c) => this.rankedPointsFor(c),
     });
     this.log = opts.log.child({ gameID: opts.id });
     this.ingress = new SocketIngress(this.log, this.telemetry, {
@@ -1101,7 +1135,7 @@ export class GameServer {
         joinedAt: Date.now(),
         username: client.username,
         playerType: "human",
-        teamIndex: this.matchmakingTeamIndex(client),
+        teamIndex: this.teamIndexFor(client),
       },
       this.turns.length,
     );
@@ -1111,6 +1145,13 @@ export class GameServer {
     if (this.playerCount() >= (this.gameConfig.maxPlayers ?? Infinity)) {
       this.hasReachedMaxPlayerCount = true;
     }
+
+    // A ranked lobby's points and balanced teams depend on who is present, so
+    // refresh them as players join (fire-and-forget; the pre-start refresh in
+    // GameManager is the authoritative one). Rejoins refresh too, at the end of
+    // rejoinClient, because a disconnected player is not in the connected
+    // roster this reads.
+    if (this.isRanked()) void this.refreshRankedTeams();
 
     // In case a client joined the game late and missed the start message.
     if (this.stage === "started") {
@@ -1196,6 +1237,7 @@ export class GameServer {
 
     this.ingress.attach(client);
     this.startLobbyInfoBroadcast();
+    if (this.isRanked()) void this.refreshRankedTeams();
 
     if (this.stage === "started") {
       if (this.isResumeLobby()) {
@@ -1874,7 +1916,7 @@ export class GameServer {
         cosmetics: c.cosmetics,
         isLobbyCreator: this.lobbyCreatorID === c.clientID,
         friends: friendsFor(c),
-        teamIndex: this.matchmakingTeamIndex(c),
+        teamIndex: this.teamIndexFor(c),
       })),
       tribes: this.tribes,
     });
@@ -2187,6 +2229,144 @@ export class GameServer {
       team.includes(publicId),
     );
     return idx === -1 ? undefined : idx;
+  }
+
+  // The team slot stamped on a client at start (and shown in the lobby): the
+  // matchmaker's pin wins; otherwise a ranked team lobby uses the
+  // points-balanced split. Undefined outside those cases.
+  private teamIndexFor(c: Client): number | undefined {
+    const matchmade = this.matchmakingTeamIndex(c);
+    if (matchmade !== undefined) return matchmade;
+    if (!this.isRanked() || this.rankedTeamPins === undefined) return undefined;
+    return this.rankedTeamPins.get(c.clientID);
+  }
+
+  // Effective ranked points of a client, for the lobby roster. Undefined
+  // outside a ranked lobby (or before the first points refresh lands). Rounded
+  // to a whole point because the wire carries a uint.
+  private rankedPointsFor(c: Client): number | undefined {
+    if (!this.isRanked() || c.publicId === undefined) return undefined;
+    const points = this.rankedPoints.get(c.publicId);
+    return points === undefined ? undefined : Math.round(points);
+  }
+
+  // True once start() has frozen the roster. A method rather than a bare
+  // property read so a check made after an await is not narrowed by an earlier
+  // guard on the same property.
+  private isGameStarted(): boolean {
+    return this.stage === "started";
+  }
+
+  // Refresh the ladder points of the current roster and, for a ranked team
+  // lobby, recompute the balanced team split. Called (fire-and-forget) when a
+  // ranked lobby's roster changes and awaited once more right before start, so
+  // the frozen gameStartInfo carries final points. Never throws: a failed
+  // refresh keeps the previous split, and the game starts regardless.
+  public async refreshRankedTeams(): Promise<void> {
+    // "started" is frozen; "prestart" is the final refresh window, so it is
+    // still allowed (the pins must exist when start() runs).
+    if (this.ended || this.isGameStarted() || !this.isRanked()) {
+      this.rankedTeamPins = undefined;
+      return;
+    }
+    const version = ++this.rankedRefreshVersion;
+    const roster = this.clients.players();
+    const publicIds = [
+      ...new Set(
+        roster
+          .map((c) => c.publicId)
+          .filter((id): id is string => id !== undefined),
+      ),
+    ];
+
+    let points: Map<string, number>;
+    try {
+      points = await this.deps.rankedPoints(publicIds);
+    } catch (error) {
+      this.log.warn("ranked points refresh failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return;
+    }
+    // A newer refresh (or a start) landed while the ladder read was in flight.
+    if (
+      version !== this.rankedRefreshVersion ||
+      this.ended ||
+      this.isGameStarted() ||
+      !this.isRanked()
+    ) {
+      return;
+    }
+
+    this.rankedPoints = points;
+    this.rankedTeamPins = this.computeRankedTeamPins(roster, points);
+    this.broadcastLobbyInfo();
+  }
+
+  // The balanced split for this lobby, or undefined when there is nothing to
+  // balance: not a team game, teams preordained by the matchmaker or by
+  // HumansVsNations, or too few rated players.
+  private computeRankedTeamPins(
+    roster: readonly Client[],
+    points: ReadonlyMap<string, number>,
+  ): Map<ClientID, number> | undefined {
+    if (this.gameConfig.gameMode !== GameMode.Team) return undefined;
+    // The matchmaker already balanced these teams; its pins win at start.
+    if (this.matchmakingTeams !== undefined) return undefined;
+    const teamCount = this.rankedTeamCount();
+    if (teamCount === undefined || teamCount < 2) return undefined;
+
+    const entries: TeamBalanceEntry[] = [];
+    for (const client of roster) {
+      if (client.publicId === undefined) continue;
+      entries.push({
+        clientID: client.clientID,
+        points: points.get(client.publicId) ?? RANKED_START_ELO,
+      });
+    }
+    if (entries.length < 2) return undefined;
+
+    // Nothing to balance when every player has the same points: pinning would
+    // only freeze an arbitrary split (and override clan/friend grouping), so
+    // fall back to the normal team assignment exactly as an unranked lobby.
+    const firstPoints = entries[0].points;
+    if (entries.every((entry) => entry.points === firstPoints)) {
+      this.log.info("ranked teams left to the normal assignment", {
+        gameID: this.id,
+        players: entries.length,
+        points: firstPoints,
+      });
+      return undefined;
+    }
+
+    const balanced = balanceTeams(entries, teamCount);
+    this.log.info("balanced ranked teams by points", {
+      gameID: this.id,
+      players: entries.length,
+      teams: balanced.teamSums.length,
+      spread: balanced.spread,
+      exact: entries.length <= EXACT_SPLIT_LIMIT,
+    });
+    return balanced.pins;
+  }
+
+  // Number of player teams this lobby will have, mirroring GameImpl's
+  // populateTeams. Undefined when the count cannot be known server-side (map
+  // default nations under a fixed-size preset) or when teams are preordained.
+  private rankedTeamCount(): number | undefined {
+    const configured = this.gameConfig.playerTeams;
+    if (configured === undefined) return undefined;
+    if (configured === HumansVsNations) return undefined;
+    if (typeof configured === "number") return configured;
+
+    // Duos/Trios/Quads: one team per N players. The game counts nations too,
+    // so include a configured nation count; a map default is unknowable here.
+    if (this.gameConfig.nations === "default") return undefined;
+    const nations =
+      typeof this.gameConfig.nations === "number" ? this.gameConfig.nations : 0;
+    const players = this.clients.players().length + nations;
+    const size = configured === Duos ? 2 : configured === Trios ? 3 : 4;
+    return Math.ceil(Math.max(1, players) / size);
   }
 
   private addIntent(intent: StampedIntent) {
@@ -2571,6 +2751,9 @@ export class GameServer {
     // creator / cap overflow) keeps a never-started lobby out of the ladder.
     if (listed) this.gameConfig.ranked = true;
     else delete this.gameConfig.ranked;
+    // Players who joined before the lobby was listed still need their points
+    // read and a balanced split computed.
+    if (listed) void this.refreshRankedTeams();
   }
 
   public autoStartAt(): number | undefined {
