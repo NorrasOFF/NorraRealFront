@@ -231,16 +231,34 @@ export class MasterLobbyService {
       delistGameIDs: delist.length > 0 ? delist : undefined,
     } satisfies MasterLobbiesBroadcast;
     for (const [workerId, worker] of this.workers.entries()) {
-      worker.send(msg, (e) => {
-        if (e) {
-          this.log.error(
-            `Failed to send lobbies broadcast to worker ${workerId}, killing worker:`,
-            e,
-          );
-          worker.kill();
-        }
-      });
+      // A worker whose IPC channel died is removed (and restarted by the
+      // master) on its cluster "exit" event. Skip it until then so a dying
+      // worker does not produce a kill/log storm twice a second.
+      if (this.workerIsDead(worker)) continue;
+      try {
+        worker.send(msg, (e) => {
+          if (e) {
+            this.log.error(
+              `Failed to send lobbies broadcast to worker ${workerId}, killing worker:`,
+              e,
+            );
+            worker.kill();
+          }
+        });
+      } catch (error) {
+        this.log.error(
+          `Failed to send lobbies broadcast to worker ${workerId}:`,
+          error,
+        );
+        worker.kill();
+      }
     }
+  }
+
+  /** True for a cluster worker that has already exited (or a test double). */
+  private workerIsDead(worker: Worker): boolean {
+    const isDead = (worker as Partial<Worker>).isDead;
+    return typeof isDead === "function" && isDead.call(worker);
   }
 
   private async maybeScheduleLobby() {
@@ -286,14 +304,23 @@ export class MasterLobbyService {
       this.log.error(`Worker ${workerId} not found`);
       return;
     }
-    worker.send(msg, (e) => {
-      if (e) {
-        this.log.error(
-          `Failed to send message to worker ${workerId}, killing worker:`,
-          e,
-        );
-        worker.kill();
-      }
-    });
+    if (this.workerIsDead(worker)) {
+      this.log.error(`Worker ${workerId} is dead, dropping message`);
+      return;
+    }
+    try {
+      worker.send(msg, (e) => {
+        if (e) {
+          this.log.error(
+            `Failed to send message to worker ${workerId}, killing worker:`,
+            e,
+          );
+          worker.kill();
+        }
+      });
+    } catch (error) {
+      this.log.error(`Failed to send message to worker ${workerId}:`, error);
+      worker.kill();
+    }
   }
 }

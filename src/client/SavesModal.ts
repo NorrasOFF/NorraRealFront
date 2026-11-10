@@ -225,7 +225,18 @@ export class SavesModal extends BaseModal {
       this.error = "";
       // Force the rebuild so the just-imported file wins even when a live copy
       // of the same game is already waiting in its lobby elsewhere.
-      await resumeSavedLobby(save.gameID, { force: true });
+      try {
+        await resumeSavedLobby(save.gameID, { force: true });
+      } catch (error) {
+        // The import itself succeeded and the save is now listed; only opening
+        // its lobby failed (typically a gateway timeout/restart). Reporting
+        // "failed to import" here was misleading and invited a re-import that
+        // duplicated work.
+        console.error("Imported save but could not open its lobby", error);
+        this.error = translateText("save_game.import_lobby_resume_failed");
+        await this.refresh();
+        return;
+      }
       this.close();
       (
         document.querySelector("host-lobby-modal") as LobbyScreenElement | null

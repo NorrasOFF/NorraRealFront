@@ -7,6 +7,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { GameEnv } from "../core/configuration/Config";
 import { registerAccountTierRoutes } from "./AccountTierRoutes";
+import { ClusterWorkerIds } from "./ClusterWorkerIds";
 import { getDescriptor } from "./DesktopRelease";
 import { initLocalAuth, registerLocalAuthRoutes } from "./LocalAuth";
 import { logger } from "./Logger";
@@ -143,15 +144,43 @@ export async function startMaster() {
   // crashes and restarted.
   let isShuttingDown = false;
 
-  // Fork workers
-  for (let i = 0; i < ServerEnv.numWorkers(); i++) {
+  // Node's cluster worker id -> logical WORKER_ID. Must be recorded at fork:
+  // by the time the cluster "exit" event runs, `worker.process` is null, so the
+  // logical id cannot be read back out of `worker.process.env`. (Reading it
+  // there made every crash a permanent outage: the dead worker stayed in the
+  // lobby service and was killed again on every broadcast, while /wN kept
+  // answering 502.)
+  const workerIds = new ClusterWorkerIds();
+  // Set by the exit handler so a restart storm cannot hot-loop the master.
+  const WORKER_RESTART_DELAY_MS = 1000;
+
+  const spawnWorker = (workerId: number) => {
     const worker = cluster.fork({
-      WORKER_ID: i,
+      WORKER_ID: workerId,
       INSTANCE_ID,
     });
+    workerIds.set(worker.id, workerId);
+    lobbyService.registerWorker(workerId, worker);
+    log.info(`Started worker ${workerId} (PID: ${worker.process?.pid})`);
+    return worker;
+  };
 
-    lobbyService.registerWorker(i, worker);
-    log.info(`Started worker ${i} (PID: ${worker.process.pid})`);
+  const restartWorker = (workerId: number) => {
+    const timer = setTimeout(() => {
+      if (isShuttingDown) return;
+      try {
+        spawnWorker(workerId);
+      } catch (error) {
+        log.error(`failed to restart worker ${workerId}, retrying:`, error);
+        restartWorker(workerId);
+      }
+    }, WORKER_RESTART_DELAY_MS);
+    timer.unref?.();
+  };
+
+  // Fork workers
+  for (let i = 0; i < ServerEnv.numWorkers(); i++) {
+    spawnWorker(i);
   }
 
   // Handle worker crashes
@@ -159,30 +188,29 @@ export async function startMaster() {
     if (isShuttingDown) {
       return;
     }
-    const workerId = (worker as any).process?.env?.WORKER_ID;
+    const workerId = workerIds.take(worker.id);
     if (workerId === undefined) {
-      log.error(`worker crashed could not find id`);
+      // Cannot happen while the fork bookkeeping above stays in sync; never
+      // silently leave a shard dead if it somehow does.
+      const live = new Set(workerIds.logicalIds());
+      let replacement = 0;
+      while (live.has(replacement)) replacement++;
+      log.error(
+        `worker ${worker.id} exited (code ${code}, signal ${signal}) without a recorded WORKER_ID; restarting logical worker ${replacement}`,
+      );
+      lobbyService.removeWorker(replacement);
+      restartWorker(replacement);
       return;
     }
 
-    const workerIdNum = parseInt(workerId);
-    lobbyService.removeWorker(workerIdNum);
+    lobbyService.removeWorker(workerId);
 
     log.warn(
-      `Worker ${workerId} (PID: ${worker.process.pid}) died with code: ${code} and signal: ${signal}`,
+      `Worker ${workerId} (cluster id ${worker.id}, PID: ${worker.process?.pid}) died with code: ${code} and signal: ${signal}`,
     );
     log.info(`Restarting worker ${workerId}...`);
 
-    // Restart the worker with the same ID
-    const newWorker = cluster.fork({
-      WORKER_ID: workerId,
-      INSTANCE_ID,
-    });
-
-    lobbyService.registerWorker(workerIdNum, newWorker);
-    log.info(
-      `Restarted worker ${workerId} (New PID: ${newWorker.process.pid})`,
-    );
+    restartWorker(workerId);
   });
 
   const PORT = 3000;
