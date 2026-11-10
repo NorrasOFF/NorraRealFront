@@ -115,4 +115,28 @@ describe("MasterLobbyService.isHealthy", () => {
     service.removeWorker(2);
     expect(service.isHealthy()).toBe(false);
   });
+
+  it("skips a dead worker instead of re-killing it on every broadcast", () => {
+    const service = createService(1);
+    const worker = createMockWorker();
+    (worker as any).isDead = () => true;
+    service.registerWorker(0, worker as any);
+    sendWorkerReady(worker, 0);
+
+    (service as any).broadcastLobbies();
+
+    expect((worker as any).send).not.toHaveBeenCalled();
+  });
+
+  it("still broadcasts to a live worker", () => {
+    const service = createService(1);
+    const worker = createMockWorker();
+    (worker as any).isDead = () => false;
+    service.registerWorker(0, worker as any);
+    sendWorkerReady(worker, 0);
+
+    (service as any).broadcastLobbies();
+
+    expect((worker as any).send).toHaveBeenCalledTimes(1);
+  });
 });

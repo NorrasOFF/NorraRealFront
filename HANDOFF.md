@@ -1,4 +1,4 @@
-# Handoff — ranked points: hidden rating, placement awards, balanced teams
+# Handoff — worker restart fix; plan for volume-backed saves
 
 > Future sessions: this file holds the current handoff. Overwrite it rather than
 > appending; keep only the latest handoff. Write one only when the session leaves
@@ -8,110 +8,137 @@ Companion notes: `testnotes.md`.
 
 ## 1. Where things are
 
-- Repo: `C:\Users\ai51940\OpenFrontIO`.
+- Repo: `C:\Users\ai51940\OpenFrontIO`, branch `defense-post-priority`.
 - Token `H:\Documents\Hexfront-token.txt` authenticates as **`hexfront-dev`**.
 - Ship target: `origin` = `hexfront-dev/NorraRealFront-Remus-`, branch `main`.
-  The checked-out branch is `defense-post-priority`; push with
-  `git push origin HEAD:main`.
+  This session pushed **`e7b7d541c`** (`git push origin HEAD:main`).
 - GitHub credential-manager prompts fail in this shell; push with a
   credential-in-URL remote (`https://x-access-token:<token>@github.com/...`).
+- Fly app `openfrontio`, one machine `8576399c13e748`, image built from
+  `NorrasOFF/NorraRealFront` `main` (`GIT_COMMIT` reports `unknown`). It is
+  **not** built from this fork; the fix below is pushed to the fork only.
+- `flyctl` at `C:\Users\ai51940\.fly\bin\flyctl.exe`; set `FLY_API_TOKEN` from
+  `H:\Documents\fly-token.txt`.
 
-## 2. Ranked rating (current, authoritative)
+## 2. What actually broke the saves
 
-Everyone starts at **0**, there is **no inactivity decay**, and every rated
-game only adds points:
+The import code was fine. For the reported save
+(`Downloads/Five_Islands_Remus-KBmWoEVR.json.gz`, 4.0 MB → 5.8 MB JSON,
+11 182 turns, 5.3 M-char checkpoint) the server log showed:
 
-```
-P = finishing place (1 = winner), dense over rated accounts
-T = number of rated teammates sharing P (1 in FFA)
-W = RANKED_WINNER_ELO      = 100
-S = RANKED_PLACEMENT_SLOPE = 0.05
+- 11:43:49 list 200, 11:43:54 export 200.
+- **11:44:09 import → 200; 11:44:10 resume → 200** (the file imports and
+  resumes correctly).
+- 11:44:20 a second import of the same file → 200.
+- 11:45:02 **two `DELETE /w0/api/saves/KBmWoEVR` → 200** (the save was deleted
+  from the UI, which is why the later resume attempts 404'd).
+- 11:45:20 `resume?force=1` hung for nginx's 60 s `proxy_read_timeout` → 504;
+  11:45:27 delete/resume → 404. That 504/404 surfaced in the UI as the generic
+  "failed to import that file as a resumable lobby".
+- 11:51:11 the **worker process died**. Nothing restarted it: the master read
+  `WORKER_ID` from `worker.process.env` in the cluster `exit` handler, but
+  `worker.process` is `null` after exit, so it logged
+  `worker crashed could not find id` and returned. The dead worker stayed in
+  `MasterLobbyService`, was re-killed twice a second forever, and every `/wN`
+  request (import, list, resume, **and the game websocket**) answered 502 until
+  the machine was restarted by hand.
 
-placementAward(P, T) = max(0, (W / T) * (1 - S * (P - 1)))
-newPoints            = oldPoints + placementAward(P, T)
-```
+Local repro confirms this: kill the worker PID of `npm run start:server`, the
+master logs `crashed could not find id` and never restarts it. With this fix it
+logs `died with code … / Restarting worker 0…` and a new worker is ready ~1 s
+later (`/w0/api/saves` goes 502 → 400 auth-required).
 
-The team division happens **before** the place reduction (that is the requested
-order; algebraically it matches dividing the final award, but the code now
-expresses it as `(W / T) * factor`). A 2-player team win pays 50 each, 3-player
-33.33 each. Solo values:
+## 3. What changed (commit `e7b7d541c`)
 
-| Place |   1 |   2 |   3 |   4 |   5 |   6 |   7 |   8 |   9 |  10 |  11 |  12 |  13 |  14 |  15 |
-| ----- | --: | --: | --: | --: | --: | --: | --: | --: | --: | --: | --: | --: | --: | --: | --: |
-| Award | 100 |  95 |  90 |  85 |  80 |  75 |  70 |  65 |  60 |  55 |  50 |  45 |  40 |  35 |  30 |
-
-`placementAward(21)` is 0; larger places clamp to 0.
-
-Places come from `src/server/ranking/Placements.ts`: eliminated players by
-`deathPosition`, survivors by `finalTiles` (winner first), dense over the rated
-roster so bots/nations do not consume places. Teammates share the best place
-reached by the team; duplicate accounts collapse to one entry. A nation winner
-leaves the game unrated. `CHECKPOINT_VERSION` and `ranked-ratings.json` version
-1 are unchanged; existing files load and keep their points.
-
-### Points are hidden
-
-- `LeaderboardPlayerList` now renders only **Rank / Player / Games**; the ELO
-  column, row cells and pinned-user cell are gone.
-- `LobbyPlayerView` no longer renders `ClientInfo.elo` beside names, and
-  `NameVisibility.lobbyClients` no longer puts `elo` in the lobby wire payload.
-- `Matchmaking` and `RankedModal` no longer show "Your ELO"; `RankedModal` is a
-  plain 1v1/2v2 picker.
-- Local `/api/users/@me` no longer returns a ranked `leaderboard.elo`.
-- The public `GET /api/leaderboard/ranked` response still contains
-  `elo`/`peakElo` for the separate Norra Real Topplista page. Remove those
-  fields from `RankedRatingsStore.leaderboard()` + `ApiSchemas.ts` if the
-  external site must hide them too.
-- Equal scores sort by `publicId` ascending; the client shows the first five
-  rows of page 1.
-
-## 3. Other ranked behavior still in place
-
-- **Balanced team lobbies** (previous session, `ranking/TeamBalancing.ts`):
-  ranked Team-mode lobbies pin `teamIndex` so team point sums are as close as
-  possible; equal-point lobbies fall back to the normal assignment. It uses the
-  hidden points internally only.
-- **Resume gating**: a started save keeps its ranked flag only if every human
-  alive in the last checkpoint reclaims their seat with the original account
-  before the host's resume countdown starts play; otherwise the game archives
-  unrated. `SavedLobbySchema.aliveClientIDs` stores the checkpoint's alive set.
-- **Discord** ranked-start notification (`RankedLobbyNotifier.ts`) unchanged.
+- `src/server/ClusterWorkerIds.ts` (new): cluster worker id → logical
+  `WORKER_ID`, recorded at fork and consumed on exit.
+- `src/server/Master.ts`: forks through one `spawnWorker()`, removes the shard
+  from the lobby service on exit, and respawns it after 1 s (with a gap-filling
+  fallback if the id is somehow unknown).
+- `src/server/MasterLobbyService.ts`: broadcasts and create/update sends skip a
+  worker whose `isDead()` is true, and are wrapped so a synchronous channel
+  error cannot abort the loop.
+- `src/client/SavesModal.ts` + `resources/lang/en.json`: if the import succeeds
+  but opening its lobby fails, the modal now says the save **was imported**,
+  refreshes the server list, and keeps the modal open instead of claiming the
+  import failed (which invited destructive re-imports). New key
+  `save_game.import_lobby_resume_failed`.
+- Tests: `tests/server/ClusterWorkerIds.test.ts`, two broadcast cases in
+  `tests/server/MasterLobbyServiceHealth.test.ts`, one import-resume-failure
+  case in `tests/client/SavesModalResume.test.ts`.
 
 ## 4. Verification
 
-- `npx tsc --noEmit`, ESLint, Oxlint, Prettier clean.
-- `npx vitest run tests/server tests/client/ApiPlayerLeaderboard.test.ts
-tests/client/LeaderboardModal.test.ts tests/client/LobbyPlayerViewPoints.test.ts
-tests/TranslationSystem.test.ts tests/EnJsonSorted.test.ts tests/ApiSchemas.test.ts`:
-  **919 passed, 4 failed**. The four failures are the documented pre-existing
-  ones: `GameServerWire` golden transcript, `HostedLobbyListing`,
-  `GameServerPhase`, and `TranslationSystem`'s 4 unused keys
-  (`error_modal.turnstile_error`, `events_display.attack_cancelled_retreat`,
-  `main.clans`, `main.inventory`). No new failures.
-- Not browser-tested: server/client text-only changes; no simulation or wire
-  format changed.
+- `npx tsc --noEmit`, Oxlint, ESLint, Prettier clean.
+- `ClusterWorkerIds`, `MasterLobbyServiceHealth`, `SavesModalResume`,
+  `EnJsonSorted`: pass. `TranslationSystem` still fails only on the four
+  documented unused keys (`error_modal.turnstile_error`,
+  `events_display.attack_cancelled_retreat`, `main.clans`, `main.inventory`).
+- Real-process check: killed the local worker; master restarted it and the
+  worker HTTP API answered normally.
+- Production was **restarted** (`fly machine restart`) to restore service; the
+  worker came back (400 auth-required, not 502). The restart fix is not in the
+  deployed image yet.
 
 ## 5. Open items
 
-- **Tuning**: `RANKED_WINNER_ELO = 100` is a first guess. The ladder is
-  positive-sum, so points measure attendance × placement; a long streak can
-  still lead for weeks. No decay or eligibility window is implemented.
-- **Public API leak**: `elo`/`peakElo` are still returned by
-  `/api/leaderboard/ranked` (see above).
-- **Leaderboard ties**: ties at the five-row cutoff are chosen by opaque
-  `publicId`; change the comparator in `RankedRatingsStore.leaderboard()` if a
-  fairer rule (games/recency) is wanted.
-- **Resume gating limits**: the alive set comes from the latest accepted host
-  checkpoint and may be older than the save (stricter, never more permissive);
-  saves without a checkpoint require every non-spectator seat. There is no UI
-  message when a resume loses its ranked status — only the server log
-  `resumed ranked game is unranked: players did not rejoin`.
-- **Deployment**: the Fly app `openfrontio` builds from
-  `NorrasOFF/NorraRealFront` `main`, not from this fork. The 2026-11-09 PR #35
-  merge (`b949a4e04`) produced no Fly deployment; it was shipped manually with
-  `flyctl deploy --remote-only --ha=false --build-arg GIT_COMMIT=b949a4e04…`
-  (release v188). If pushes to `main` stop deploying, check the Fly dashboard
-  "Auto-Deploy on push" checkbox and the Fly GitHub App's Recent Deliveries.
-  `hexfront-dev` has no push access to `NorrasOFF/NorraRealFront`; a probe push
-  must be made by the owner. `flyctl` is at `C:\Users\ai51940\.fly\bin\flyctl.exe`;
-  set `FLY_API_TOKEN` from `H:\Documents\fly-token.txt`.
+- **Deploy needed.** Port `e7b7d541c` to `NorrasOFF/NorraRealFront` `main` (or
+  deploy it from this fork). Until then a worker crash is permanent again until
+  a manual `fly machine restart`.
+- The 60 s resume 504 was **not reproduced** locally: import + resume took
+  0.5–1.1 s, and import-twice + load + checkpoint decode + restore took ~2.4 s
+  on this machine. It may have been a side effect of the second import racing
+  the deleted save, or of the worker being memory-starved on the 512 MB Fly
+  machine. If it recurs, the master now logs the worker's exit code/signal.
+- Saves are still written to `/usr/src/app/saves` (container rootfs), so they
+  die on a deploy/machine replacement. See §6 for the fix under discussion.
+- The import route still appends the full turn log to an existing history file
+  on a re-import (`saveStore.save(lobby, 0)`). It is harmless (small gzip, read
+  de-dupes by `turnNumber`) but could be truncated on import if that ever
+  matters.
+
+## 6. Should saves live on the Fly volume? (analysis, not implemented)
+
+**Current state.** `fly.toml` mounts a **1 GB** volume `openfront_auth` at
+`/data` (auth only: `AUTH_DIR=/data/auth`). `ServerEnv.saveDir()` defaults to
+`<cwd>/saves` = `/usr/src/app/saves` for each worker, which is the container
+rootfs. A Fly rootfs is ephemeral: it survives a stopped/started machine (Fly
+bills it while stopped) but is lost when a Machine is replaced by a deploy.
+
+**Proposed change (one line).** Add `SAVE_DIR = "/data/saves"` to `[env]` in
+`fly.toml`; the existing `FilesystemSaveStore` already creates the directory,
+writes head/history/checkpoint atomically, enforces retention (20 saves per
+creator, 30 days, 2 GiB per worker) and prunes. No code, wire, or client change.
+
+**Cost.** Volumes are `$0.15/GB-month` of _provisioned_ capacity, billed while
+attached and while the machine is stopped (Fly pricing page). The current 1 GB
+volume is already ~$0.15/month. Saves should not share the 1 GB with auth (a
+full disk would break login), so extend to 3 GB: **+$0.30/month**. Fly waives
+bills below `$5/month`, and this app is far below that, so the visible bill
+will most likely not change. Volume snapshots (daily, automatic) are free up to
+10 GB, giving a free backup. Import/export traffic is unchanged (egress is
+`$0.02/GB`; a 4 MB save is negligible).
+
+**Is it safer?**
+
+- Yes versus manual export/import: saves survive deploys, no host action, no
+  file left in Downloads, and the existing PII-stripping export/import stays as
+  an offsite backup. `SaveStore` already handles crash-consistency and
+  retention.
+- Not a complete disaster-recovery story: one machine, one volume, one zone.
+  The daily volume snapshot is the recovery point; keep offering Export for
+  copies off Fly.
+- Single-attach constraint: a Fly volume attaches to one machine at a time.
+  With `NUM_WORKERS=1` on one machine that is a non-issue. If the app is ever
+  scaled to multiple Machines, each needs its own volume (the store is already
+  per-worker, and gameID sharding already routes saves to the owning worker).
+
+**Is it simpler?** Yes. It is one config line on top of an already-implemented
+store; the current export→file→import dance becomes a fallback instead of the
+only way to survive a redeploy.
+
+**Recommendation.** Do it: extend the volume to 3 GB, set
+`SAVE_DIR=/data/saves`, deploy, then create a save and confirm
+`/data/saves/w0/*.head.json` exists after a `fly machine restart`. If 2 GiB of
+saves is more than wanted, lower `DEFAULT_SAVE_DIR_BUDGET_BYTES` (currently a
+constant in `src/server/SaveStore.ts`) to ~1 GiB to leave headroom for auth.

@@ -180,4 +180,41 @@ describe("SavesModal server-save reopen", () => {
       resume: true,
     });
   });
+
+  it("keeps the imported save when opening its lobby fails", async () => {
+    const host = stubLobby("host-lobby-modal");
+    const imported = {
+      gameID: "GAME0001",
+      saveId: "GAME0001",
+      label: "World · host",
+      savedAt: 2,
+      gitCommit: "DEV",
+      myClientID: "CLIENT01",
+      startInfo: { gameID: "GAME0001", lobbyCreatedAt: 1, config: {} },
+      turns: [],
+    };
+    saveFile.decodeSaveFile.mockResolvedValue(imported);
+    api.resumeSavedLobby.mockRejectedValue(
+      new Error("resume failed: HTTP 504"),
+    );
+    const modal = new SavesModal();
+    const file = {
+      size: 8,
+      arrayBuffer: async () => new Uint8Array([1, 2, 3, 4]).buffer,
+    } as unknown as File;
+
+    await (modal as any).onImportLobbyFile({
+      target: { files: [file], value: "" },
+    });
+
+    // The import is not rolled back and the lobby is not opened; the host can
+    // retry from the refreshed server list instead of re-importing the file.
+    expect(api.importSavedLobby).toHaveBeenCalledWith(
+      "GAME0001",
+      expect.any(Uint8Array),
+    );
+    expect(host.open).not.toHaveBeenCalled();
+    expect((modal as any).error).not.toBe("");
+    expect(api.listSavedLobbies).toHaveBeenCalled();
+  });
 });
