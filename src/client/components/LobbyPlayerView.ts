@@ -18,6 +18,7 @@ import { ClientInfo, TeamCountConfig } from "../../core/Schemas";
 import { createRandomName, formatPlayerDisplayName } from "../../core/Util";
 import { Theme, themeProvider } from "../theme/ThemeProvider";
 import { getTranslatedPlayerTeamLabel, translateText } from "../Utils";
+import { styledSelect } from "./ui/StyledSelect";
 
 export interface TeamPreviewData {
   team: Team;
@@ -34,6 +35,12 @@ export class LobbyTeamView extends LitElement {
   @property({ type: String }) currentClientID: string = "";
   @property({ attribute: "team-count" }) teamCount: TeamCountConfig = 2;
   @property({ type: Function }) onKickPlayer?: (clientID: string) => void;
+  // Host only: move a player to a team slot, or null to let the balancer
+  // place them again. Absent for non-hosts and non-team lobbies.
+  @property({ type: Function }) onAssignTeam?: (
+    clientID: string,
+    teamIndex: number | null,
+  ) => void;
   @property({ type: Function }) onToggleNameReveal?: (clientID: string) => void;
   @property({ type: Array }) nameReveals: string[] = [];
   @property({ type: Boolean }) anonymizeNames: boolean = false;
@@ -196,6 +203,11 @@ export class LobbyTeamView extends LitElement {
           <div class="font-semibold text-gray-200 mb-1 text-sm">
             ${translateText("host_modal.assigned_teams")}
           </div>
+          ${this.onAssignTeam && this.teamCount !== HumansVsNations
+            ? html`<div class="text-[11px] text-gray-400 mb-2">
+                ${translateText("host_modal.team_assignment_hint")}
+              </div>`
+            : ""}
           <div class="w-full grid grid-cols-1 sm:grid-cols-2 gap-2 md:gap-3">
             ${repeat(
               active,
@@ -237,6 +249,48 @@ export class LobbyTeamView extends LitElement {
     </button>`;
   }
 
+  // Host-only team picker. "Auto" is selected whenever the player has no
+  // explicit pin, so the host can see at a glance who they placed themselves.
+  private renderTeamSelect(client: ClientInfo, teams: Team[]) {
+    if (
+      !this.onAssignTeam ||
+      teams.length < 2 ||
+      this.teamCount === HumansVsNations
+    ) {
+      return html``;
+    }
+    const pinned =
+      client.teamIndex !== undefined && client.teamIndex < teams.length
+        ? String(client.teamIndex)
+        : "";
+    return html`<div
+      class="ml-2 w-24 shrink-0"
+      data-client-id=${client.clientID}
+    >
+      ${styledSelect({
+        options: [
+          {
+            value: "",
+            label: translateText("host_modal.team_auto"),
+          },
+          ...teams.map((team, index) => ({
+            value: String(index),
+            label: getTranslatedPlayerTeamLabel(team),
+          })),
+        ],
+        value: pinned,
+        onChange: (value) =>
+          this.onAssignTeam?.(
+            client.clientID,
+            value === "" ? null : Number(value),
+          ),
+        ariaLabel: translateText("host_modal.assign_team", {
+          username: this.getClientDisplayName(client),
+        }),
+      })}
+    </div>`;
+  }
+
   private renderFreeForAll() {
     return html`${repeat(
       this.activePlayers,
@@ -273,6 +327,7 @@ export class LobbyTeamView extends LitElement {
   }
 
   private renderTeamCard(preview: TeamPreviewData, isEmpty: boolean = false) {
+    const teams = this.getTeamList();
     const displayCount =
       preview.team === ColoredTeams.Nations
         ? this.effectiveNationCount
@@ -323,6 +378,7 @@ export class LobbyTeamView extends LitElement {
                     <span class="truncate text-white"
                       >${displayName} ${this.renderVerifiedBadge(p)}</span
                     >
+                    ${this.renderTeamSelect(p, teams)}
                     ${this.renderRevealToggle(p.clientID)}
                     ${p.clientID === this.lobbyCreatorClientID
                       ? html`<span class="ml-2 text-[11px] text-green-300"

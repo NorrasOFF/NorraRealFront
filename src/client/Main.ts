@@ -93,6 +93,7 @@ import { StoreModal } from "./Store";
 import "./SubscriptionModal";
 import { TokenLoginModal } from "./TokenLoginModal";
 import {
+  SendAssignTeamIntentEvent,
   SendKickPlayerIntentEvent,
   SendToggleGameStartTimer,
   SendUpdateGameConfigIntentEvent,
@@ -184,6 +185,7 @@ declare global {
     "leave-lobby": CustomEvent;
     "game-starting": CustomEvent;
     "update-game-config": CustomEvent;
+    "assign-team": CustomEvent;
   }
 }
 
@@ -440,6 +442,7 @@ class Client {
       "update-game-config",
       this.handleUpdateGameConfig.bind(this),
     );
+    document.addEventListener("assign-team", this.handleAssignTeam.bind(this));
     const hlpModal = document.querySelector("help-modal") as HelpModal;
     if (!hlpModal || !(hlpModal instanceof HelpModal)) {
       console.warn("Help modal element not found");
@@ -1445,6 +1448,17 @@ class Client {
     // Forward to eventBus if available
     if (this.eventBus) {
       this.eventBus.emit(new SendKickPlayerIntentEvent(target));
+    }
+  }
+
+  private handleAssignTeam(event: CustomEvent) {
+    const { target, teamIndex } = event.detail as {
+      target: string;
+      teamIndex: number | null;
+    };
+
+    if (this.eventBus) {
+      this.eventBus.emit(new SendAssignTeamIntentEvent(target, teamIndex));
     }
   }
 

@@ -66,6 +66,32 @@ export function authorizeIntent(
       }
       return null;
 
+    case "assign_player_team":
+      // Host control, like kicking: only the lobby creator (or an admin) may
+      // choose teams. Team assignments do not make sense in public lobbies or
+      // after the roster has frozen.
+      if (!actor.isLobbyCreator && !actor.isAdmin) {
+        return {
+          status: 403,
+          error: "only the lobby creator or an admin can assign teams",
+        };
+      }
+      if (game.isPublic) {
+        return { status: 403, error: "cannot assign teams in a public game" };
+      }
+      // A listed lobby is ranked: teams come from the matchmaker / points
+      // balancer, never from the host.
+      if (game.isListed) {
+        return {
+          status: 403,
+          error: "cannot assign teams in a listed ranked lobby",
+        };
+      }
+      if (game.hasStarted) {
+        return { status: 409, error: "game already started" };
+      }
+      return null;
+
     case "update_game_config":
       if (!actor.isLobbyCreator && !actor.isAdminBot) {
         return {

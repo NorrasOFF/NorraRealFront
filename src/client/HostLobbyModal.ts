@@ -650,6 +650,12 @@ export class HostLobbyModal extends BaseModal {
             .onKickPlayer=${this.publiclyListed
               ? undefined
               : (clientID: string) => this.kickPlayer(clientID)}
+            .onAssignTeam=${this.gameMode === GameMode.Team &&
+            !this.publiclyListed &&
+            !this.resumeMode
+              ? (clientID: string, teamIndex: number | null) =>
+                  this.assignTeam(clientID, teamIndex)
+              : undefined}
             .onToggleNameReveal=${(clientID: string) =>
               this.toggleNameReveal(clientID)}
             .nameReveals=${this.nameReveals}
@@ -1525,6 +1531,17 @@ export class HostLobbyModal extends BaseModal {
     this.dispatchEvent(
       new CustomEvent("kick-player", {
         detail: { target: clientID },
+        bubbles: true,
+        composed: true,
+      }),
+    );
+  }
+
+  private assignTeam(clientID: string, teamIndex: number | null) {
+    // Sent as a lobby intent, like kick-player.
+    this.dispatchEvent(
+      new CustomEvent("assign-team", {
+        detail: { target: clientID, teamIndex },
         bubbles: true,
         composed: true,
       }),

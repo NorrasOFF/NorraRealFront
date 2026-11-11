@@ -369,6 +369,10 @@ export class GameServer {
   // lobby (see ranking/TeamBalancing.ts). Recomputed on every roster change
   // and once more just before start; undefined for non-team/non-ranked games.
   private rankedTeamPins?: Map<ClientID, number>;
+  // clientID -> team slot chosen by the host in a private, unranked team lobby
+  // (the assign_player_team intent). Overrides the automatic balancer at start;
+  // a player without an entry is balanced normally.
+  private readonly hostTeamPins = new Map<ClientID, number>();
   // Generation counter so a slow points refresh cannot overwrite the result of
   // a newer one (joins/leaves can overlap).
   private rankedRefreshVersion = 0;
@@ -506,6 +510,22 @@ export class GameServer {
       this.restoredSeats.set(seat.clientID, seat);
       this.seatToPersistent.set(seat.persistentID, seat.clientID);
       this.clients.restoreAdmitted(seat.persistentID);
+    }
+
+    // A not-yet-started private lobby preserves the host's manual team pins
+    // (saved on the seats by buildSeats). Started games keep their frozen
+    // gameStartInfo instead, and ranked/matchmade lobbies own their placement.
+    if (
+      this.stage === "lobby" &&
+      !this.isPublic() &&
+      !this.isRanked() &&
+      this.matchmakingTeams === undefined
+    ) {
+      for (const seat of save.seats) {
+        if (seat.teamIndex !== undefined && seat.spectator !== true) {
+          this.hostTeamPins.set(seat.clientID, seat.teamIndex);
+        }
+      }
     }
 
     if (save.stage === "started" && save.gameStartInfo !== undefined) {
@@ -660,6 +680,9 @@ export class GameServer {
       cosmetics: c.cosmetics,
       isLobbyCreator: this.lobbyCreatorID === c.clientID,
       friends: friendsFor(c),
+      // Preserve a host's manual team assignment across a save/restore of a
+      // lobby that has not started yet.
+      teamIndex: this.teamIndexFor(c),
       persistentID: c.persistentID,
       publicId: c.publicId,
       trusted: c.trusted,
@@ -804,7 +827,19 @@ export class GameServer {
   }
 
   public updateGameConfig(gameConfig: Partial<GameConfig>): void {
+    const modeChanged =
+      gameConfig.gameMode !== undefined &&
+      gameConfig.gameMode !== this.gameConfig.gameMode;
+    const teamsChanged =
+      gameConfig.playerTeams !== undefined &&
+      gameConfig.playerTeams !== this.gameConfig.playerTeams;
     applyGameConfigPatch(this.gameConfig, gameConfig);
+    // Host team pins index into the old team list and mean nothing once the
+    // mode or team count changes (FFA has no teams; a new count can shrink the
+    // index range). Clear rather than guess a remapping.
+    if (modeChanged || teamsChanged) {
+      this.hostTeamPins.clear();
+    }
   }
 
   // Dispatch a control/gameplay intent from either a websocket client or the
@@ -879,6 +914,12 @@ export class GameServer {
         });
         this.kickClient(target, reason);
         return finish({ status: 200 });
+      }
+
+      case "assign_player_team": {
+        return finish(
+          this.assignPlayerTeam(stamped.targetClientID, stamped.teamIndex),
+        );
       }
 
       case "update_game_config": {
@@ -2232,12 +2273,62 @@ export class GameServer {
 
   // The team slot stamped on a client at start (and shown in the lobby): the
   // matchmaker's pin wins; otherwise a ranked team lobby uses the
-  // points-balanced split. Undefined outside those cases.
+  // points-balanced split; otherwise a private lobby uses the host's manual
+  // assignment. Undefined when the player is left to the balancer.
   private teamIndexFor(c: Client): number | undefined {
     const matchmade = this.matchmakingTeamIndex(c);
     if (matchmade !== undefined) return matchmade;
-    if (!this.isRanked() || this.rankedTeamPins === undefined) return undefined;
-    return this.rankedTeamPins.get(c.clientID);
+    if (this.isRanked() && this.rankedTeamPins !== undefined) {
+      return this.rankedTeamPins.get(c.clientID);
+    }
+    // Private lobby: the host's manual assignment wins over the balancer.
+    const hostPin = this.hostTeamPins.get(c.clientID);
+    if (hostPin === undefined) return undefined;
+    const teamCount = this.teamCountForLobby();
+    // Ignore a stale pin after the team count shrank.
+    if (teamCount !== undefined && hostPin >= teamCount) return undefined;
+    return hostPin;
+  }
+
+  // Host-only team assignment for a private team lobby. Clears the pin when
+  // teamIndex is null. The roster itself is unchanged; the pin only feeds
+  // teamIndexFor, so the lobby preview and the frozen gameStartInfo agree.
+  private assignPlayerTeam(
+    targetClientID: ClientID,
+    teamIndex: number | null,
+  ): IntentOutcome {
+    if (this.gameConfig.gameMode !== GameMode.Team) {
+      return { status: 409, error: "not a team game" };
+    }
+    if (this.gameConfig.playerTeams === HumansVsNations) {
+      return {
+        status: 409,
+        error: "humans vs nations teams are fixed by player type",
+      };
+    }
+    const target = this.clients
+      .active()
+      .find((c) => c.clientID === targetClientID && !c.spectator);
+    if (target === undefined) {
+      return { status: 404, error: "no matching player to assign" };
+    }
+    if (teamIndex !== null) {
+      // With a map-default nation count under a Duos/Trios/Quads preset the
+      // exact team count is only known on the client, so fall back to the
+      // schema's upper bound (players + at most 400 nations).
+      const maxTeams =
+        this.teamCountForLobby() ??
+        Math.max(2, this.clients.players().length + 400);
+      if (teamIndex >= maxTeams) {
+        return { status: 400, error: "team index out of range" };
+      }
+      this.hostTeamPins.set(targetClientID, teamIndex);
+    } else {
+      this.hostTeamPins.delete(targetClientID);
+    }
+    // Push the new preview rather than waiting for the 1 s lobby broadcast.
+    this.broadcastLobbyInfo();
+    return { status: 200 };
   }
 
   // True once start() has frozen the roster. A method rather than a bare
@@ -2303,7 +2394,7 @@ export class GameServer {
     if (this.gameConfig.gameMode !== GameMode.Team) return undefined;
     // The matchmaker already balanced these teams; its pins win at start.
     if (this.matchmakingTeams !== undefined) return undefined;
-    const teamCount = this.rankedTeamCount();
+    const teamCount = this.teamCountForLobby();
     if (teamCount === undefined || teamCount < 2) return undefined;
 
     const entries: TeamBalanceEntry[] = [];
@@ -2343,7 +2434,8 @@ export class GameServer {
   // Number of player teams this lobby will have, mirroring GameImpl's
   // populateTeams. Undefined when the count cannot be known server-side (map
   // default nations under a fixed-size preset) or when teams are preordained.
-  private rankedTeamCount(): number | undefined {
+  // Used by the ranked balancer and by host team assignment.
+  private teamCountForLobby(): number | undefined {
     const configured = this.gameConfig.playerTeams;
     if (configured === undefined) return undefined;
     if (configured === HumansVsNations) return undefined;
@@ -2741,9 +2833,15 @@ export class GameServer {
     // creator / cap overflow) keeps a never-started lobby out of the ladder.
     if (listed) this.gameConfig.ranked = true;
     else delete this.gameConfig.ranked;
-    // Players who joined before the lobby was listed still need their points
-    // read and a balanced split computed.
-    if (listed) void this.refreshRankedTeams();
+    if (listed) {
+      // A listed lobby is ranked, and the balancer owns team placement from
+      // here on. Host pins set while it was private must not survive into a
+      // ranked start.
+      this.hostTeamPins.clear();
+      // Players who joined before the lobby was listed still need their points
+      // read and a balanced split computed.
+      void this.refreshRankedTeams();
+    }
   }
 
   public autoStartAt(): number | undefined {

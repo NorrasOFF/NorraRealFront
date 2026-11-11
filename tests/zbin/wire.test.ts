@@ -99,6 +99,18 @@ const SAMPLE_INTENTS: StampedIntent[] = [
   { type: "mark_disconnected", clientID: P1, isDisconnected: true },
   { type: "kick_player", clientID: P1, targetClientID: P2 },
   {
+    type: "assign_player_team",
+    clientID: P1,
+    targetClientID: P2,
+    teamIndex: 1,
+  },
+  {
+    type: "assign_player_team",
+    clientID: P1,
+    targetClientID: P2,
+    teamIndex: null,
+  },
+  {
     type: "quick_chat",
     clientID: P1,
     recipient: P2,

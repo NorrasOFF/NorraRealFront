@@ -1195,3 +1195,54 @@ Verification: `npx tsc --noEmit`, `npm run lint`, Prettier clean. `tests/server`
 verification needs a listed lobby with two signed-in accounts from two
 browsers, which the single-player e2e harness cannot set up; the wire side is
 covered by the server tests and the render side by the component test.
+
+## Host team assignment in private lobbies
+
+Private, unranked team lobbies now let the host move any player between teams
+from the lobby roster. It reuses the existing matchmaker pin rather than adding
+a second team-selection path, so the preview, the frozen start roster, archived
+records and replays all agree.
+
+- **Wire.** New `assign_player_team` intent (`AssignPlayerTeamIntentSchema`),
+  appended at the **end** of `IntentSchema`/`Intent` so existing binary variant
+  ordinals are unchanged. Fields: `targetClientID` (MappedID) and
+  `teamIndex: zb.uint().nullable()` (null returns the player to the balancer).
+  Added to `tests/zbin/wire.test.ts` for both values.
+- **Server.** `GameServer.hostTeamPins` (clientID -> slot) feeds
+  `teamIndexFor()`, after the matchmaker pin and ranked split but before the
+  automatic balancer. `assignPlayerTeam()` validates that the lobby is a team
+  game, is not Humans vs Nations, the target is an active non-spectator, and
+  the index is inside `teamCountForLobby()` (the old `rankedTeamCount`, renamed
+  because both paths use it). The intent is host/admin-only and refused on
+  public lobbies, listed/ranked lobbies, and after start
+  (`tests/server/IntentAuthorization.test.ts`).
+- **Safety.** Pins are cleared when the game mode or team count changes, when a
+  private lobby is listed (it becomes ranked), and are ignored when a shrinking
+  roster makes the slot out of range (Duos/Trios/Quads derive the count from the
+  roster). Spectator targets are rejected.
+- **Persistence.** Not-yet-started seats now carry `teamIndex` into
+  `SavedLobbySeat` (`buildSeats`), and `applyRestore()` re-seeds
+  `hostTeamPins` for a private, unranked, non-matchmade lobby. `CHECKPOINT_VERSION`
+  is untouched: this is lobby state, not simulation state. The started
+  `gameStartInfo` already carried `teamIndex`, so replays are unchanged.
+- **Client.** `LobbyPlayerView` renders a per-player team dropdown only when the
+  host supplies `onAssignTeam` (team mode, not listed, not a resume lobby) and
+  the mode is not Humans vs Nations. The picker shows **Auto** when the player
+  has no pin, and one option per team otherwise. `HostLobbyModal` dispatches
+  `assign-team`, `Main` emits `SendAssignTeamIntentEvent`, and `Transport`
+  sends the intent. New `en.json` keys: `host_modal.assign_team`,
+  `host_modal.team_assignment_hint`, `host_modal.team_auto`.
+- **Tests.** `tests/server/LobbyTeamAssignment.test.ts` (pin/clear/self/host
+  check, out-of-range, unknown/spectator target, FFA and Humans vs Nations,
+  clear on team-count change, stale slot after a Duos roster shrinks, pin in
+  the frozen start info), `tests/client/LobbyPlayerViewTeamAssign.test.ts`
+  (picker presence, Auto/team values, change events, non-host/HvN hidden), plus
+  the authorization table and wire cases above.
+
+Verification: `npx tsc --noEmit`, `npm run lint`, Prettier clean. `tests/server`
+772 passed with only the three documented pre-existing failures
+(`GameServerWire` golden transcript, `HostedLobbyListing`, `GameServerPhase`).
+Browser-checked in headless Chrome against a real dev lobby: the private lobby
+modal renders one picker per player, defaults every unpinned player to Auto,
+offers Auto + one option per team, and shows the assignment hint (screenshot
+`e2e/artifacts/lobby-team-picker.png`). The throwaway driver was deleted.

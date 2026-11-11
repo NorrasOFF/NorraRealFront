@@ -61,7 +61,8 @@ export type Intent =
   | KickPlayerIntent
   | TogglePauseIntent
   | UpdateGameConfigIntent
-  | ToggleGameStartTimer;
+  | ToggleGameStartTimer
+  | AssignPlayerTeamIntent;
 
 export type AttackIntent = z.infer<typeof AttackIntentSchema>;
 export type CancelAttackIntent = z.infer<typeof CancelAttackIntentSchema>;
@@ -102,6 +103,9 @@ export type DestroyRailroadIntent = z.infer<typeof DestroyRailroadIntentSchema>;
 export type CreateFleetIntent = z.infer<typeof CreateFleetIntentSchema>;
 export type LeaveFleetIntent = z.infer<typeof LeaveFleetIntentSchema>;
 export type KickPlayerIntent = z.infer<typeof KickPlayerIntentSchema>;
+export type AssignPlayerTeamIntent = z.infer<
+  typeof AssignPlayerTeamIntentSchema
+>;
 export type TogglePauseIntent = z.infer<typeof TogglePauseIntentSchema>;
 export type UpdateGameConfigIntent = z.infer<
   typeof UpdateGameConfigIntentSchema
@@ -805,6 +809,18 @@ export const KickPlayerIntentSchema = z.object({
   targetPublicID: MappedID.optional(),
 });
 
+// Host-only: pin a lobby player to a team slot, or clear the pin (null) so the
+// normal balancer places them. The pin reaches the simulation through the same
+// PlayerSchema.teamIndex field the matchmaker uses, so team assignment stays
+// deterministic and replayable.
+export const AssignPlayerTeamIntentSchema = z.object({
+  type: z.literal("assign_player_team"),
+  targetClientID: MappedID,
+  // Index into the lobby's ordered team list (Red, Blue, ... / "Team N").
+  // null returns the player to automatic assignment.
+  teamIndex: zb.uint().nullable(),
+});
+
 export const TogglePauseIntentSchema = z.object({
   type: z.literal("toggle_pause"),
   paused: z.boolean().default(false),
@@ -854,6 +870,8 @@ export const IntentSchema = z.discriminatedUnion("type", [
   UpdateGameConfigIntentSchema,
   ToggleGameStartTimerIntentSchema,
   DestroyRailroadIntentSchema,
+  // Appended last: adding a union variant must not move existing tag ordinals.
+  AssignPlayerTeamIntentSchema,
 ]);
 
 // StampedIntent = Intent with server-stamped clientID (used in turns and execution)
