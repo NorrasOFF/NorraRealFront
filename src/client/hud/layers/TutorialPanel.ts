@@ -29,6 +29,9 @@ const COST_POLL_TYPES = [
   UnitType.DefensePost,
   UnitType.Warship,
   UnitType.MissileSilo,
+  UnitType.SAMLauncher,
+  UnitType.Tollhouse,
+  UnitType.RailroadCenter,
   UnitType.AtomBomb,
 ] as const;
 
@@ -40,6 +43,9 @@ const UNIT_NAME_KEYS: Partial<Record<UnitType, string>> = {
   [UnitType.DefensePost]: "defense_post",
   [UnitType.Warship]: "warship",
   [UnitType.MissileSilo]: "missile_silo",
+  [UnitType.SAMLauncher]: "sam_launcher",
+  [UnitType.Tollhouse]: "tollhouse",
+  [UnitType.RailroadCenter]: "railroad_center",
   [UnitType.AtomBomb]: "atom_bomb",
 };
 /** Ticks the "you're ready" message stays up before the panel closes. */
@@ -68,9 +74,12 @@ const TOUCH_TEXT_STEPS = new Set([
   "send_boat",
   "buy_port",
   "buy_defense_post",
+  "buy_sam",
   "buy_warship",
   "buy_silo",
   "launch_atom",
+  "buy_tollhouse",
+  "buy_railroad_center",
 ]);
 
 /** Defaults shown when the player hasn't rebound the action (see UnitDisplay). */
@@ -79,9 +88,12 @@ const HOTKEY_FALLBACKS = {
   buildFactory: "2",
   buildPort: "3",
   buildDefensePost: "4",
-  buildWarship: "7",
   buildMissileSilo: "5",
-  buildAtomBomb: "8",
+  buildSamLauncher: "6",
+  buildTollhouse: "7",
+  buildRailroadCenter: "8",
+  buildWarship: "CapsLock+1",
+  buildAtomBomb: "CapsLock+4",
 } as const;
 
 @customElement("tutorial-panel")
@@ -375,6 +387,13 @@ export class TutorialPanel extends LitElement implements Controller {
         .isUnitDisabled(UnitType.HydrogenBomb),
       mirvDisabled: this.game.config().isUnitDisabled(UnitType.MIRV),
       samDisabled: this.game.config().isUnitDisabled(UnitType.SAMLauncher),
+      sams: player.units(UnitType.SAMLauncher).length,
+      tollhouseDisabled: this.game.config().isUnitDisabled(UnitType.Tollhouse),
+      tollhouses: player.units(UnitType.Tollhouse).length,
+      railroadCenterDisabled: this.game
+        .config()
+        .isUnitDisabled(UnitType.RailroadCenter),
+      railroadCenters: player.units(UnitType.RailroadCenter).length,
     };
   }
 

@@ -36,6 +36,11 @@ function ctx(overrides: Partial<TutorialContext> = {}): TutorialContext {
     hydrogenDisabled: false,
     mirvDisabled: false,
     samDisabled: false,
+    sams: 0,
+    tollhouseDisabled: false,
+    tollhouses: 0,
+    railroadCenterDisabled: false,
+    railroadCenters: 0,
     ...overrides,
   };
 }
@@ -141,8 +146,10 @@ describe("TutorialProgress", () => {
       hydrogenDisabled: true,
       mirvDisabled: true,
       samDisabled: true,
+      tollhouseDisabled: true,
+      railroadCenterDisabled: true,
     });
-    expect(p.total(c)).toBe(TUTORIAL_STEPS.length - 17);
+    expect(p.total(c)).toBe(TUTORIAL_STEPS.length - 22);
 
     settle(p, c);
     settle(p, c);
@@ -179,6 +186,25 @@ describe("TutorialProgress", () => {
     const q = new TutorialProgress(TUTORIAL_STEPS.slice(first));
     q.update(ctx({ nationsExist: false }));
     expect(q.current()?.id).toBe("buy_factory");
+  });
+
+  it("skips the Railroad Center steps when factories or centers are disabled", () => {
+    const first = TUTORIAL_STEPS.findIndex(
+      (s) => s.id === "buy_railroad_center",
+    );
+    const steps = TUTORIAL_STEPS.slice(first);
+
+    const noFactories = new TutorialProgress(steps);
+    noFactories.update(ctx({ factoryDisabled: true }));
+    expect(noFactories.finished()).toBe(true);
+
+    const noCenters = new TutorialProgress(steps);
+    noCenters.update(ctx({ railroadCenterDisabled: true }));
+    expect(noCenters.finished()).toBe(true);
+
+    const enabled = new TutorialProgress(steps);
+    enabled.update(ctx());
+    expect(enabled.current()?.id).toBe("buy_railroad_center");
   });
 
   it("gates the tribes step on affordable gold, then the city step on the city existing", () => {
@@ -232,6 +258,17 @@ describe("TutorialProgress", () => {
     expect(p.current()?.highlight).toBe("defense_post");
     settle(p, ctx({ factories: 1, ports: 1, defensePosts: 1 }));
 
+    expect(p.current()?.id).toBe("buy_sam");
+    expect(p.current()?.highlight).toBe("sam");
+    expect(p.current()?.hotkey).toBe("buildSamLauncher");
+    p.update(ctx({ factories: 1, ports: 1 }));
+    expect(p.stepDone()).toBe(false);
+    settle(p, ctx({ factories: 1, ports: 1, sams: 1 }));
+    expect(p.current()?.id).toBe("sam_info");
+    expect(p.current()?.highlight).toBe("sam");
+    p.acknowledge();
+    settle(p, ctx({ factories: 1, ports: 1, sams: 1 }));
+
     expect(p.current()?.id).toBe("buy_warship");
     expect(p.current()?.highlight).toBe("warship");
     settle(p, ctx({ factories: 1, ports: 1, warships: 1 }));
@@ -250,13 +287,28 @@ describe("TutorialProgress", () => {
       ["atom_info", "atom"],
       ["hydrogen_info", "hydrogen"],
       ["mirv_info", "mirv"],
-      ["sam_info", "sam"],
     ]) {
       expect(p.current()?.id).toBe(id);
       expect(p.current()?.highlight).toBe(highlight);
       p.acknowledge();
       settle(p, ctx({ silos: 1 }));
     }
+
+    expect(p.current()?.id).toBe("buy_tollhouse");
+    expect(p.current()?.highlight).toBe("tollhouse");
+    expect(p.current()?.hotkey).toBe("buildTollhouse");
+    settle(p, ctx({ tollhouses: 1 }));
+    expect(p.current()?.id).toBe("tollhouse_info");
+    p.acknowledge();
+    settle(p, ctx({ tollhouses: 1 }));
+
+    expect(p.current()?.id).toBe("buy_railroad_center");
+    expect(p.current()?.highlight).toBe("railroad_center");
+    expect(p.current()?.hotkey).toBe("buildRailroadCenter");
+    settle(p, ctx({ railroadCenters: 1 }));
+    expect(p.current()?.id).toBe("railroad_center_info");
+    p.acknowledge();
+    settle(p, ctx({ railroadCenters: 1 }));
     expect(p.finished()).toBe(true);
   });
 });

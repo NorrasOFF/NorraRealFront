@@ -1246,3 +1246,51 @@ Browser-checked in headless Chrome against a real dev lobby: the private lobby
 modal renders one picker per player, defaults every unpinned player to Auto,
 offers Auto + one option per team, and shows the assignment hint (screenshot
 `e2e/artifacts/lobby-team-picker.png`). The throwaway driver was deleted.
+
+## Tutorial covers every buildable structure
+
+The in-game tutorial had build steps for City, Factory, Port, Defense Post,
+Warship and Missile Silo, but **SAM Launcher, Tollhouse and Railroad Center**
+were missing (SAM only had a late `sam_info` text tip). It now walks all three:
+
+- `buy_sam` / `sam_info`: `sam_info` moves from the end of the tutorial to
+  directly after the build step, so the tip lands while the new SAM is fresh.
+  `buy_sam` uses hotkey `buildSamLauncher`, highlight `sam`, and completes on
+  `sams > 0`.
+- `buy_tollhouse` / `tollhouse_info` (after the nuke info steps): hotkey
+  `buildTollhouse`, new highlight `tollhouse`. The info step explains the
+  per-voyage limit, range and window capacity.
+- `buy_railroad_center` / `railroad_center_info`: hotkey
+  `buildRailroadCenter`, new highlight `railroad_center`. Both steps are
+  skipped when `RailroadCenter` is disabled **or** `Factory` is disabled, since
+  railroads (and therefore the center) only exist with factories.
+
+Wiring / plumbing:
+
+- `TutorialHighlight` gained `"tollhouse" | "railroad_center"`; `UnitDisplay`'s
+  `highlightUnits` maps both to their hotbar icons (keys 6/7/8).
+- `TutorialContext` gained `sams`, `tollhouseDisabled`, `tollhouses`,
+  `railroadCenterDisabled`, `railroadCenters`. `TutorialPanel.buildContext`
+  fills them, and `COST_POLL_TYPES` now polls SAM Launcher, Tollhouse and
+  Railroad Center so the "earn gold" gating works for the new build steps.
+- `UNIT_NAME_KEYS` and `TOUCH_TEXT_STEPS` cover the new steps, with
+  `tutorial.step_touch.*` variants for all three.
+- **Stale hotkey fallbacks fixed.** `HOTKEY_FALLBACKS` still said Warship `7`
+  and Atom Bomb `8` from before the 6/7/8 building keys existed. It now matches
+  `getDefaultKeybinds()`: SAM `6`, Tollhouse `7`, Railroad Center `8`, Warship
+  `CapsLock+1`, Atom Bomb `CapsLock+4`. The tutorial also no longer says
+  "Finally, build a Missile Silo" (it isn't the last step anymore).
+- `en.json`: new `tutorial.step.{buy_sam,buy_tollhouse,tollhouse_info,buy_railroad_center,railroad_center_info}`
+  and matching `step_touch` build steps, inserted alphabetically so
+  `EnJsonSorted` passes.
+
+Tests: `tests/Tutorial.test.ts` walks SAM → warship → silo → nukes →
+Tollhouse → Railroad Center with the info steps acknowledged, asserts the new
+hotkeys/highlights, and checks that both Railroad Center steps are skipped when
+factories or the center itself are disabled. The all-disabled step-count test
+was updated from 17 to 22 skipped steps.
+
+Verification: `npx tsc --noEmit`, `npm run lint` and Prettier clean;
+`tests/Tutorial.test.ts` 12 passed; `EnJsonSorted` passes;
+`TranslationSystem` still fails only on the four documented pre-existing unused
+keys.
