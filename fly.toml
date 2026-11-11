@@ -11,6 +11,11 @@ primary_region = 'ams'
   GAME_ENV = "dev"
   LOCAL_AUTH = "1"
   AUTH_DIR = "/data/auth"
+  # Resumable private/ranked saves live on the /data volume so they survive a
+  # deploy or machine replacement. Auth keeps /data/auth; the save budget is
+  # deliberately below the 1 GB volume so prune() never eats auth's headroom.
+  SAVE_DIR = "/data/saves"
+  SAVE_DIR_BUDGET_BYTES = "805306368"
   DOMAIN = "openfrontio.fly.dev"
   SUBDOMAIN = "main"
   NUM_WORKERS = "1"

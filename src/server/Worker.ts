@@ -45,7 +45,11 @@ import {
   savedGameFromSavedLobby,
   savedLobbyFromSavedGame,
 } from "./SaveImport";
-import { FilesystemSaveStore, startSaveRetention } from "./SaveStore";
+import {
+  DEFAULT_SAVE_RETENTION,
+  FilesystemSaveStore,
+  startSaveRetention,
+} from "./SaveStore";
 import { ServerEnv } from "./ServerEnv";
 import { applyStaticAssetCacheControl } from "./StaticAssetCache";
 import { createMatchTelemetryEmitter } from "./telemetry/BufferedMatchTelemetryEmitter";
@@ -83,10 +87,23 @@ export async function startWorker() {
     workerId,
   });
   const saveDir = ServerEnv.saveWorkerDir(workerId);
-  const saveStore = new FilesystemSaveStore(saveDir);
+  // A deployment that shares the save mount with auth (/data) sets
+  // SAVE_DIR_BUDGET_BYTES below the mount size so retention prunes before the
+  // disk fills; otherwise the default per-worker budget applies.
+  const saveBudgetBytes = ServerEnv.saveDirBudgetBytes();
+  const saveStore = new FilesystemSaveStore(
+    saveDir,
+    saveBudgetBytes === undefined
+      ? undefined
+      : { ...DEFAULT_SAVE_RETENTION, maxDirBytes: saveBudgetBytes },
+  );
   // Log the resolved directory so a deployment misconfiguration (an unwritable
   // or unset SAVE_DIR) is visible in the worker startup logs.
-  log.info(`resumable save store: ${saveDir}`);
+  log.info(
+    `resumable save store: ${saveDir} (byte budget ${
+      saveBudgetBytes ?? DEFAULT_SAVE_RETENTION.maxDirBytes
+    })`,
+  );
   // Phase 6: keep the save directory under its retention/byte budget.
   startSaveRetention(saveStore);
   const gm = new GameManager(log, telemetry, buildHash, saveStore);
@@ -608,6 +625,13 @@ export async function startWorker() {
     res.json({ deleted: true });
   });
 
+  // Imports re-parse and re-encode the whole file, so letting several run at
+  // once multiplies peak memory (each body is buffered up to 64 MB and its JSON
+  // is parsed into a multiple of that). One at a time keeps a crafted or merely
+  // large import from OOM-killing the worker that is also hosting live games.
+  const MAX_CONCURRENT_SAVE_IMPORTS = 1;
+  let activeSaveImports = 0;
+
   // Register a locally exported save file as a resumable private lobby on the
   // worker that owns its gameID. Creator-scoped. The body is the raw export
   // bytes (gzip, or plain JSON defensively); express.json ignores it because the
@@ -623,6 +647,19 @@ export async function startWorker() {
           .json({ error: "Authorization header required to import a save" });
         return;
       }
+      if (activeSaveImports >= MAX_CONCURRENT_SAVE_IMPORTS) {
+        res.status(429).json({ error: "import_busy" });
+        return;
+      }
+      activeSaveImports++;
+      let released = false;
+      const release = () => {
+        if (released) return;
+        released = true;
+        activeSaveImports--;
+      };
+      res.on("finish", release);
+      res.on("close", release);
       next();
     },
     express.raw({ type: () => true, limit: MAX_SAVE_IMPORT_BYTES }),
@@ -675,6 +712,15 @@ export async function startWorker() {
         return res.status(400).json({ error: "invalid_save" });
       }
 
+      // An import *replaces* the caller's save instead of appending to it. The
+      // history file is append-only, so save(lobby, 0) over an existing save
+      // would re-append the whole imported turn log on every re-import —
+      // unbounded disk growth that retention never trims (it always keeps the
+      // newest save). Deleting only after the new file parsed successfully also
+      // clears a stale checkpoint sidecar without risking the old save.
+      if (existing !== null) {
+        await saveStore.delete(save.gameID);
+      }
       await saveStore.save(lobby, 0);
       log.info("imported save as resumable lobby", {
         gameID: lobby.gameID,

@@ -16,6 +16,7 @@ import { SAVED_GAME_VERSION, type SavedGame } from "../../src/core/Schemas";
 import {
   decodeImportedSavedGame,
   encodeExportedSavedGame,
+  MAX_SAVE_IMPORT_CHECKPOINT_BYTES,
   savedGameFromSavedLobby,
   savedLobbyFromSavedGame,
 } from "../../src/server/SaveImport";
@@ -167,6 +168,28 @@ describe("SaveImport", () => {
       const lobby = await savedLobbyFromSavedGame(save, options);
       expect(lobby.checkpoint).toBeUndefined();
       expect(lobby.checkpointTurn).toBeUndefined();
+    });
+
+    it("drops a checkpoint larger than the game socket ever allows", async () => {
+      const save = makeSave({
+        checkpoint: "x".repeat(MAX_SAVE_IMPORT_CHECKPOINT_BYTES + 1),
+      });
+      const lobby = await savedLobbyFromSavedGame(save, options);
+      expect(lobby.checkpoint).toBeUndefined();
+      expect(lobby.checkpointTurn).toBeUndefined();
+    });
+
+    it("forces an imported save to be a private, unranked game", async () => {
+      const save = makeSave();
+      save.startInfo.config.ranked = true;
+      save.startInfo.config.gameType = GameType.Public;
+      save.startInfo.config.allowedPublicIds = ["account-1"];
+      save.startInfo.config.nameReveals = ["CLIENT02"];
+      const lobby = await savedLobbyFromSavedGame(save, options);
+      expect(lobby.gameConfig.ranked).toBeUndefined();
+      expect(lobby.gameConfig.gameType).toBe(GameType.Private);
+      expect(lobby.gameConfig.allowedPublicIds).toBeUndefined();
+      expect(lobby.gameConfig.nameReveals).toBeUndefined();
     });
 
     it("persists and restores an imported lobby as a live game", async () => {

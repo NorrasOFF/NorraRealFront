@@ -1,4 +1,4 @@
-# Handoff — worker restart fix; plan for volume-backed saves
+# Handoff — save-import hardening; saves moved to the /data volume
 
 > Future sessions: this file holds the current handoff. Overwrite it rather than
 > appending; keep only the latest handoff. Write one only when the session leaves
@@ -10,135 +10,103 @@ Companion notes: `testnotes.md`.
 
 - Repo: `C:\Users\ai51940\OpenFrontIO`, branch `defense-post-priority`.
 - Token `H:\Documents\Hexfront-token.txt` authenticates as **`hexfront-dev`**.
-- Ship target: `origin` = `hexfront-dev/NorraRealFront-Remus-`, branch `main`.
-  This session pushed **`e7b7d541c`** (`git push origin HEAD:main`).
-- GitHub credential-manager prompts fail in this shell; push with a
-  credential-in-URL remote (`https://x-access-token:<token>@github.com/...`).
-- Fly app `openfrontio`, one machine `8576399c13e748`, image built from
-  `NorrasOFF/NorraRealFront` `main` (`GIT_COMMIT` reports `unknown`). It is
-  **not** built from this fork; the fix below is pushed to the fork only.
-- `flyctl` at `C:\Users\ai51940\.fly\bin\flyctl.exe`; set `FLY_API_TOKEN` from
-  `H:\Documents\fly-token.txt`.
+- Ship target: `origin` = `hexfront-dev/NorraRealFront-Remus-`, branch `main`
+  (`git push origin HEAD:main`; use a credential-in-URL remote because the
+  credential-manager prompts fail in this shell).
+- This session's commit: **`9c2b5f1e3`** (save-import hardening + volume config).
+- Fly app `openfrontio`, one machine, image built from `NorrasOFF/NorraRealFront`
+  `main` — **not** from this fork. Deploying this work still requires landing it
+  in that repo (or building the fork and pushing the image).
 
-## 2. What actually broke the saves
+## 2. Security review of save import/export ("can a save upload malware?")
 
-The import code was fine. For the reported save
-(`Downloads/Five_Islands_Remus-KBmWoEVR.json.gz`, 4.0 MB → 5.8 MB JSON,
-11 182 turns, 5.3 M-char checkpoint) the server log showed:
+No RCE / webshell path: nothing from a save file is executed, imported, or
+written verbatim. Import parses Zod-validated objects and re-encodes them; every
+store path is built from `GAME_ID_REGEX = ^[A-Za-z0-9]{8}$`; export is a
+creator-only `application/gzip` attachment. The real liabilities were DoS and
+ladder fraud. Four fixes in `9c2b5f1e3`:
 
-- 11:43:49 list 200, 11:43:54 export 200.
-- **11:44:09 import → 200; 11:44:10 resume → 200** (the file imports and
-  resumes correctly).
-- 11:44:20 a second import of the same file → 200.
-- 11:45:02 **two `DELETE /w0/api/saves/KBmWoEVR` → 200** (the save was deleted
-  from the UI, which is why the later resume attempts 404'd).
-- 11:45:20 `resume?force=1` hung for nginx's 60 s `proxy_read_timeout` → 504;
-  11:45:27 delete/resume → 404. That 504/404 surfaced in the UI as the generic
-  "failed to import that file as a resumable lobby".
-- 11:51:11 the **worker process died**. Nothing restarted it: the master read
-  `WORKER_ID` from `worker.process.env` in the cluster `exit` handler, but
-  `worker.process` is `null` after exit, so it logged
-  `worker crashed could not find id` and returned. The dead worker stayed in
-  `MasterLobbyService`, was re-killed twice a second forever, and every `/wN`
-  request (import, list, resume, **and the game websocket**) answered 502 until
-  the machine was restarted by hand.
+- **Gzip bomb (high).** `decodeCheckpointWire` inflated `gz:` payloads with no
+  output bound. Measured: a **1.39 MB** string → **1 GiB** output and ~**2.1 GB
+  RSS**; the Fly worker has **512 MB**. Reachable from a signed-in
+  `POST /api/saves/import` and re-triggered by resume/export.
+  Now the wire form is capped at `MAX_CHECKPOINT_COMPRESSED_TRANSFER_BYTES`
+  (16 MiB) and decompression at `MAX_CHECKPOINT_DECOMPRESSED_BYTES` (128 MiB);
+  oversized/unreadable checkpoints are dropped and the save resumes from full
+  history.
+- **Imported saves could claim ranked/Public (medium).** `gameConfig` came from
+  the client-authored file. Import now forces `gameType: Private` and strips
+  `ranked`, `rankedType`, `allowedPublicIds`, `nameRevealPublicIds`,
+  `nameReveals`, `liveStatsEnabled`. Server-stored saves, autosave and normal
+  resume still keep ranked status (a ranked resume still requires every alive
+  seat to rejoin).
+- **Re-import disk amplification (med-high).** `save(lobby, 0)` appended the
+  whole turn log to the append-only history on every import; retention never
+  deletes the newest save, so one game could grow without bound. Import now
+  deletes the caller's existing save first (after the new file parses) and
+  replaces it.
+- **Import concurrency (medium).** One import in flight per worker
+  (`429 import_busy`); bodies are buffered up to 64 MB and previously several
+  could parse in parallel.
 
-Local repro confirms this: kill the worker PID of `npm run start:server`, the
-master logs `crashed could not find id` and never restarts it. With this fix it
-logs `died with code … / Restarting worker 0…` and a new worker is ready ~1 s
-later (`/w0/api/saves` goes 502 → 400 auth-required).
+Residual, deliberately not changed: `MAX_SAVE_IMPORT_UNCOMPRESSED_BYTES` is
+still 256 MiB (one huge file can spike memory; the single-import gate limits the
+blast radius), no per-account import quota (only per-IP 20 req/s), and hosted
+ranked checkpoints are still trusted for their alive set (the sim is
+client-side anyway).
 
-## 3. What changed (commit `e7b7d541c`)
+## 3. Saves on the volume (implemented, not deployed)
 
-- `src/server/ClusterWorkerIds.ts` (new): cluster worker id → logical
-  `WORKER_ID`, recorded at fork and consumed on exit.
-- `src/server/Master.ts`: forks through one `spawnWorker()`, removes the shard
-  from the lobby service on exit, and respawns it after 1 s (with a gap-filling
-  fallback if the id is somehow unknown).
-- `src/server/MasterLobbyService.ts`: broadcasts and create/update sends skip a
-  worker whose `isDead()` is true, and are wrapped so a synchronous channel
-  error cannot abort the loop.
-- `src/client/SavesModal.ts` + `resources/lang/en.json`: if the import succeeds
-  but opening its lobby fails, the modal now says the save **was imported**,
-  refreshes the server list, and keeps the modal open instead of claiming the
-  import failed (which invited destructive re-imports). New key
-  `save_game.import_lobby_resume_failed`.
-- Tests: `tests/server/ClusterWorkerIds.test.ts`, two broadcast cases in
-  `tests/server/MasterLobbyServiceHealth.test.ts`, one import-resume-failure
-  case in `tests/client/SavesModalResume.test.ts`.
+- `fly.toml` now sets `SAVE_DIR = "/data/saves"` and
+  `SAVE_DIR_BUDGET_BYTES = "805306368"` (768 MiB of the 1 GB `/data` volume,
+  leaving ~256 MiB for `/data/auth` + filesystem slack).
+- `ServerEnv.saveDirBudgetBytes()` parses the new env var (invalid/empty →
+  built-in default) and `Worker.ts` passes it to `FilesystemSaveStore`. Without
+  it the default 2 GiB budget is larger than the whole volume, so `prune()`
+  would never run before the disk filled.
+- Retention (hourly + at startup): drop saves not saved in 30 days, keep the
+  newest 20 per creator, then evict oldest until under the byte budget — always
+  keeping at least one save.
+- Existing saves live on the container rootfs and are **not migrated**. Any
+  save worth keeping must be exported and re-imported after the switch; the
+  import path then writes it to the volume.
+
+### Measured save sizes (entity-heavy, `perf:entities`)
+
+| Scenario                                               | Units | plain checkpoint | wire checkpoint |
+| ------------------------------------------------------ | ----: | ---------------: | --------------: |
+| big_plains, 160 buildings / 320 posts / 413 trains     | ~1.9k |          1.06 MB |         0.09 MB |
+| world, 2000 buildings / 600 posts / 1470 trains        | 4,075 |          15.8 MB |     **1.63 MB** |
+| giantworldmap, 1200 buildings / 300 posts / 539 trains | 1,739 |          42.1 MB |     **2.59 MB** |
+
+Turn history is tiny (54 KB gz for 11,182 turns). The real 3.81 MB Five Islands
+save is an older plain-format checkpoint. Budget for **~2–3 MB per heavy save**
+(≈250–350 heavy saves at 768 MiB; ~200 with 25% slack). The `gz:` checkpoint
+wire form makes entity count a small share of the stored size; map size dominates.
 
 ## 4. Verification
 
 - `npx tsc --noEmit`, Oxlint, ESLint, Prettier clean.
-- `ClusterWorkerIds`, `MasterLobbyServiceHealth`, `SavesModalResume`,
-  `EnJsonSorted`: pass. `TranslationSystem` still fails only on the four
-  documented unused keys (`error_modal.turnstile_error`,
-  `events_display.attack_cancelled_retreat`, `main.clans`, `main.inventory`).
-- Real-process check: killed the local worker; master restarted it and the
-  worker HTTP API answered normally.
-- Production was **restarted** (`fly machine restart`) to restore service; the
-  worker came back (400 auth-required, not 502). The restart fix is not in the
-  deployed image yet.
+- `CheckpointCodec`, `SaveImport`, `ServerEnv`, `server/SaveStore`: 79 pass.
+- New tests: gzip bomb rejected under a byte cap, oversized wire rejected,
+  oversize imported checkpoint dropped, imported config forced private/unranked,
+  `SAVE_DIR_BUDGET_BYTES` parsing.
+- Pre-existing failures unchanged: `tests/ListSavedLobbies.test.ts` "reports a
+  network failure per worker" times out on clean HEAD too (verified by stash);
+  the documented `SAMLauncherExecution`, `GameServerWire`, `HostedLobbyListing`,
+  `GameServerPhase` and localStorage failures are unrelated.
 
 ## 5. Open items
 
-- **Deploy needed.** Port `e7b7d541c` to `NorrasOFF/NorraRealFront` `main` (or
-  deploy it from this fork). Until then a worker crash is permanent again until
-  a manual `fly machine restart`.
-- The 60 s resume 504 was **not reproduced** locally: import + resume took
-  0.5–1.1 s, and import-twice + load + checkpoint decode + restore took ~2.4 s
-  on this machine. It may have been a side effect of the second import racing
-  the deleted save, or of the worker being memory-starved on the 512 MB Fly
-  machine. If it recurs, the master now logs the worker's exit code/signal.
-- Saves are still written to `/usr/src/app/saves` (container rootfs), so they
-  die on a deploy/machine replacement. See §6 for the fix under discussion.
-- The import route still appends the full turn log to an existing history file
-  on a re-import (`saveStore.save(lobby, 0)`). It is harmless (small gzip, read
-  de-dupes by `turnNumber`) but could be truncated on import if that ever
-  matters.
-
-## 6. Should saves live on the Fly volume? (analysis, not implemented)
-
-**Current state.** `fly.toml` mounts a **1 GB** volume `openfront_auth` at
-`/data` (auth only: `AUTH_DIR=/data/auth`). `ServerEnv.saveDir()` defaults to
-`<cwd>/saves` = `/usr/src/app/saves` for each worker, which is the container
-rootfs. A Fly rootfs is ephemeral: it survives a stopped/started machine (Fly
-bills it while stopped) but is lost when a Machine is replaced by a deploy.
-
-**Proposed change (one line).** Add `SAVE_DIR = "/data/saves"` to `[env]` in
-`fly.toml`; the existing `FilesystemSaveStore` already creates the directory,
-writes head/history/checkpoint atomically, enforces retention (20 saves per
-creator, 30 days, 2 GiB per worker) and prunes. No code, wire, or client change.
-
-**Cost.** Volumes are `$0.15/GB-month` of _provisioned_ capacity, billed while
-attached and while the machine is stopped (Fly pricing page). The current 1 GB
-volume is already ~$0.15/month. Saves should not share the 1 GB with auth (a
-full disk would break login), so extend to 3 GB: **+$0.30/month**. Fly waives
-bills below `$5/month`, and this app is far below that, so the visible bill
-will most likely not change. Volume snapshots (daily, automatic) are free up to
-10 GB, giving a free backup. Import/export traffic is unchanged (egress is
-`$0.02/GB`; a 4 MB save is negligible).
-
-**Is it safer?**
-
-- Yes versus manual export/import: saves survive deploys, no host action, no
-  file left in Downloads, and the existing PII-stripping export/import stays as
-  an offsite backup. `SaveStore` already handles crash-consistency and
-  retention.
-- Not a complete disaster-recovery story: one machine, one volume, one zone.
-  The daily volume snapshot is the recovery point; keep offering Export for
-  copies off Fly.
-- Single-attach constraint: a Fly volume attaches to one machine at a time.
-  With `NUM_WORKERS=1` on one machine that is a non-issue. If the app is ever
-  scaled to multiple Machines, each needs its own volume (the store is already
-  per-worker, and gameID sharding already routes saves to the owning worker).
-
-**Is it simpler?** Yes. It is one config line on top of an already-implemented
-store; the current export→file→import dance becomes a fallback instead of the
-only way to survive a redeploy.
-
-**Recommendation.** Do it: extend the volume to 3 GB, set
-`SAVE_DIR=/data/saves`, deploy, then create a save and confirm
-`/data/saves/w0/*.head.json` exists after a `fly machine restart`. If 2 GiB of
-saves is more than wanted, lower `DEFAULT_SAVE_DIR_BUDGET_BYTES` (currently a
-constant in `src/server/SaveStore.ts`) to ~1 GiB to leave headroom for auth.
+- **Deploy.** Land `9c2b5f1e3` in `NorrasOFF/NorraRealFront` `main` (the build
+  source) so the worker restart fix from `e7b7d541c` and this hardening go live.
+  The `fly.toml` env entries only take effect when that deploy happens; confirm
+  with the startup log `resumable save store: /data/saves/w0 (byte budget …)`.
+- After deploy: create one save, `ls /data/saves/w0` (expect `*.head.json`,
+  `*.history.gz`, `*.meta.json`, optional `*.checkpoint.json.gz`), restart the
+  machine, resume it.
+- If heavy-save volume grows past ~250, extend the volume (Fly volumes only
+  grow) and raise `SAVE_DIR_BUDGET_BYTES`; do not put the budget back at the
+  2 GiB default while sharing `/data` with auth.
+- Optional follow-up: per-account import rate limit (not just per-IP), and
+  archive-verified ranked import if imported ranked saves are ever wanted.

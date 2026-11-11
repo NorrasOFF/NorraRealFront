@@ -41,6 +41,14 @@ export const MAX_CHECKPOINT_TRANSFER_BYTES = 900_000;
 export const CHECKPOINT_COMPRESSED_PREFIX = "gz:";
 export const MAX_CHECKPOINT_COMPRESSED_TRANSFER_BYTES = 16 * 1024 * 1024;
 
+// Hard ceiling on what a `gz:` checkpoint may expand to. Without it a tiny
+// gzip bomb (a few hundred KB of zeros compresses to ~100 KB) makes
+// DecompressionStream allocate until the process is OOM-killed, and the decoder
+// is reachable from an *untrusted* save import. This is above any checkpoint
+// this build can produce (see MAX_CHECKPOINT_COMPRESSION_INPUT_BYTES and the
+// largest shipped map), so a legitimate player is never affected.
+export const MAX_CHECKPOINT_DECOMPRESSED_BYTES = 128 * 1024 * 1024;
+
 // Phase 7 follow-up: with gzip + chunked transport available, a checkpoint no
 // longer has to fit a single frame. This ceiling is applied to a map's fixed
 // floor (its raw main + minimap arrays) before the worker skips capture: it is
@@ -439,11 +447,41 @@ type GzipTransform = ReadableWritablePair<
   Uint8Array<ArrayBufferLike>
 >;
 
-async function gunzip(bytes: Uint8Array): Promise<Uint8Array> {
+// Bounded gzip decode: stops reading as soon as the output would exceed
+// `maxBytes` and cancels the stream, so a decompression bomb cannot grow the
+// heap past the caller's budget. Returns undefined when the cap is hit.
+async function gunzipLimited(
+  bytes: Uint8Array,
+  maxBytes: number,
+): Promise<Uint8Array | undefined> {
   const stream = bytesToStream(bytes).pipeThrough(
     new DecompressionStream("gzip") as unknown as GzipTransform,
   );
-  return await collectStream(stream);
+  const reader = stream.getReader();
+  const parts: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (value === undefined) continue;
+    total += value.length;
+    if (total > maxBytes) {
+      try {
+        await reader.cancel();
+      } catch {
+        // Cancelling is best effort; the size cap is what matters.
+      }
+      return undefined;
+    }
+    parts.push(value);
+  }
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const part of parts) {
+    out.set(part, offset);
+    offset += part.length;
+  }
+  return out;
 }
 
 // Enqueue each part as its own chunk so the raw map buffers are gzipped in
@@ -666,23 +704,41 @@ export async function encodeCheckpointWire(
  * gzip payload (Phase 8 binary, or a legacy tagged-JSON body). Unknown/hostile
  * input (or an environment without DecompressionStream) yields undefined so the
  * caller falls back to replay.
+ *
+ * `maxDecompressedBytes` bounds the gzip output (default
+ * {@link MAX_CHECKPOINT_DECOMPRESSED_BYTES}) so a gzip bomb cannot exhaust the
+ * process memory. An oversized payload is treated as unreadable.
  */
 export async function decodeCheckpointWire(
   serialized: string,
+  options?: { maxDecompressedBytes?: number },
 ): Promise<GameCheckpoint | undefined> {
+  // No legitimate wire form is larger than the compressed transfer cap: the
+  // plain form is capped at MAX_CHECKPOINT_TRANSFER_BYTES and the gz form at
+  // MAX_CHECKPOINT_COMPRESSED_TRANSFER_BYTES. Reject early so a multi-megabyte
+  // string is not base64-decoded or JSON-parsed at all.
+  if (serialized.length > MAX_CHECKPOINT_COMPRESSED_TRANSFER_BYTES) {
+    return undefined;
+  }
   if (!isCompressedCheckpoint(serialized)) {
     return decodeCheckpoint(serialized);
   }
   if (typeof DecompressionStream === "undefined") {
     return undefined;
   }
-  let payload: Uint8Array;
+  const maxDecompressed =
+    options?.maxDecompressedBytes ?? MAX_CHECKPOINT_DECOMPRESSED_BYTES;
+  let payload: Uint8Array | undefined;
   try {
     const bytes = base64ToBytes(
       serialized.slice(CHECKPOINT_COMPRESSED_PREFIX.length),
     );
-    payload = await gunzip(bytes);
+    payload = await gunzipLimited(bytes, maxDecompressed);
   } catch {
+    return undefined;
+  }
+  if (payload === undefined) {
+    // Over the decompressed cap: a bomb or a corrupt/oversized blob.
     return undefined;
   }
   if (isBinaryCheckpoint(payload)) {

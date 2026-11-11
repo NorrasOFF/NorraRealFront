@@ -1,11 +1,17 @@
 import { promisify } from "node:util";
 import { gunzip as gunzipCb, gzip as gzipCb } from "node:zlib";
-import { decodeCheckpointWire } from "../core/CheckpointCodec";
+import {
+  decodeCheckpointWire,
+  MAX_CHECKPOINT_COMPRESSED_TRANSFER_BYTES,
+  MAX_CHECKPOINT_DECOMPRESSED_BYTES,
+} from "../core/CheckpointCodec";
+import { GameType } from "../core/game/Game";
 import {
   SAVED_GAME_VERSION,
   SAVED_LOBBY_VERSION,
   SavedGameSchema,
   SavedLobbySchema,
+  type GameConfig,
   type Player,
   type SavedGame,
   type SavedLobby,
@@ -25,6 +31,44 @@ const gzipAsync = promisify(gzipCb);
 export const MAX_SAVE_IMPORT_BYTES = 64 * 1024 * 1024;
 /** Decompressed cap, so a gzip bomb cannot exhaust the worker's memory. */
 export const MAX_SAVE_IMPORT_UNCOMPRESSED_BYTES = 256 * 1024 * 1024;
+
+/**
+ * A checkpoint string in an imported file may not exceed the chunked upload cap
+ * the game socket itself enforces: this build never produces a larger wire
+ * checkpoint, so anything bigger is either crafted or corrupt.
+ */
+export const MAX_SAVE_IMPORT_CHECKPOINT_BYTES =
+  MAX_CHECKPOINT_COMPRESSED_TRANSFER_BYTES;
+
+/**
+ * Decompressed ceiling for an imported checkpoint. This sits above the largest
+ * shipped map's tagged-JSON checkpoint but far below what a gzip bomb would
+ * demand, so a crafted file degrades to full-history replay instead of OOMing
+ * the worker.
+ */
+export const MAX_SAVE_IMPORT_CHECKPOINT_UNCOMPRESSED_BYTES =
+  MAX_CHECKPOINT_DECOMPRESSED_BYTES;
+
+/**
+ * Server-authoritative / account-bearing config fields that a save file must
+ * not be able to set. A save file is entirely client-authored, so treating its
+ * `ranked` flag as trustworthy would let an account mint a "ranked" match from
+ * a hand-edited JSON (and farm the ladder with a second account), and `Public`
+ * would bypass the master's public-game scheduling. Imported games are private
+ * and unranked by construction; a player who wants a rated game must play one.
+ * `allowedPublicIds` / `nameRevealPublicIds` / `nameReveals` are the host-only
+ * PII allowlists the server normally keeps out of client-visible config.
+ */
+function importedGameConfig(config: GameConfig): GameConfig {
+  const clean: GameConfig = { ...config, gameType: GameType.Private };
+  delete clean.ranked;
+  delete clean.rankedType;
+  delete clean.allowedPublicIds;
+  delete clean.nameRevealPublicIds;
+  delete clean.nameReveals;
+  delete clean.liveStatsEnabled;
+  return clean;
+}
 
 const GZIP_MAGIC_0 = 0x1f;
 const GZIP_MAGIC_1 = 0x8b;
@@ -112,8 +156,15 @@ export async function savedLobbyFromSavedGame(
 
   let checkpoint: string | undefined;
   let checkpointTurn: number | undefined;
-  if (typeof save.checkpoint === "string") {
-    const decoded = await decodeCheckpointWire(save.checkpoint);
+  if (
+    typeof save.checkpoint === "string" &&
+    save.checkpoint.length <= MAX_SAVE_IMPORT_CHECKPOINT_BYTES
+  ) {
+    // Bounded decode: a gzip bomb or an over-size blob is dropped here and the
+    // save resumes from its full turn history instead.
+    const decoded = await decodeCheckpointWire(save.checkpoint, {
+      maxDecompressedBytes: MAX_SAVE_IMPORT_CHECKPOINT_UNCOMPRESSED_BYTES,
+    });
     if (decoded !== undefined) {
       checkpoint = save.checkpoint;
       checkpointTurn = decoded.ticks;
@@ -125,7 +176,7 @@ export async function savedLobbyFromSavedGame(
     gameID: save.gameID,
     createdAt: save.startInfo.lobbyCreatedAt,
     creatorPersistentID: options.creatorPersistentID,
-    gameConfig: save.startInfo.config,
+    gameConfig: importedGameConfig(save.startInfo.config),
     stage: "started" as const,
     seats,
     gameStartInfo: save.startInfo,
@@ -177,7 +228,9 @@ export async function savedGameFromSavedLobby(
 
   let checkpoint: string | undefined;
   if (typeof save.checkpoint === "string") {
-    const decoded = await decodeCheckpointWire(save.checkpoint);
+    const decoded = await decodeCheckpointWire(save.checkpoint, {
+      maxDecompressedBytes: MAX_SAVE_IMPORT_CHECKPOINT_UNCOMPRESSED_BYTES,
+    });
     if (decoded !== undefined) {
       checkpoint = save.checkpoint;
     }
