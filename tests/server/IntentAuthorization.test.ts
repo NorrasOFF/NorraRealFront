@@ -33,6 +33,11 @@ const lobby = (over: Partial<IntentGameState> = {}): IntentGameState => ({
 });
 
 const kick: Intent = { type: "kick_player", targetClientID: cid("p2") };
+const assignTeam: Intent = {
+  type: "assign_player_team",
+  targetClientID: cid("p2"),
+  teamIndex: 1,
+};
 const config = (c: Partial<GameConfig>): Intent => ({
   type: "update_game_config",
   config: c,
@@ -85,6 +90,38 @@ describe("authorizeIntent", () => {
       host,
       lobby({ isListed: true, hasStarted: true }),
       403,
+    ],
+
+    ["team assignment by a player", assignTeam, player, lobby(), 403],
+    ["team assignment by the host", assignTeam, host, lobby(), null],
+    ["team assignment by an admin", assignTeam, admin, lobby(), null],
+    [
+      "team assignment on a public game",
+      assignTeam,
+      host,
+      lobby({ isPublic: true }),
+      403,
+    ],
+    [
+      "team assignment in a listed lobby",
+      assignTeam,
+      host,
+      lobby({ isListed: true }),
+      403,
+    ],
+    [
+      "team assignment in a listed lobby by an admin",
+      assignTeam,
+      admin,
+      lobby({ isListed: true }),
+      403,
+    ],
+    [
+      "team assignment after the start",
+      assignTeam,
+      host,
+      lobby({ hasStarted: true }),
+      409,
     ],
 
     ["config by a player", config({ bots: 1 }), player, lobby(), 403],

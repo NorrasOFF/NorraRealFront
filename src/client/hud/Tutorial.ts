@@ -18,6 +18,8 @@ export type TutorialHighlight =
   | "hydrogen"
   | "mirv"
   | "sam"
+  | "tollhouse"
+  | "railroad_center"
   | "tribes"
   | "nation";
 
@@ -64,6 +66,11 @@ export interface TutorialContext {
   hydrogenDisabled: boolean;
   mirvDisabled: boolean;
   samDisabled: boolean;
+  sams: number;
+  tollhouseDisabled: boolean;
+  tollhouses: number;
+  railroadCenterDisabled: boolean;
+  railroadCenters: number;
 }
 
 export interface TutorialStep {
@@ -82,6 +89,9 @@ export interface TutorialStep {
     | "buildFactory"
     | "buildWarship"
     | "buildMissileSilo"
+    | "buildSamLauncher"
+    | "buildTollhouse"
+    | "buildRailroadCenter"
     | "buildAtomBomb";
   /**
    * Render these `tutorial.step.*` keys as a bullet list instead of the
@@ -183,6 +193,20 @@ export const TUTORIAL_STEPS: readonly TutorialStep[] = [
     applies: (c) => !c.defensePostDisabled,
     isDone: (c) => c.defensePosts > 0,
   },
+  {
+    id: "buy_sam",
+    highlight: "sam",
+    unit: UnitType.SAMLauncher,
+    hotkey: "buildSamLauncher",
+    applies: (c) => !c.samDisabled,
+    isDone: (c) => c.sams > 0,
+  },
+  {
+    id: "sam_info",
+    highlight: "sam",
+    applies: (c) => !c.samDisabled,
+    manual: true,
+  },
   // Warships are built from ports, so this step needs one.
   {
     id: "buy_warship",
@@ -230,9 +254,33 @@ export const TUTORIAL_STEPS: readonly TutorialStep[] = [
     manual: true,
   },
   {
-    id: "sam_info",
-    highlight: "sam",
-    applies: (c) => !c.samDisabled,
+    id: "buy_tollhouse",
+    highlight: "tollhouse",
+    unit: UnitType.Tollhouse,
+    hotkey: "buildTollhouse",
+    applies: (c) => !c.tollhouseDisabled,
+    isDone: (c) => c.tollhouses > 0,
+  },
+  {
+    id: "tollhouse_info",
+    highlight: "tollhouse",
+    applies: (c) => !c.tollhouseDisabled,
+    manual: true,
+  },
+  // Only useful with factories (the only source of railroads), so it's
+  // skipped in games where factories are disabled.
+  {
+    id: "buy_railroad_center",
+    highlight: "railroad_center",
+    unit: UnitType.RailroadCenter,
+    hotkey: "buildRailroadCenter",
+    applies: (c) => !c.railroadCenterDisabled && !c.factoryDisabled,
+    isDone: (c) => c.railroadCenters > 0,
+  },
+  {
+    id: "railroad_center_info",
+    highlight: "railroad_center",
+    applies: (c) => !c.railroadCenterDisabled && !c.factoryDisabled,
     manual: true,
   },
 ];

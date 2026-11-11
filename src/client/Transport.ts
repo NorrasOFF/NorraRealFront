@@ -237,6 +237,15 @@ export class SendKickPlayerIntentEvent implements GameEvent {
   constructor(public readonly target: string) {}
 }
 
+// Host-only lobby control: pin a player to a team slot, or clear the pin with
+// null so the automatic balancer places them.
+export class SendAssignTeamIntentEvent implements GameEvent {
+  constructor(
+    public readonly target: string,
+    public readonly teamIndex: number | null,
+  ) {}
+}
+
 export class SendUpdateGameConfigIntentEvent implements GameEvent {
   constructor(public readonly config: Partial<GameConfig>) {}
 }
@@ -369,6 +378,10 @@ export class Transport {
 
     this.eventBus.on(SendKickPlayerIntentEvent, (e) =>
       this.onSendKickPlayerIntent(e),
+    );
+
+    this.eventBus.on(SendAssignTeamIntentEvent, (e) =>
+      this.onSendAssignTeamIntent(e),
     );
 
     this.eventBus.on(SendUpdateGameConfigIntentEvent, (e) =>
@@ -874,6 +887,14 @@ export class Transport {
     this.sendIntent({
       type: "kick_player",
       targetClientID: event.target,
+    });
+  }
+
+  private onSendAssignTeamIntent(event: SendAssignTeamIntentEvent) {
+    this.sendIntent({
+      type: "assign_player_team",
+      targetClientID: event.target,
+      teamIndex: event.teamIndex,
     });
   }
 

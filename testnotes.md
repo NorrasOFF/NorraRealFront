@@ -1195,3 +1195,102 @@ Verification: `npx tsc --noEmit`, `npm run lint`, Prettier clean. `tests/server`
 verification needs a listed lobby with two signed-in accounts from two
 browsers, which the single-player e2e harness cannot set up; the wire side is
 covered by the server tests and the render side by the component test.
+
+## Host team assignment in private lobbies
+
+Private, unranked team lobbies now let the host move any player between teams
+from the lobby roster. It reuses the existing matchmaker pin rather than adding
+a second team-selection path, so the preview, the frozen start roster, archived
+records and replays all agree.
+
+- **Wire.** New `assign_player_team` intent (`AssignPlayerTeamIntentSchema`),
+  appended at the **end** of `IntentSchema`/`Intent` so existing binary variant
+  ordinals are unchanged. Fields: `targetClientID` (MappedID) and
+  `teamIndex: zb.uint().nullable()` (null returns the player to the balancer).
+  Added to `tests/zbin/wire.test.ts` for both values.
+- **Server.** `GameServer.hostTeamPins` (clientID -> slot) feeds
+  `teamIndexFor()`, after the matchmaker pin and ranked split but before the
+  automatic balancer. `assignPlayerTeam()` validates that the lobby is a team
+  game, is not Humans vs Nations, the target is an active non-spectator, and
+  the index is inside `teamCountForLobby()` (the old `rankedTeamCount`, renamed
+  because both paths use it). The intent is host/admin-only and refused on
+  public lobbies, listed/ranked lobbies, and after start
+  (`tests/server/IntentAuthorization.test.ts`).
+- **Safety.** Pins are cleared when the game mode or team count changes, when a
+  private lobby is listed (it becomes ranked), and are ignored when a shrinking
+  roster makes the slot out of range (Duos/Trios/Quads derive the count from the
+  roster). Spectator targets are rejected.
+- **Persistence.** Not-yet-started seats now carry `teamIndex` into
+  `SavedLobbySeat` (`buildSeats`), and `applyRestore()` re-seeds
+  `hostTeamPins` for a private, unranked, non-matchmade lobby. `CHECKPOINT_VERSION`
+  is untouched: this is lobby state, not simulation state. The started
+  `gameStartInfo` already carried `teamIndex`, so replays are unchanged.
+- **Client.** `LobbyPlayerView` renders a per-player team dropdown only when the
+  host supplies `onAssignTeam` (team mode, not listed, not a resume lobby) and
+  the mode is not Humans vs Nations. The picker shows **Auto** when the player
+  has no pin, and one option per team otherwise. `HostLobbyModal` dispatches
+  `assign-team`, `Main` emits `SendAssignTeamIntentEvent`, and `Transport`
+  sends the intent. New `en.json` keys: `host_modal.assign_team`,
+  `host_modal.team_assignment_hint`, `host_modal.team_auto`.
+- **Tests.** `tests/server/LobbyTeamAssignment.test.ts` (pin/clear/self/host
+  check, out-of-range, unknown/spectator target, FFA and Humans vs Nations,
+  clear on team-count change, stale slot after a Duos roster shrinks, pin in
+  the frozen start info), `tests/client/LobbyPlayerViewTeamAssign.test.ts`
+  (picker presence, Auto/team values, change events, non-host/HvN hidden), plus
+  the authorization table and wire cases above.
+
+Verification: `npx tsc --noEmit`, `npm run lint`, Prettier clean. `tests/server`
+772 passed with only the three documented pre-existing failures
+(`GameServerWire` golden transcript, `HostedLobbyListing`, `GameServerPhase`).
+Browser-checked in headless Chrome against a real dev lobby: the private lobby
+modal renders one picker per player, defaults every unpinned player to Auto,
+offers Auto + one option per team, and shows the assignment hint (screenshot
+`e2e/artifacts/lobby-team-picker.png`). The throwaway driver was deleted.
+
+## Tutorial covers every buildable structure
+
+The in-game tutorial had build steps for City, Factory, Port, Defense Post,
+Warship and Missile Silo, but **SAM Launcher, Tollhouse and Railroad Center**
+were missing (SAM only had a late `sam_info` text tip). It now walks all three:
+
+- `buy_sam` / `sam_info`: `sam_info` moves from the end of the tutorial to
+  directly after the build step, so the tip lands while the new SAM is fresh.
+  `buy_sam` uses hotkey `buildSamLauncher`, highlight `sam`, and completes on
+  `sams > 0`.
+- `buy_tollhouse` / `tollhouse_info` (after the nuke info steps): hotkey
+  `buildTollhouse`, new highlight `tollhouse`. The info step explains the
+  per-voyage limit, range and window capacity.
+- `buy_railroad_center` / `railroad_center_info`: hotkey
+  `buildRailroadCenter`, new highlight `railroad_center`. Both steps are
+  skipped when `RailroadCenter` is disabled **or** `Factory` is disabled, since
+  railroads (and therefore the center) only exist with factories.
+
+Wiring / plumbing:
+
+- `TutorialHighlight` gained `"tollhouse" | "railroad_center"`; `UnitDisplay`'s
+  `highlightUnits` maps both to their hotbar icons (keys 6/7/8).
+- `TutorialContext` gained `sams`, `tollhouseDisabled`, `tollhouses`,
+  `railroadCenterDisabled`, `railroadCenters`. `TutorialPanel.buildContext`
+  fills them, and `COST_POLL_TYPES` now polls SAM Launcher, Tollhouse and
+  Railroad Center so the "earn gold" gating works for the new build steps.
+- `UNIT_NAME_KEYS` and `TOUCH_TEXT_STEPS` cover the new steps, with
+  `tutorial.step_touch.*` variants for all three.
+- **Stale hotkey fallbacks fixed.** `HOTKEY_FALLBACKS` still said Warship `7`
+  and Atom Bomb `8` from before the 6/7/8 building keys existed. It now matches
+  `getDefaultKeybinds()`: SAM `6`, Tollhouse `7`, Railroad Center `8`, Warship
+  `CapsLock+1`, Atom Bomb `CapsLock+4`. The tutorial also no longer says
+  "Finally, build a Missile Silo" (it isn't the last step anymore).
+- `en.json`: new `tutorial.step.{buy_sam,buy_tollhouse,tollhouse_info,buy_railroad_center,railroad_center_info}`
+  and matching `step_touch` build steps, inserted alphabetically so
+  `EnJsonSorted` passes.
+
+Tests: `tests/Tutorial.test.ts` walks SAM → warship → silo → nukes →
+Tollhouse → Railroad Center with the info steps acknowledged, asserts the new
+hotkeys/highlights, and checks that both Railroad Center steps are skipped when
+factories or the center itself are disabled. The all-disabled step-count test
+was updated from 17 to 22 skipped steps.
+
+Verification: `npx tsc --noEmit`, `npm run lint` and Prettier clean;
+`tests/Tutorial.test.ts` 12 passed; `EnJsonSorted` passes;
+`TranslationSystem` still fails only on the four documented pre-existing unused
+keys.
