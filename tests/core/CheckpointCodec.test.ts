@@ -1,4 +1,5 @@
 import fs from "fs";
+import { gzipSync } from "node:zlib";
 import path from "path";
 import { describe, expect, it } from "vitest";
 import { CHECKPOINT_VERSION, GameCheckpoint } from "../../src/core/Checkpoint";
@@ -13,6 +14,7 @@ import {
   mapStateFitsCheckpointCapture,
   mapStateFitsTransferBudget,
   MAX_CHECKPOINT_CAPTURE_BYTES,
+  MAX_CHECKPOINT_COMPRESSED_TRANSFER_BYTES,
   MAX_CHECKPOINT_TRANSFER_BYTES,
   projectCheckpointBytes,
   projectMapStateBytes,
@@ -228,6 +230,25 @@ describe("CheckpointCodec", () => {
       expect(
         await decodeCheckpointWire("gz:" + btoa("not gzip")),
       ).toBeUndefined();
+    });
+
+    it("rejects a gzip bomb instead of inflating it", async () => {
+      // ~100 KB of zeros decompresses to 8 MB; with a 64 KB budget the decoder
+      // must cancel the stream and report the payload as unreadable.
+      const bomb =
+        "gz:" + gzipSync(Buffer.alloc(8 * 1024 * 1024)).toString("base64");
+      expect(bomb.length).toBeLessThan(200_000);
+      expect(
+        await decodeCheckpointWire(bomb, { maxDecompressedBytes: 64 * 1024 }),
+      ).toBeUndefined();
+    });
+
+    it("rejects a wire string larger than any legitimate upload", async () => {
+      const oversized = "x".repeat(
+        MAX_CHECKPOINT_COMPRESSED_TRANSFER_BYTES + 1,
+      );
+      expect(await decodeCheckpointWire(oversized)).toBeUndefined();
+      expect(await decodeCheckpointWire("gz:" + oversized)).toBeUndefined();
     });
   });
 

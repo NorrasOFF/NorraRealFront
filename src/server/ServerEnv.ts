@@ -144,6 +144,18 @@ export class ServerEnv {
   static saveWorkerDir(workerId: number = ServerEnv.workerId() ?? 0): string {
     return path.join(ServerEnv.saveDir(), `w${workerId}`);
   }
+  // Retention byte budget for one worker's save directory. Unset means the
+  // built-in default (2 GiB, see SaveStore). Set this below the mount's actual
+  // size when saves share a volume with auth (e.g. /data), so prune evicts old
+  // saves before the disk fills; an invalid value is ignored rather than
+  // silently disabling retention.
+  static saveDirBudgetBytes(): number | undefined {
+    const raw = process.env.SAVE_DIR_BUDGET_BYTES?.trim();
+    if (raw === undefined || raw.length === 0) return undefined;
+    const bytes = Number(raw);
+    if (!Number.isSafeInteger(bytes) || bytes <= 0) return undefined;
+    return bytes;
+  }
   static workerPort(gameID: GameID): number {
     return ServerEnv.workerPortByIndex(ServerEnv.workerIndex(gameID));
   }

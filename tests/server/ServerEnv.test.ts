@@ -119,3 +119,28 @@ describe("ServerEnv.allowedFlares", () => {
     expect(ServerEnv.allowedFlares()).toEqual(["admin", "beta"]);
   });
 });
+
+describe("ServerEnv.saveDirBudgetBytes", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  test("returns undefined when unset or empty", () => {
+    vi.stubEnv("SAVE_DIR_BUDGET_BYTES", "");
+    expect(ServerEnv.saveDirBudgetBytes()).toBeUndefined();
+    vi.stubEnv("SAVE_DIR_BUDGET_BYTES", "   ");
+    expect(ServerEnv.saveDirBudgetBytes()).toBeUndefined();
+  });
+
+  test("parses a byte budget", () => {
+    vi.stubEnv("SAVE_DIR_BUDGET_BYTES", "805306368");
+    expect(ServerEnv.saveDirBudgetBytes()).toBe(805_306_368);
+  });
+
+  test("ignores values that cannot bound the directory", () => {
+    for (const bad of ["0", "-1", "1.5", "abc", "NaN", "Infinity"]) {
+      vi.stubEnv("SAVE_DIR_BUDGET_BYTES", bad);
+      expect(ServerEnv.saveDirBudgetBytes()).toBeUndefined();
+    }
+  });
+});
