@@ -7,7 +7,7 @@ import { ZbContext } from "../../zbin";
 import { isAdminRole } from "../core/ApiSchemas";
 import {
   decodeCheckpoint,
-  decodeCheckpointWire,
+  decodeCheckpointWireMetadata,
   isCompressedCheckpoint,
   MAX_CHECKPOINT_COMPRESSED_TRANSFER_BYTES,
   MAX_CHECKPOINT_TRANSFER_BYTES,
@@ -1624,7 +1624,11 @@ export class GameServer {
   // store it and persist. Decoding a `gz:` payload is async, so callers do not
   // await; a losing race simply leaves the newer checkpoint in place.
   private async acceptCheckpointWire(wire: string): Promise<void> {
-    const checkpoint = await decodeCheckpointWire(wire);
+    // The server stores the wire verbatim and only needs its tick and seats.
+    // Decoding the map arrays here used to copy the whole checkpoint on the
+    // shared 512 MB worker and could stall every request on the machine; the
+    // metadata path reads the small JSON body and discards the map bytes.
+    const checkpoint = await decodeCheckpointWireMetadata(wire);
     if (checkpoint === undefined) {
       this.log.warn("dropping checkpoint: unreadable blob", {
         gameID: this.id,

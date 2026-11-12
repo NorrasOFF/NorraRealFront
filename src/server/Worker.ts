@@ -7,7 +7,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { WebSocket, WebSocketServer } from "ws";
 import { z } from "zod";
-import { decodeCheckpointWire } from "../core/CheckpointCodec";
+import { decodeCheckpointWireMetadata } from "../core/CheckpointCodec";
 import { GameEnv } from "../core/configuration/Config";
 import { GameType } from "../core/game/Game";
 import {
@@ -543,7 +543,7 @@ export async function startWorker() {
     // to a full-history replay when it is unusable (legacy version, corrupt,
     // or a different build), so a resume always produces a playable game.
     if (save.checkpoint !== undefined) {
-      const decoded = await decodeCheckpointWire(save.checkpoint);
+      const decoded = await decodeCheckpointWireMetadata(save.checkpoint);
       if (decoded === undefined) {
         log.warn("resume: dropping unreadable checkpoint, full replay", {
           gameID: id,

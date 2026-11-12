@@ -7,6 +7,7 @@ import {
   checkpointFitsTransferBudget,
   decodeCheckpoint,
   decodeCheckpointWire,
+  decodeCheckpointWireMetadata,
   encodeCheckpoint,
   encodeCheckpointGzip,
   encodeCheckpointWire,
@@ -249,6 +250,115 @@ describe("CheckpointCodec", () => {
       );
       expect(await decodeCheckpointWire(oversized)).toBeUndefined();
       expect(await decodeCheckpointWire("gz:" + oversized)).toBeUndefined();
+    });
+  });
+
+  describe("metadata-only decode (server checkpoint validation)", () => {
+    function expectMetadata(
+      meta: Awaited<ReturnType<typeof decodeCheckpointWireMetadata>>,
+    ) {
+      expect(meta).toBeDefined();
+      expect(meta!.ticks).toBe(42);
+      expect(Array.isArray(meta!.players)).toBe(true);
+      expect(
+        (meta!.stats as unknown as Record<string, { gold: bigint }>).p1.gold,
+      ).toBe(9007199254740993n);
+      // The map arrays are deliberately not part of the result.
+      expect("map" in meta!).toBe(false);
+    }
+
+    it("reads a plaintext checkpoint through metadata decode", async () => {
+      expectMetadata(
+        await decodeCheckpointWireMetadata(
+          encodeCheckpoint(sampleCheckpoint()),
+        ),
+      );
+    });
+
+    it("reads a binary gzip checkpoint without retaining map arrays", async () => {
+      expectMetadata(
+        await decodeCheckpointWireMetadata(
+          await encodeCheckpointGzip(sampleCheckpoint()),
+        ),
+      );
+    });
+
+    it("reads a legacy tagged-JSON gzip checkpoint", async () => {
+      const legacy = gzipSync(
+        Buffer.from(encodeCheckpoint(sampleCheckpoint())),
+      ).toString("base64");
+      expectMetadata(await decodeCheckpointWireMetadata("gz:" + legacy));
+    });
+
+    it("keeps the map tail out of memory on a large map", async () => {
+      const original = sampleCheckpoint();
+      // 2 MB of map bytes: far more than the metadata body, and the point is
+      // that the decoder only retains the body while still draining the stream.
+      original.map.terrain = Uint8Array.from(
+        { length: 2 * 1024 * 1024 },
+        (_, i) => i % 251,
+      );
+      original.map.state = new Uint16Array([1, 2]);
+      original.miniMap.terrain = new Uint8Array([3]);
+      original.miniMap.state = new Uint16Array([4]);
+      expectMetadata(
+        await decodeCheckpointWireMetadata(
+          await encodeCheckpointGzip(original),
+        ),
+      );
+    });
+
+    it("verifies the gzip tail even though only the body is retained", async () => {
+      const wire = await encodeCheckpointGzip(sampleCheckpoint());
+      const bytes = Uint8Array.from(atob(wire.slice("gz:".length)), (c) =>
+        c.charCodeAt(0),
+      );
+      // Drop the gzip ISIZE trailer: the body is intact, but the stream is
+      // truncated, so it must not be accepted as a checkpoint.
+      const truncated = bytes.subarray(0, bytes.length - 4);
+      const truncatedWire = "gz:" + Buffer.from(truncated).toString("base64");
+      expect(await decodeCheckpointWireMetadata(truncatedWire)).toBeUndefined();
+    });
+
+    it("rejects a binary header whose map lengths exceed the payload", async () => {
+      // The decoder does not retain the map tail, so this proves the header
+      // lengths are still validated against the full decompressed size.
+      const wire = await encodeCheckpointGzip(sampleCheckpoint());
+      const bytes = Uint8Array.from(atob(wire.slice("gz:".length)), (c) =>
+        c.charCodeAt(0),
+      );
+      const payload = await gunzipForTest(bytes);
+      const view = new DataView(
+        payload.buffer,
+        payload.byteOffset,
+        payload.byteLength,
+      );
+      // main terrain length lives at byte 10.
+      view.setUint32(10, view.getUint32(10) + 4096);
+      const lying = "gz:" + gzipSync(Buffer.from(payload)).toString("base64");
+      expect(await decodeCheckpointWireMetadata(lying)).toBeUndefined();
+      expect(await decodeCheckpointWire(lying)).toBeUndefined();
+    });
+
+    it("rejects a body larger than the metadata budget", async () => {
+      const wire = await encodeCheckpointGzip(sampleCheckpoint());
+      expect(
+        await decodeCheckpointWireMetadata(wire, { maxMetadataBytes: 16 }),
+      ).toBeUndefined();
+    });
+
+    it("still rejects a gzip bomb and an oversized wire string", async () => {
+      const bomb =
+        "gz:" + gzipSync(Buffer.alloc(8 * 1024 * 1024)).toString("base64");
+      expect(
+        await decodeCheckpointWireMetadata(bomb, {
+          maxDecompressedBytes: 64 * 1024,
+        }),
+      ).toBeUndefined();
+      const oversized = "x".repeat(
+        MAX_CHECKPOINT_COMPRESSED_TRANSFER_BYTES + 1,
+      );
+      expect(await decodeCheckpointWireMetadata(oversized)).toBeUndefined();
     });
   });
 

@@ -1,7 +1,7 @@
 import { promisify } from "node:util";
 import { gunzip as gunzipCb, gzip as gzipCb } from "node:zlib";
 import {
-  decodeCheckpointWire,
+  decodeCheckpointWireMetadata,
   MAX_CHECKPOINT_COMPRESSED_TRANSFER_BYTES,
   MAX_CHECKPOINT_DECOMPRESSED_BYTES,
 } from "../core/CheckpointCodec";
@@ -160,9 +160,10 @@ export async function savedLobbyFromSavedGame(
     typeof save.checkpoint === "string" &&
     save.checkpoint.length <= MAX_SAVE_IMPORT_CHECKPOINT_BYTES
   ) {
-    // Bounded decode: a gzip bomb or an over-size blob is dropped here and the
-    // save resumes from its full turn history instead.
-    const decoded = await decodeCheckpointWire(save.checkpoint, {
+    // Bounded metadata decode: a gzip bomb or an over-size blob is dropped here
+    // and the save resumes from its full turn history instead. Only `ticks` is
+    // read, and the map arrays are never materialized on the server.
+    const decoded = await decodeCheckpointWireMetadata(save.checkpoint, {
       maxDecompressedBytes: MAX_SAVE_IMPORT_CHECKPOINT_UNCOMPRESSED_BYTES,
     });
     if (decoded !== undefined) {
@@ -228,7 +229,7 @@ export async function savedGameFromSavedLobby(
 
   let checkpoint: string | undefined;
   if (typeof save.checkpoint === "string") {
-    const decoded = await decodeCheckpointWire(save.checkpoint, {
+    const decoded = await decodeCheckpointWireMetadata(save.checkpoint, {
       maxDecompressedBytes: MAX_SAVE_IMPORT_CHECKPOINT_UNCOMPRESSED_BYTES,
     });
     if (decoded !== undefined) {
