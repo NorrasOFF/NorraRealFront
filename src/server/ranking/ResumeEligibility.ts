@@ -8,7 +8,7 @@ import type { SavedLobbySeat } from "../../core/Schemas";
  * null clientID and are skipped (they can never rejoin).
  */
 export function aliveClientIdsFromCheckpoint(
-  checkpoint: GameCheckpoint,
+  checkpoint: Pick<GameCheckpoint, "players" | "stats">,
 ): string[] {
   const alive = new Set<string>();
   for (const player of checkpoint.players) {

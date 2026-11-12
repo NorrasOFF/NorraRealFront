@@ -41,6 +41,14 @@ export const MAX_CHECKPOINT_TRANSFER_BYTES = 900_000;
 export const CHECKPOINT_COMPRESSED_PREFIX = "gz:";
 export const MAX_CHECKPOINT_COMPRESSED_TRANSFER_BYTES = 16 * 1024 * 1024;
 
+// The server never needs a full checkpoint object: validation only reads
+// `ticks`, the player list and the death stats. That data lives in the small
+// tagged-JSON body, so metadata decoding keeps at most this many bytes
+// materialized even when the checkpoint's raw map arrays are far larger. A
+// malicious body is dropped (the save falls back to full-history replay)
+// instead of being allowed to exhaust a 512 MB worker.
+export const MAX_CHECKPOINT_METADATA_BYTES = 32 * 1024 * 1024;
+
 // Hard ceiling on what a `gz:` checkpoint may expand to. Without it a tiny
 // gzip bomb (a few hundred KB of zeros compresses to ~100 KB) makes
 // DecompressionStream allocate until the process is OOM-killed, and the decoder
@@ -484,6 +492,159 @@ async function gunzipLimited(
   return out;
 }
 
+/** Copy the first `limit` bytes of `parts` into one contiguous buffer. */
+function concatParts(parts: Uint8Array[], limit: number): Uint8Array {
+  const out = new Uint8Array(limit);
+  let offset = 0;
+  for (const part of parts) {
+    if (offset >= limit) break;
+    const take = part.subarray(0, Math.min(part.length, limit - offset));
+    out.set(take, offset);
+    offset += take.length;
+  }
+  return out;
+}
+
+/**
+ * Inflate a `gz:` checkpoint far enough to recover the metadata the server
+ * needs, without materializing the map arrays.
+ *
+ * The Phase 8 payload is `header | tagged-JSON body | raw map arrays`, so the
+ * body is available long before the multi-megabyte tail. Only the header and
+ * body are retained (`MAX_CHECKPOINT_METADATA_BYTES`); the rest of the stream
+ * is still read and discarded so the gzip CRC is verified and the
+ * `maxBytes` bomb ceiling still applies. Peak memory is therefore the body,
+ * not the whole decompressed checkpoint — the difference between a few MB and
+ * several hundred MB for a late game on a large map.
+ *
+ * Legacy payloads (the whole checkpoint was tagged JSON before Phase 8) have no
+ * separate body, so they are retained in full, still under the metadata cap.
+ */
+async function gunzipCheckpointBody(
+  bytes: Uint8Array,
+  maxBytes: number,
+  maxMetadataBytes: number,
+): Promise<
+  | { kind: "binary"; body: Uint8Array; expectsMiniMap: boolean }
+  | { kind: "legacy"; payload: Uint8Array }
+  | undefined
+> {
+  const stream = bytesToStream(bytes).pipeThrough(
+    new DecompressionStream("gzip") as unknown as GzipTransform,
+  );
+  const reader = stream.getReader();
+  const parts: Uint8Array[] = [];
+  let kept = 0;
+  let total = 0;
+  let layout: "unknown" | "binary" | "legacy" = "unknown";
+  let needed = maxMetadataBytes;
+  // Captured from the header so the whole-payload layout can still be
+  // validated against `total` after the map bytes are discarded. This keeps
+  // metadata validation as strict as a full decode.
+  let binaryFlags = 0;
+  let binaryBodyLen = 0;
+  let binaryLens: number[] = [];
+
+  const cancel = async (): Promise<void> => {
+    try {
+      await reader.cancel();
+    } catch {
+      // Cancelling is best effort; the byte caps are what matter.
+    }
+  };
+
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value === undefined || value.length === 0) continue;
+      total += value.length;
+      // Cap the *whole* output (a bomb), not just the retained body.
+      if (total > maxBytes) {
+        await cancel();
+        return undefined;
+      }
+      if (kept < needed) {
+        const take = value.subarray(0, Math.min(value.length, needed - kept));
+        parts.push(take);
+        kept += take.length;
+      }
+      if (layout === "unknown" && kept >= BINARY_HEADER_BYTES) {
+        const head = concatParts(parts, kept);
+        const view = new DataView(
+          head.buffer,
+          head.byteOffset,
+          head.byteLength,
+        );
+        if (
+          view.getUint32(0) === BINARY_MAGIC &&
+          view.getUint8(4) === BINARY_VERSION
+        ) {
+          const bodyLen = view.getUint32(6);
+          if (bodyLen > maxMetadataBytes - BINARY_HEADER_BYTES) {
+            await cancel();
+            return undefined;
+          }
+          layout = "binary";
+          binaryFlags = view.getUint8(5);
+          binaryBodyLen = bodyLen;
+          binaryLens = [];
+          for (let i = 0; i < 4; i++) {
+            binaryLens.push(view.getUint32(10 + i * 4));
+          }
+          needed = BINARY_HEADER_BYTES + bodyLen;
+          // Bytes past the body can only have arrived in the same chunk that
+          // revealed the header; drop them from the retained copy.
+          if (kept > needed) {
+            const trimmed = concatParts(parts, needed);
+            parts.length = 0;
+            parts.push(trimmed);
+            kept = trimmed.length;
+          }
+        } else {
+          // Legacy: keep the whole (capped) payload as the JSON body.
+          layout = "legacy";
+          needed = maxMetadataBytes;
+        }
+      }
+    }
+  } catch {
+    await cancel();
+    return undefined;
+  }
+
+  const out = concatParts(parts, kept);
+  if (layout === "binary") {
+    if (out.length < needed) return undefined;
+    // Mirror decodeBinaryCheckpoint's structural checks. The map bytes are not
+    // retained, but their declared lengths were part of the header and `total`
+    // is the full decompressed size, so a truncated or lying tail is still
+    // rejected here — only the copying is skipped.
+    const arrayBytes = binaryLens.reduce((sum, len) => sum + len, 0);
+    if ((binaryFlags & ~SLOT_KNOWN_MASK) !== 0) return undefined;
+    if (binaryLens[1] % 2 !== 0 || binaryLens[3] % 2 !== 0) return undefined;
+    for (let i = 0; i < 4; i++) {
+      const present = (binaryFlags & (1 << i)) !== 0;
+      if (present !== binaryLens[i] > 0) return undefined;
+    }
+    if (BINARY_HEADER_BYTES + binaryBodyLen + arrayBytes > total) {
+      return undefined;
+    }
+    return {
+      kind: "binary",
+      body: out.subarray(BINARY_HEADER_BYTES, needed),
+      // A full decode rejects a payload whose mini-map slots are present but
+      // whose body has no `miniMap`. Mirror that here; the server must not
+      // accept a checkpoint the resuming client will refuse.
+      expectsMiniMap:
+        (binaryFlags & (SLOT_MINI_TERRAIN | SLOT_MINI_STATE)) !== 0,
+    };
+  }
+  if (layout === "legacy") return { kind: "legacy", payload: out };
+  // Shorter than one header: cannot be a checkpoint this build wrote.
+  return undefined;
+}
+
 // Enqueue each part as its own chunk so the raw map buffers are gzipped in
 // place (no extra concatenation copy, and no base64 of the map).
 function partsToStream(parts: Uint8Array[]): ReadableStream<Uint8Array> {
@@ -750,4 +911,98 @@ export async function decodeCheckpointWire(
   } catch {
     return undefined;
   }
+}
+
+/**
+ * The subset of a checkpoint the server validates: the tick it was taken at,
+ * the seats recorded in it and their stats (for `deathPosition` liveness).
+ * Nothing here depends on the map bytes, so the server can validate a
+ * multi-megabyte checkpoint without ever inflating or copying its map arrays.
+ */
+export type CheckpointMetadata = Pick<
+  GameCheckpoint,
+  "ticks" | "players" | "stats"
+>;
+
+function metadataFromCheckpoint(
+  checkpoint: GameCheckpoint,
+): CheckpointMetadata {
+  return {
+    ticks: checkpoint.ticks,
+    players: checkpoint.players,
+    stats: checkpoint.stats,
+  };
+}
+
+/**
+ * Metadata-only counterpart to {@link decodeCheckpointWire}.
+ *
+ * Exists for the server, which stores the wire verbatim and only needs `ticks`
+ * / players / stats. A full decode of a `gz:` checkpoint copies the map arrays
+ * and builds the entire player/unit object graph; on the 512 MB, 1 vCPU game
+ * worker a single large upload could pin the box and stall every HTTP request
+ * (the master shares the machine). The binary payload keeps its small JSON body
+ * ahead of the map arrays, so this stops retaining bytes once the body is
+ * complete while still draining the stream to verify the gzip CRC.
+ *
+ * `maxDecompressedBytes` still bounds the total inflated output (the gzip-bomb
+ * ceiling). `maxMetadataBytes` bounds the retained body; a checkpoint whose
+ * body exceeds it is treated as unreadable and falls back to full history.
+ */
+export async function decodeCheckpointWireMetadata(
+  serialized: string,
+  options?: { maxDecompressedBytes?: number; maxMetadataBytes?: number },
+): Promise<CheckpointMetadata | undefined> {
+  if (serialized.length > MAX_CHECKPOINT_COMPRESSED_TRANSFER_BYTES) {
+    return undefined;
+  }
+  if (!isCompressedCheckpoint(serialized)) {
+    const checkpoint = decodeCheckpoint(serialized);
+    return checkpoint === undefined
+      ? undefined
+      : metadataFromCheckpoint(checkpoint);
+  }
+  if (typeof DecompressionStream === "undefined") {
+    return undefined;
+  }
+  const maxDecompressed =
+    options?.maxDecompressedBytes ?? MAX_CHECKPOINT_DECOMPRESSED_BYTES;
+  const maxMetadata =
+    options?.maxMetadataBytes ?? MAX_CHECKPOINT_METADATA_BYTES;
+  let body: Uint8Array;
+  let expectsMiniMap = false;
+  try {
+    const bytes = base64ToBytes(
+      serialized.slice(CHECKPOINT_COMPRESSED_PREFIX.length),
+    );
+    const decoded = await gunzipCheckpointBody(
+      bytes,
+      maxDecompressed,
+      maxMetadata,
+    );
+    if (decoded === undefined) return undefined;
+    if (decoded.kind === "binary") {
+      body = decoded.body;
+      expectsMiniMap = decoded.expectsMiniMap;
+    } else {
+      body = decoded.payload;
+    }
+  } catch {
+    return undefined;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(new TextDecoder().decode(body), reviver);
+  } catch {
+    return undefined;
+  }
+  if (!isGameCheckpoint(parsed)) return undefined;
+  // Same check decodeBinaryCheckpoint makes before attaching the mini arrays.
+  if (
+    expectsMiniMap &&
+    (parsed.miniMap === null || typeof parsed.miniMap !== "object")
+  ) {
+    return undefined;
+  }
+  return metadataFromCheckpoint(parsed);
 }
