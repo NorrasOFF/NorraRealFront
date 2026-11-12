@@ -340,6 +340,38 @@ describe("CheckpointCodec", () => {
       expect(await decodeCheckpointWire(lying)).toBeUndefined();
     });
 
+    it("rejects mini-map flags without a miniMap body (full-decode parity)", async () => {
+      // Craft a GZCP payload whose header advertises mini-map slots but whose
+      // body has no miniMap. A full decode rejects it; metadata must too, or
+      // the server would store a checkpoint the resuming client refuses.
+      const body = new TextEncoder().encode(
+        JSON.stringify({
+          version: CHECKPOINT_VERSION,
+          ticks: 7,
+          players: [],
+          units: [],
+          map: {},
+        }),
+      );
+      const miniState = new Uint8Array([0, 0]);
+      const payload = new Uint8Array(26 + body.length + 1 + miniState.length);
+      const view = new DataView(payload.buffer);
+      view.setUint32(0, 0x475a4350); // "GZCP"
+      view.setUint8(4, 1); // binary version
+      view.setUint8(5, 0b1100); // mini terrain + mini state present
+      view.setUint32(6, body.length);
+      view.setUint32(10, 0); // main terrain absent
+      view.setUint32(14, 0); // main state absent
+      view.setUint32(18, 1);
+      view.setUint32(22, miniState.length);
+      payload.set(body, 26);
+      payload.set([0], 26 + body.length);
+      payload.set(miniState, 26 + body.length + 1);
+      const wire = "gz:" + gzipSync(Buffer.from(payload)).toString("base64");
+      expect(await decodeCheckpointWireMetadata(wire)).toBeUndefined();
+      expect(await decodeCheckpointWire(wire)).toBeUndefined();
+    });
+
     it("rejects a body larger than the metadata budget", async () => {
       const wire = await encodeCheckpointGzip(sampleCheckpoint());
       expect(

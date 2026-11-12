@@ -525,7 +525,7 @@ async function gunzipCheckpointBody(
   maxBytes: number,
   maxMetadataBytes: number,
 ): Promise<
-  | { kind: "binary"; body: Uint8Array }
+  | { kind: "binary"; body: Uint8Array; expectsMiniMap: boolean }
   | { kind: "legacy"; payload: Uint8Array }
   | undefined
 > {
@@ -633,6 +633,11 @@ async function gunzipCheckpointBody(
     return {
       kind: "binary",
       body: out.subarray(BINARY_HEADER_BYTES, needed),
+      // A full decode rejects a payload whose mini-map slots are present but
+      // whose body has no `miniMap`. Mirror that here; the server must not
+      // accept a checkpoint the resuming client will refuse.
+      expectsMiniMap:
+        (binaryFlags & (SLOT_MINI_TERRAIN | SLOT_MINI_STATE)) !== 0,
     };
   }
   if (layout === "legacy") return { kind: "legacy", payload: out };
@@ -965,6 +970,7 @@ export async function decodeCheckpointWireMetadata(
   const maxMetadata =
     options?.maxMetadataBytes ?? MAX_CHECKPOINT_METADATA_BYTES;
   let body: Uint8Array;
+  let expectsMiniMap = false;
   try {
     const bytes = base64ToBytes(
       serialized.slice(CHECKPOINT_COMPRESSED_PREFIX.length),
@@ -975,7 +981,12 @@ export async function decodeCheckpointWireMetadata(
       maxMetadata,
     );
     if (decoded === undefined) return undefined;
-    body = decoded.kind === "binary" ? decoded.body : decoded.payload;
+    if (decoded.kind === "binary") {
+      body = decoded.body;
+      expectsMiniMap = decoded.expectsMiniMap;
+    } else {
+      body = decoded.payload;
+    }
   } catch {
     return undefined;
   }
@@ -986,5 +997,12 @@ export async function decodeCheckpointWireMetadata(
     return undefined;
   }
   if (!isGameCheckpoint(parsed)) return undefined;
+  // Same check decodeBinaryCheckpoint makes before attaching the mini arrays.
+  if (
+    expectsMiniMap &&
+    (parsed.miniMap === null || typeof parsed.miniMap !== "object")
+  ) {
+    return undefined;
+  }
   return metadataFromCheckpoint(parsed);
 }

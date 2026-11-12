@@ -54,7 +54,8 @@ request hangs, hence the 504s and the failed login).
 - Still reads the stream to the end, so the **gzip CRC is verified**.
 - Still validates `GZCP` magic/version, flags/length parity, presence bits and
   `header + body + declared map lengths <= decompressed size` (the same checks as
-  `decodeBinaryCheckpoint`), then `isGameCheckpoint` on the body.
+  `decodeBinaryCheckpoint`), then `isGameCheckpoint` on the body. Mini-map slots
+  without a `miniMap` body are rejected too, matching the full decoder.
 - Legacy `gz:`-as-tagged-JSON payloads are retained in full under the same cap.
 
 Server call sites switched from `decodeCheckpointWire` to the metadata variant:
