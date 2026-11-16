@@ -1294,3 +1294,64 @@ Verification: `npx tsc --noEmit`, `npm run lint` and Prettier clean;
 `tests/Tutorial.test.ts` 12 passed; `EnJsonSorted` passes;
 `TranslationSystem` still fails only on the four documented pre-existing unused
 keys.
+
+## Self-service password reset (recovery codes)
+
+Local accounts had no password recovery at all: `LOGIN.md` listed it as a
+missing feature, and the only reset was the admin endpoint. There is no email
+address on file and no mail transport in the repo, so verification is a
+**recovery code** the account holder stores — "something you have" instead of a
+mailbox.
+
+Design:
+
+- 20 symbols from a 32-symbol alphabet (ambiguous `I O 0 1` removed) in five
+  4-char groups, e.g. `ABCD-EFGH-JKLM-NPQR-STUV`. 100 bits, so only a SHA-256
+  hash is stored (same rationale as refresh tokens). Input ignores case and
+  separators.
+- Issued at registration, shown once with a copy button, and required to be
+  saved before the post-registration reload.
+- `POST /api/auth/reset` (`username`, `recoveryCode`, `newPassword`): verifies
+  the code, sets the password, revokes every session, rotates the code, sets a
+  refresh cookie and signs the browser in. The new code is shown once.
+- `POST /api/auth/password` (Bearer): change while signed in, requiring the
+  current password; the requesting refresh session is kept, all others are
+  revoked.
+- `GET/POST /api/auth/recovery` (Bearer): status and regeneration (current
+  password required) — the path for accounts created before this feature.
+- Unknown username and wrong code both return `401 invalid_recovery_code`
+  (same hashing work); failures are counted per account (5 per 15 min → 429)
+  on top of per-IP limits (reset 10/15 min, other auth routes 20/15 min).
+- Admin reset still exists and now retires the recovery code, covering an
+  account that lost both.
+- Known limit: JWTs already issued stay valid until expiry (≤15 min); only
+  refresh sessions are revoked.
+
+Files: `src/server/LocalAuth.ts`, `src/client/Auth.ts`,
+`src/client/AccountModal.ts` (forgot-password view, one-time code panel,
+signed-in security panel), `resources/lang/en.json` (new `account_modal.local_*`
+keys, sorted), `LOGIN.md`.
+
+Tests: `tests/server/LocalAuthPasswordReset.test.ts` (hash-only storage,
+normalization, reset + rotation, wrong/unknown user, per-account throttle,
+password change keeping the requesting session, regeneration, pre-feature
+accounts, admin reset), `tests/server/LocalAuthResetRoutes.test.ts` (route
+statuses/cookies/error shapes), `tests/client/AccountModalReset.test.ts`
+(forgot-password navigation, mismatch guard, one-time code after reset and
+registration, rejected-code message, upstream screen when local auth is off).
+
+Verification: `npx tsc --noEmit`, `npm run lint`, Prettier clean; the three new
+suites plus the existing `LocalAuth*` and `AccountModal` suites pass (48 tests
+across the eight targeted files, with `TranslationSystem` failing only on the
+four documented pre-existing unused keys and `EnJsonSorted` passing). Full
+`tests/server`: 796 passed, the only 3 failures are the documented pre-existing
+ones (`GameServerPhase`, `GameServerWire` golden, `HostedLobbyListing`).
+
+Browser-verified end to end against `npm run dev` (LOCAL_AUTH=1, throwaway
+`e2e` script reusing `driver.mjs`, `AUTH_DIR` pointed at a temp dir): registered
+a new account, saw the one-time recovery code, confirmed the Account tab shows
+the "Account security" panel, then cleared the session and reset the password
+from "Forgot password?" with that code — the new code was shown and differed,
+the old one no longer works, and a wrong code displayed the generic
+"username and recovery code don't match" message with no page errors.
+Screenshots in `e2e/artifacts/reset-0*.png`; the throwaway script was deleted.
