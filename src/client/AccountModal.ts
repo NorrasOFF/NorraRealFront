@@ -9,8 +9,12 @@ import {
   discordLogin,
   googleLogin,
   linkGoogle,
+  localChangePassword,
+  localGenerateRecoveryCode,
   localLogin,
+  localRecoveryCodeEnabled,
   localRegister,
+  localResetPassword,
   logOut,
   reauthAfterCrazyGamesChange,
   sendMagicLink,
@@ -72,6 +76,28 @@ export class AccountModal extends BaseModal {
   @state() private localPassword = "";
   @state() private localAuthError = "";
   @state() private localAuthBusy = false;
+  // "signin" is the normal form; "reset" is the forgot-password form;
+  // "recovery" shows a one-time recovery code after signup/reset.
+  @state() private localAuthView: "signin" | "reset" | "recovery" = "signin";
+  @state() private resetUsername = "";
+  @state() private resetCode = "";
+  @state() private resetPassword = "";
+  @state() private resetPasswordConfirm = "";
+  @state() private localRecoveryCode = "";
+  // Signed-in account security panel.
+  @state() private securityView: "none" | "password" | "recovery" = "none";
+  @state() private securityError = "";
+  @state() private securityNotice = "";
+  @state() private securityBusy = false;
+  @state() private currentPassword = "";
+  @state() private newPassword = "";
+  @state() private newPasswordConfirm = "";
+  @state() private recoveryPassword = "";
+  @state() private recoveryEnabled: boolean | null = null;
+  // True when the one-time code was issued by signup/reset, so dismissing the
+  // panel must reload the page to pick up the new session. A code regenerated
+  // from the account tab only dismisses.
+  private recoveryCodeNeedsReload = false;
 
   private userMeResponse: UserMeResponse | null = null;
   private statsTree: PlayerStatsTree | null = null;
@@ -280,9 +306,289 @@ export class AccountModal extends BaseModal {
             </div>
           </div>
         </div>
-        ${this.renderRewardsPanel()} ${this.renderDesktopLinkGateAction()}
+        ${this.renderLocalSecurity()} ${this.renderRewardsPanel()}
+        ${this.renderDesktopLinkGateAction()}
       </div>
     `;
+  }
+
+  // Password + recovery-code management for the self-hosted username/password
+  // accounts. Upstream accounts have their own provider-managed flows and get
+  // nothing here.
+  private renderLocalSecurity(): TemplateResult | typeof nothing {
+    if (!ClientEnv.localAuth()) return nothing;
+    return html`
+      <div class="bg-white/5 rounded-xl border border-white/10 p-6">
+        <div
+          class="text-xs text-white/40 uppercase tracking-widest font-bold border-b border-white/5 pb-2 mb-4 text-center"
+        >
+          ${translateText("account_modal.local_security_title")}
+        </div>
+        ${this.securityNotice
+          ? html`<div
+              class="mb-4 rounded-lg border border-green-500/30 bg-green-500/10 p-3 text-sm text-green-200"
+            >
+              ${this.securityNotice}
+            </div>`
+          : null}
+        ${this.securityError
+          ? html`<div
+              class="mb-4 rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200"
+            >
+              ${this.securityError}
+            </div>`
+          : null}
+        ${this.localRecoveryCode
+          ? this.renderRecoveryCodePanel()
+          : this.securityView === "password"
+            ? this.renderChangePasswordForm()
+            : this.securityView === "recovery"
+              ? this.renderRecoveryCodeForm()
+              : this.renderSecurityActions()}
+      </div>
+    `;
+  }
+
+  private renderSecurityActions(): TemplateResult {
+    const recoveryStatus =
+      this.recoveryEnabled === null
+        ? ""
+        : this.recoveryEnabled
+          ? translateText("account_modal.local_recovery_code_set")
+          : translateText("account_modal.local_recovery_code_not_set");
+    return html`
+      <div class="flex flex-col gap-3">
+        ${recoveryStatus
+          ? html`<p class="text-sm text-white/50">${recoveryStatus}</p>`
+          : null}
+        <o-button
+          variant="secondary"
+          width="block"
+          size="md"
+          translationKey="account_modal.local_change_password"
+          @click=${() => this.openSecurityView("password")}
+        ></o-button>
+        <o-button
+          variant="ghost"
+          width="block"
+          size="sm"
+          translationKey="account_modal.local_recovery_code_generate"
+          @click=${() => this.openSecurityView("recovery")}
+        ></o-button>
+      </div>
+    `;
+  }
+
+  private openSecurityView(view: "password" | "recovery"): void {
+    this.securityView = view;
+    this.securityError = "";
+    this.securityNotice = "";
+    this.currentPassword = "";
+    this.newPassword = "";
+    this.newPasswordConfirm = "";
+    this.recoveryPassword = "";
+  }
+
+  private closeSecurityView(): void {
+    this.openSecurityView("password");
+    this.securityView = "none";
+  }
+
+  private renderPasswordInput(
+    value: string,
+    placeholderKey: string,
+    autocomplete: string,
+    onInput: (value: string) => void,
+    onEnter?: () => void,
+  ): TemplateResult {
+    return html`
+      <input
+        type="password"
+        autocomplete=${autocomplete}
+        .value=${value}
+        @input=${(e: Event) => onInput((e.target as HTMLInputElement).value)}
+        @keydown=${(e: KeyboardEvent) => {
+          if (e.key === "Enter" && onEnter) onEnter();
+        }}
+        placeholder=${translateText(placeholderKey)}
+        class="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white placeholder-white/20 focus:outline-none focus:ring-2 focus:ring-malibu-blue/50 focus:border-malibu-blue/50 transition-all font-medium hover:bg-white/10"
+      />
+    `;
+  }
+
+  private renderChangePasswordForm(): TemplateResult {
+    return html`
+      <div class="flex flex-col gap-3">
+        <div class="text-sm font-medium text-white">
+          ${translateText("account_modal.local_change_password_title")}
+        </div>
+        ${this.renderPasswordInput(
+          this.currentPassword,
+          "account_modal.local_current_password_placeholder",
+          "current-password",
+          (value) => (this.currentPassword = value),
+        )}
+        ${this.renderPasswordInput(
+          this.newPassword,
+          "account_modal.local_new_password_placeholder",
+          "new-password",
+          (value) => (this.newPassword = value),
+        )}
+        ${this.renderPasswordInput(
+          this.newPasswordConfirm,
+          "account_modal.local_confirm_password_placeholder",
+          "new-password",
+          (value) => (this.newPasswordConfirm = value),
+          () => void this.handleChangePassword(),
+        )}
+        <div class="flex gap-2">
+          <o-button
+            variant="primary"
+            width="fill"
+            size="md"
+            translationKey="account_modal.local_change_password_submit"
+            ?disable=${this.securityBusy}
+            @click=${() => void this.handleChangePassword()}
+          ></o-button>
+          <o-button
+            variant="secondary"
+            width="fill"
+            size="md"
+            translationKey="common.cancel"
+            @click=${this.closeSecurityView}
+          ></o-button>
+        </div>
+      </div>
+    `;
+  }
+
+  private renderRecoveryCodeForm(): TemplateResult {
+    return html`
+      <div class="flex flex-col gap-3">
+        <div class="text-sm font-medium text-white">
+          ${translateText("account_modal.local_recovery_code_generate")}
+        </div>
+        <p class="text-sm text-white/50">
+          ${translateText("account_modal.local_recovery_code_desc")}
+        </p>
+        ${this.renderPasswordInput(
+          this.recoveryPassword,
+          "account_modal.local_current_password_placeholder",
+          "current-password",
+          (value) => (this.recoveryPassword = value),
+          () => void this.handleGenerateRecoveryCode(),
+        )}
+        <div class="flex gap-2">
+          <o-button
+            variant="primary"
+            width="fill"
+            size="md"
+            translationKey="account_modal.local_recovery_code_generate"
+            ?disable=${this.securityBusy}
+            @click=${() => void this.handleGenerateRecoveryCode()}
+          ></o-button>
+          <o-button
+            variant="secondary"
+            width="fill"
+            size="md"
+            translationKey="common.cancel"
+            @click=${this.closeSecurityView}
+          ></o-button>
+        </div>
+      </div>
+    `;
+  }
+
+  private renderRecoveryCodePanel(): TemplateResult {
+    return html`
+      <div class="flex flex-col items-center gap-3">
+        <div class="text-sm font-medium text-white text-center">
+          ${translateText("account_modal.local_recovery_code_title")}
+        </div>
+        <div
+          class="font-mono text-lg font-bold tracking-widest text-white bg-black/30 border border-white/10 rounded-lg px-4 py-3 select-all"
+        >
+          ${this.localRecoveryCode}
+        </div>
+        <copy-button
+          .copyText=${this.localRecoveryCode}
+          .displayText=${translateText("common.copy")}
+          .showVisibilityToggle=${false}
+        ></copy-button>
+        <p class="text-xs leading-snug text-amber-200/80 text-center">
+          ${translateText("account_modal.local_recovery_code_desc")}
+        </p>
+        <o-button
+          variant="primary"
+          width="block"
+          size="md"
+          translationKey="account_modal.local_recovery_code_saved"
+          @click=${this.finishRecoveryCode}
+        ></o-button>
+      </div>
+    `;
+  }
+
+  private finishRecoveryCode(): void {
+    // Registration and reset already established a session; a reload lets the
+    // rest of the app pick up the new identity. When regenerating from an
+    // already-signed-in account, just dismiss the one-time panel.
+    if (this.recoveryCodeNeedsReload) {
+      window.location.reload();
+      return;
+    }
+    this.localRecoveryCode = "";
+    this.securityView = "none";
+    this.securityNotice = translateText(
+      "account_modal.local_recovery_generated",
+    );
+  }
+
+  private async handleChangePassword(): Promise<void> {
+    if (this.securityBusy) return;
+    this.securityError = "";
+    this.securityNotice = "";
+    if (this.newPassword !== this.newPasswordConfirm) {
+      this.securityError = translateText(
+        "account_modal.local_passwords_differ",
+      );
+      return;
+    }
+    this.securityBusy = true;
+    const result = await localChangePassword(
+      this.currentPassword,
+      this.newPassword,
+    );
+    this.securityBusy = false;
+    if (result.ok) {
+      this.closeSecurityView();
+      this.securityNotice = translateText(
+        "account_modal.local_change_password_success",
+      );
+      return;
+    }
+    this.securityError = translateText(`account_modal.local_${result.code}`);
+  }
+
+  private async handleGenerateRecoveryCode(): Promise<void> {
+    if (this.securityBusy) return;
+    this.securityError = "";
+    this.securityNotice = "";
+    this.securityBusy = true;
+    const result = await localGenerateRecoveryCode(this.recoveryPassword);
+    this.securityBusy = false;
+    if (result.ok) {
+      this.localRecoveryCode = result.recoveryCode;
+      this.recoveryCodeNeedsReload = false;
+      this.recoveryEnabled = true;
+      return;
+    }
+    this.securityError = translateText(`account_modal.local_${result.code}`);
+  }
+
+  private async loadRecoveryStatus(): Promise<void> {
+    if (!ClientEnv.localAuth()) return;
+    this.recoveryEnabled = await localRecoveryCodeEnabled();
   }
 
   // Re-entry to the desktop shell's account-linking gate shown at first
@@ -608,70 +914,173 @@ export class AccountModal extends BaseModal {
   }
 
   private renderLocalAuth() {
+    if (this.localAuthView === "recovery")
+      return this.renderLocalRecoveryCode();
+    if (this.localAuthView === "reset") return this.renderLocalReset();
+    return this.renderLocalSignIn();
+  }
+
+  private renderLocalAuthShell(content: TemplateResult): TemplateResult {
     return html`
       <div class="flex items-center justify-center p-6 min-h-full">
         <div
           class="w-full max-w-md bg-white/5 rounded-2xl border border-white/10 p-8"
         >
-          <div class="text-center mb-6">
-            <p class="text-white/50 text-sm font-medium">
-              ${translateText("account_modal.local_sign_in_desc")}
-            </p>
-          </div>
-
-          ${this.localAuthError
-            ? html`<div
-                class="mb-6 rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-200"
-              >
-                ${this.localAuthError}
-              </div>`
-            : null}
-
-          <div class="space-y-4">
-            <input
-              type="text"
-              autocomplete="username"
-              .value=${this.localUsername}
-              @input=${this.handleLocalUsername}
-              placeholder=${translateText(
-                "account_modal.local_username_placeholder",
-              )}
-              class="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white placeholder-white/20 focus:outline-none focus:ring-2 focus:ring-malibu-blue/50 focus:border-malibu-blue/50 transition-all font-medium hover:bg-white/10"
-            />
-            <input
-              type="password"
-              autocomplete="current-password"
-              .value=${this.localPassword}
-              @input=${this.handleLocalPassword}
-              @keydown=${this.handleLocalKeydown}
-              placeholder=${translateText(
-                "account_modal.local_password_placeholder",
-              )}
-              class="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white placeholder-white/20 focus:outline-none focus:ring-2 focus:ring-malibu-blue/50 focus:border-malibu-blue/50 transition-all font-medium hover:bg-white/10"
-            />
-            <p class="text-xs leading-snug text-amber-200/80">
-              ${translateText("account_modal.local_password_warning")}
-            </p>
-            <o-button
-              variant="primary"
-              width="block"
-              size="md"
-              translationKey="main.sign_in"
-              ?disable=${this.localAuthBusy}
-              @click=${() => this.handleLocalAuth("login")}
-            ></o-button>
-            <o-button
-              variant="secondary"
-              width="block"
-              size="md"
-              translationKey="account_modal.local_create_account"
-              ?disable=${this.localAuthBusy}
-              @click=${() => this.handleLocalAuth("register")}
-            ></o-button>
-          </div>
+          ${content}
         </div>
       </div>
     `;
+  }
+
+  private renderLocalError(): TemplateResult | null {
+    if (!this.localAuthError) return null;
+    return html`<div
+      class="mb-6 rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-200"
+    >
+      ${this.localAuthError}
+    </div>`;
+  }
+
+  private renderLocalSignIn(): TemplateResult {
+    return this.renderLocalAuthShell(html`
+      <div class="text-center mb-6">
+        <p class="text-white/50 text-sm font-medium">
+          ${translateText("account_modal.local_sign_in_desc")}
+        </p>
+      </div>
+
+      ${this.renderLocalError()}
+
+      <div class="space-y-4">
+        <input
+          type="text"
+          autocomplete="username"
+          .value=${this.localUsername}
+          @input=${this.handleLocalUsername}
+          placeholder=${translateText(
+            "account_modal.local_username_placeholder",
+          )}
+          class="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white placeholder-white/20 focus:outline-none focus:ring-2 focus:ring-malibu-blue/50 focus:border-malibu-blue/50 transition-all font-medium hover:bg-white/10"
+        />
+        <input
+          type="password"
+          autocomplete="current-password"
+          .value=${this.localPassword}
+          @input=${this.handleLocalPassword}
+          @keydown=${this.handleLocalKeydown}
+          placeholder=${translateText(
+            "account_modal.local_password_placeholder",
+          )}
+          class="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white placeholder-white/20 focus:outline-none focus:ring-2 focus:ring-malibu-blue/50 focus:border-malibu-blue/50 transition-all font-medium hover:bg-white/10"
+        />
+        <p class="text-xs leading-snug text-amber-200/80">
+          ${translateText("account_modal.local_password_warning")}
+        </p>
+        <o-button
+          variant="primary"
+          width="block"
+          size="md"
+          translationKey="main.sign_in"
+          ?disable=${this.localAuthBusy}
+          @click=${() => this.handleLocalAuth("login")}
+        ></o-button>
+        <o-button
+          variant="secondary"
+          width="block"
+          size="md"
+          translationKey="account_modal.local_create_account"
+          ?disable=${this.localAuthBusy}
+          @click=${() => this.handleLocalAuth("register")}
+        ></o-button>
+        <button
+          class="w-full text-center text-xs font-bold text-white/40 hover:text-white/70 transition-colors uppercase tracking-widest"
+          @click=${() => this.openLocalAuthView("reset")}
+        >
+          ${translateText("account_modal.local_forgot_password")}
+        </button>
+      </div>
+    `);
+  }
+
+  private renderLocalReset(): TemplateResult {
+    return this.renderLocalAuthShell(html`
+      <div class="text-center mb-6">
+        <div class="text-white text-lg font-medium mb-2">
+          ${translateText("account_modal.local_reset_title")}
+        </div>
+        <p class="text-white/50 text-sm font-medium">
+          ${translateText("account_modal.local_reset_desc")}
+        </p>
+      </div>
+
+      ${this.renderLocalError()}
+
+      <div class="space-y-4">
+        <input
+          type="text"
+          autocomplete="username"
+          .value=${this.resetUsername}
+          @input=${(e: Event) =>
+            (this.resetUsername = (e.target as HTMLInputElement).value)}
+          placeholder=${translateText(
+            "account_modal.local_username_placeholder",
+          )}
+          class="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white placeholder-white/20 focus:outline-none focus:ring-2 focus:ring-malibu-blue/50 focus:border-malibu-blue/50 transition-all font-medium hover:bg-white/10"
+        />
+        <input
+          type="text"
+          autocomplete="off"
+          autocapitalize="characters"
+          spellcheck="false"
+          .value=${this.resetCode}
+          @input=${(e: Event) =>
+            (this.resetCode = (e.target as HTMLInputElement).value)}
+          placeholder=${translateText(
+            "account_modal.local_recovery_code_placeholder",
+          )}
+          class="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white font-mono tracking-wider placeholder-white/20 placeholder:font-sans placeholder:tracking-normal focus:outline-none focus:ring-2 focus:ring-malibu-blue/50 focus:border-malibu-blue/50 transition-all hover:bg-white/10"
+        />
+        ${this.renderPasswordInput(
+          this.resetPassword,
+          "account_modal.local_new_password_placeholder",
+          "new-password",
+          (value) => (this.resetPassword = value),
+        )}
+        ${this.renderPasswordInput(
+          this.resetPasswordConfirm,
+          "account_modal.local_confirm_password_placeholder",
+          "new-password",
+          (value) => (this.resetPasswordConfirm = value),
+          () => void this.handleLocalReset(),
+        )}
+        <o-button
+          variant="primary"
+          width="block"
+          size="md"
+          translationKey="account_modal.local_reset_submit"
+          ?disable=${this.localAuthBusy}
+          @click=${() => void this.handleLocalReset()}
+        ></o-button>
+        <button
+          class="w-full text-center text-xs font-bold text-white/40 hover:text-white/70 transition-colors uppercase tracking-widest"
+          @click=${() => this.openLocalAuthView("signin")}
+        >
+          ${translateText("account_modal.local_back_to_sign_in")}
+        </button>
+      </div>
+    `);
+  }
+
+  private renderLocalRecoveryCode(): TemplateResult {
+    return this.renderLocalAuthShell(this.renderRecoveryCodePanel());
+  }
+
+  private openLocalAuthView(view: "signin" | "reset"): void {
+    this.localAuthView = view;
+    this.localAuthError = "";
+    this.resetCode = "";
+    this.resetPassword = "";
+    this.resetPasswordConfirm = "";
   }
 
   private handleLocalUsername(e: Event) {
@@ -690,11 +1099,56 @@ export class AccountModal extends BaseModal {
     if (this.localAuthBusy) return;
     this.localAuthBusy = true;
     this.localAuthError = "";
-    const result =
-      mode === "login"
-        ? await localLogin(this.localUsername, this.localPassword)
-        : await localRegister(this.localUsername, this.localPassword);
+    if (mode === "login") {
+      const result = await localLogin(this.localUsername, this.localPassword);
+      if (result.ok) {
+        window.location.reload();
+        return;
+      }
+      this.localAuthError = translateText(`account_modal.local_${result.code}`);
+      this.localAuthBusy = false;
+      return;
+    }
+    const result = await localRegister(this.localUsername, this.localPassword);
     if (result.ok) {
+      if (result.recoveryCode) {
+        this.resetUsername = this.localUsername;
+        this.localRecoveryCode = result.recoveryCode;
+        this.recoveryCodeNeedsReload = true;
+        this.localAuthView = "recovery";
+        this.localAuthBusy = false;
+        return;
+      }
+      window.location.reload();
+      return;
+    }
+    this.localAuthError = translateText(`account_modal.local_${result.code}`);
+    this.localAuthBusy = false;
+  }
+
+  private async handleLocalReset(): Promise<void> {
+    if (this.localAuthBusy) return;
+    this.localAuthError = "";
+    if (this.resetPassword !== this.resetPasswordConfirm) {
+      this.localAuthError = translateText(
+        "account_modal.local_passwords_differ",
+      );
+      return;
+    }
+    this.localAuthBusy = true;
+    const result = await localResetPassword(
+      this.resetUsername,
+      this.resetCode,
+      this.resetPassword,
+    );
+    if (result.ok) {
+      if (result.recoveryCode) {
+        this.localRecoveryCode = result.recoveryCode;
+        this.recoveryCodeNeedsReload = true;
+        this.localAuthView = "recovery";
+        this.localAuthBusy = false;
+        return;
+      }
       window.location.reload();
       return;
     }
@@ -850,6 +1304,14 @@ export class AccountModal extends BaseModal {
 
   protected onOpen(args?: Record<string, unknown>): void {
     this.isLoadingUser = true;
+    this.localAuthView = "signin";
+    this.localAuthError = "";
+    this.localRecoveryCode = "";
+    this.recoveryCodeNeedsReload = false;
+    this.securityView = "none";
+    this.securityError = "";
+    this.securityNotice = "";
+    this.recoveryEnabled = null;
     consumeGoogleLinkResult(args);
     this.loginError = consumeLoginResult(args);
 
@@ -862,6 +1324,7 @@ export class AccountModal extends BaseModal {
           if (this.userMeResponse?.player?.publicId) {
             this.loadPlayerProfile(this.userMeResponse.player.publicId);
           }
+          void this.loadRecoveryStatus();
         }
         this.finishLoadingUser();
       })

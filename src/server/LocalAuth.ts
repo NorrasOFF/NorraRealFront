@@ -35,10 +35,35 @@ const MAX_PASSWORD_LENGTH = 128;
 const USERNAME_PATTERN = /^[a-zA-Z0-9_-]+( [a-zA-Z0-9_-]+)*$/;
 const SCRYPT = { N: 16384, r: 8, p: 1, keylen: 64 } as const;
 
+// Self-service password reset uses a high-entropy recovery code instead of
+// email: local auth has no email address on file and no mail transport. The
+// code is shown exactly once (at registration, or when regenerated while
+// signed in) and only its hash is stored. 20 chars of a 32-symbol alphabet is
+// 100 bits, so a plain SHA-256 is enough — there is nothing to brute force
+// off-line, exactly like the refresh tokens.
+const RECOVERY_CODE_GROUPS = 5;
+const RECOVERY_CODE_GROUP_SIZE = 4;
+const RECOVERY_CODE_LENGTH = RECOVERY_CODE_GROUPS * RECOVERY_CODE_GROUP_SIZE;
+// Ambiguous glyphs (I, O, 0, 1) are omitted so the code can be read from paper
+// and typed back reliably.
+const RECOVERY_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+// Per-account throttle for password checks. The IP limiter on the routes
+// cannot see an attack spread over many IPs, and this keeps a stolen JWT (or a
+// guessed username) from being used to brute-force a recovery code.
+const PASSWORD_FAILURE_LIMIT = 5;
+const PASSWORD_FAILURE_WINDOW_MS = 15 * 60 * 1000;
+
 const SessionRecordSchema = z.object({
   tokenHash: z.string(),
   createdAt: z.number(),
   expiresAt: z.number(),
+});
+
+// Optional so accounts created before this feature still load; they have no
+// recovery code until one is generated from the account settings.
+const RecoveryCodeSchema = z.object({
+  hash: z.string(),
+  createdAt: z.number(),
 });
 
 export const AccountTierSchema = z.enum(["player", "host", "admin"]);
@@ -54,6 +79,7 @@ const AccountRecordSchema = z.object({
   createdAt: z.number(),
   sessions: z.array(SessionRecordSchema),
   tier: AccountTierSchema.optional(),
+  recovery: RecoveryCodeSchema.optional(),
 });
 
 const AccountsFileSchema = z.object({
@@ -105,12 +131,18 @@ export type LocalAuthTokens = {
   account: { id: string; username: string };
 };
 
+// A fresh recovery code is returned alongside the tokens exactly once: at
+// registration, after a recovery-code reset, and when regenerated on demand.
+export type LocalAuthRegistration = LocalAuthTokens & { recoveryCode: string };
+
 export type LocalAuthFailure = {
   code:
     | "invalid_username"
     | "invalid_password"
     | "username_taken"
     | "invalid_credentials"
+    | "invalid_current_password"
+    | "invalid_recovery_code"
     | "rate_limited"
     | "failed";
 };
@@ -224,6 +256,82 @@ function tokenHash(token: string): string {
 
 function normalizeUsername(username: string): string {
   return username.trim().toLowerCase();
+}
+
+// Users may type the code with or without the separating dashes and in any
+// case. Everything that is not a symbol of the alphabet is ignored, so pasting
+// "ABCD-EFGH-..." and "abcdefgh..." both work.
+export function normalizeRecoveryCode(code: string): string {
+  return code
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "")
+    .split("")
+    .filter((char) => RECOVERY_CODE_ALPHABET.includes(char))
+    .join("");
+}
+
+function generateRecoveryCode(): string {
+  const bytes = randomBytes(RECOVERY_CODE_LENGTH);
+  let code = "";
+  for (let i = 0; i < RECOVERY_CODE_LENGTH; i++) {
+    // 256 % 32 === 0, so the modulo is unbiased.
+    code += RECOVERY_CODE_ALPHABET[bytes[i] % RECOVERY_CODE_ALPHABET.length];
+    if (
+      (i + 1) % RECOVERY_CODE_GROUP_SIZE === 0 &&
+      i + 1 < RECOVERY_CODE_LENGTH
+    ) {
+      code += "-";
+    }
+  }
+  return code;
+}
+
+function recoveryCodeHash(code: string): string {
+  const normalized = normalizeRecoveryCode(code);
+  return createHash("sha256").update(normalized).digest("hex");
+}
+
+function verifyRecoveryCode(code: string, storedHash: string): boolean {
+  const actual = Buffer.from(recoveryCodeHash(code), "hex");
+  const expected = Buffer.from(storedHash, "hex");
+  if (actual.length !== 32 || expected.length !== 32) return false;
+  return timingSafeEqual(actual, expected);
+}
+
+// Failed current-password / recovery-code checks, keyed by normalized username
+// (recovery) or publicId (change), so one abused account cannot lock out
+// another. In-memory only: a restart clears it, which is acceptable because the
+// code itself has 100 bits of entropy.
+type PasswordFailureWindow = { count: number; expiresAt: number };
+const passwordFailures = new Map<string, PasswordFailureWindow>();
+
+function assertPasswordAttemptsRemain(key: string): void {
+  const window = passwordFailures.get(key);
+  if (!window) return;
+  if (window.expiresAt <= Date.now()) {
+    passwordFailures.delete(key);
+    return;
+  }
+  if (window.count >= PASSWORD_FAILURE_LIMIT) {
+    throw new LocalAuthError("rate_limited", 429);
+  }
+}
+
+function notePasswordFailure(key: string): void {
+  const now = Date.now();
+  const window = passwordFailures.get(key);
+  if (!window || window.expiresAt <= now) {
+    passwordFailures.set(key, {
+      count: 1,
+      expiresAt: now + PASSWORD_FAILURE_WINDOW_MS,
+    });
+    return;
+  }
+  window.count += 1;
+}
+
+function clearPasswordFailures(key: string): void {
+  passwordFailures.delete(key);
 }
 
 function readCookie(req: Request, name: string): string | null {
@@ -480,6 +588,10 @@ export class LocalAuthStore {
     if (!account) return null;
     account.passwordHash = await hashPassword(newPassword);
     account.sessions = [];
+    // An admin reset is the recovery path for an account that lost both its
+    // password and its code (or whose code may be compromised), so the old
+    // code is retired. The owner can issue a new one after signing in.
+    delete account.recovery;
     await this.persist();
     return this.tierInfo(account);
   }
@@ -539,7 +651,10 @@ export class LocalAuthStore {
     };
   }
 
-  async register(username: string, password: string): Promise<LocalAuthTokens> {
+  async register(
+    username: string,
+    password: string,
+  ): Promise<LocalAuthRegistration> {
     await this.init();
     await this.ensureAccountsFresh();
     const displayName = validateUsername(username);
@@ -551,15 +666,17 @@ export class LocalAuthStore {
     if (this.findByUsername(displayName)) {
       throw new LocalAuthError("username_taken", 409);
     }
+    const recoveryCode = generateRecoveryCode();
     const account: AccountRecord = {
       id: randomUUID(),
       username: displayName,
       passwordHash,
       createdAt: Date.now(),
       sessions: [],
+      recovery: { hash: recoveryCodeHash(recoveryCode), createdAt: Date.now() },
     };
     this.accounts.push(account);
-    return this.createSession(account);
+    return { ...(await this.createSession(account)), recoveryCode };
   }
 
   async login(username: string, password: string): Promise<LocalAuthTokens> {
@@ -573,6 +690,119 @@ export class LocalAuthStore {
       throw new LocalAuthError("invalid_credentials", 401);
     }
     return this.createSession(account);
+  }
+
+  /**
+   * Self-service password change for a signed-in account. Requires the current
+   * password, so a stolen JWT alone cannot take the account over. Every other
+   * refresh session is revoked; the session that made the request is kept so
+   * the user is not logged out of the device they just used.
+   */
+  async changePassword(
+    publicId: string,
+    currentPassword: string,
+    newPassword: string,
+    keepRefreshToken?: string,
+  ): Promise<void> {
+    await this.init();
+    await this.ensureAccountsFresh();
+    const account = this.findById(publicId);
+    assertPasswordAttemptsRemain(`change:${publicId}`);
+    if (!account) {
+      throw new LocalAuthError("invalid_current_password", 401);
+    }
+    validatePassword(newPassword);
+    if (!(await verifyPassword(currentPassword, account.passwordHash))) {
+      notePasswordFailure(`change:${publicId}`);
+      throw new LocalAuthError("invalid_current_password", 401);
+    }
+    const keepHash = keepRefreshToken ? tokenHash(keepRefreshToken) : null;
+    account.passwordHash = await hashPassword(newPassword);
+    account.sessions = keepHash
+      ? account.sessions.filter((session) => session.tokenHash === keepHash)
+      : [];
+    await this.persist();
+    clearPasswordFailures(`change:${publicId}`);
+  }
+
+  /**
+   * Forgot-password reset. Proves account ownership with the recovery code
+   * issued at registration/regeneration, then sets a new password, revokes
+   * every session and rotates the recovery code (so a leaked code cannot be
+   * replayed). Returns a fresh session so the user is signed in straight away.
+   */
+  async resetPasswordWithRecoveryCode(
+    username: string,
+    recoveryCode: string,
+    newPassword: string,
+  ): Promise<LocalAuthRegistration> {
+    await this.init();
+    await this.ensureAccountsFresh();
+    const key = `reset:${normalizeUsername(username)}`;
+    assertPasswordAttemptsRemain(key);
+    validatePassword(newPassword);
+    const account = this.findByUsername(username);
+
+    // Hash even when the account (or its code) is missing so a caller cannot
+    // tell "unknown user" from "wrong code" by response timing.
+    const storedHash = account?.recovery?.hash ?? "";
+    const matches = storedHash
+      ? verifyRecoveryCode(recoveryCode, storedHash)
+      : false;
+    if (!storedHash) recoveryCodeHash(recoveryCode);
+
+    if (!account || !matches) {
+      notePasswordFailure(key);
+      throw new LocalAuthError("invalid_recovery_code", 401);
+    }
+
+    const nextRecoveryCode = generateRecoveryCode();
+    account.passwordHash = await hashPassword(newPassword);
+    account.sessions = [];
+    account.recovery = {
+      hash: recoveryCodeHash(nextRecoveryCode),
+      createdAt: Date.now(),
+    };
+    const tokens = await this.createSession(account);
+    clearPasswordFailures(key);
+    return { ...tokens, recoveryCode: nextRecoveryCode };
+  }
+
+  /**
+   * Issue a new recovery code for a signed-in account (the only way an account
+   * created before this feature can get one). The previous code stops working
+   * immediately. Requires the current password because the code is a takeover
+   * credential.
+   */
+  async regenerateRecoveryCode(
+    publicId: string,
+    currentPassword: string,
+  ): Promise<string> {
+    await this.init();
+    await this.ensureAccountsFresh();
+    const account = this.findById(publicId);
+    assertPasswordAttemptsRemain(`change:${publicId}`);
+    if (!account) {
+      throw new LocalAuthError("invalid_current_password", 401);
+    }
+    if (!(await verifyPassword(currentPassword, account.passwordHash))) {
+      notePasswordFailure(`change:${publicId}`);
+      throw new LocalAuthError("invalid_current_password", 401);
+    }
+    const recoveryCode = generateRecoveryCode();
+    account.recovery = {
+      hash: recoveryCodeHash(recoveryCode),
+      createdAt: Date.now(),
+    };
+    await this.persist();
+    clearPasswordFailures(`change:${publicId}`);
+    return recoveryCode;
+  }
+
+  async hasRecoveryCode(publicId: string): Promise<boolean> {
+    await this.init();
+    await this.ensureAccountsFresh();
+    return this.findById(publicId)?.recovery !== undefined;
   }
 
   async refresh(refreshToken: string): Promise<LocalAuthTokens> {
@@ -691,6 +921,7 @@ export function getLocalAuth(): LocalAuthStore {
 
 export function resetLocalAuthForTests(): void {
   singleton = null;
+  passwordFailures.clear();
 }
 
 export async function initLocalAuth(): Promise<void> {
@@ -728,6 +959,26 @@ function setRefreshCookie(res: Response, tokens: LocalAuthTokens): void {
   });
 }
 
+// Authenticated routes take the public id (the JWT subject), never a username
+// from the body, so a caller cannot act on someone else's account.
+async function authenticatedSubject(
+  req: Request,
+  res: Response,
+  store: LocalAuthStore,
+): Promise<string | null> {
+  const header = req.headers.authorization;
+  if (!header?.startsWith("Bearer ")) {
+    res.status(401).json({ error: "unauthorized" });
+    return null;
+  }
+  const result = await store.verifyToken(header.slice("Bearer ".length));
+  if (!result.ok) {
+    res.status(401).json({ error: "unauthorized" });
+    return null;
+  }
+  return result.claims.sub;
+}
+
 export function registerLocalAuthRoutes(app: Express): void {
   if (!isLocalAuthEnabled()) return;
   const store = getLocalAuth();
@@ -738,6 +989,28 @@ export function registerLocalAuthRoutes(app: Express): void {
     legacyHeaders: false,
     message: { error: "rate_limited" },
   });
+  // Resets are unauthenticated, so they get a tighter per-IP budget on top of
+  // the store's per-account failure window.
+  const resetLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: "rate_limited" },
+  });
+  const jsonBody = (
+    req: Request,
+    fields: string[],
+  ): Record<string, string> | null => {
+    const body = req.body as Record<string, unknown> | null;
+    const values: Record<string, string> = {};
+    for (const field of fields) {
+      const value = body?.[field];
+      if (typeof value !== "string") return null;
+      values[field] = value;
+    }
+    return values;
+  };
 
   app.post("/api/auth/register", limiter, async (req, res) => {
     const credentials = credentialsFromBody(req, res);
@@ -748,7 +1021,11 @@ export function registerLocalAuthRoutes(app: Express): void {
         credentials.password,
       );
       setRefreshCookie(res, tokens);
-      res.json({ jwt: tokens.jwt, expiresIn: tokens.expiresIn });
+      res.json({
+        jwt: tokens.jwt,
+        expiresIn: tokens.expiresIn,
+        recoveryCode: tokens.recoveryCode,
+      });
     } catch (error) {
       sendAuthError(res, error);
     }
@@ -781,6 +1058,82 @@ export function registerLocalAuthRoutes(app: Express): void {
       res.json({ jwt: tokens.jwt, expiresIn: tokens.expiresIn });
     } catch (error) {
       res.clearCookie(LOCAL_REFRESH_COOKIE, cookieOptions());
+      sendAuthError(res, error);
+    }
+  });
+
+  // Forgot-password reset: username + the recovery code shown at signup, then a
+  // new password. On success the account is signed in and gets a fresh code.
+  app.post("/api/auth/reset", resetLimiter, async (req, res) => {
+    const body = jsonBody(req, ["username", "recoveryCode", "newPassword"]);
+    if (!body) {
+      res.status(400).json({ error: "invalid_request" });
+      return;
+    }
+    try {
+      const tokens = await store.resetPasswordWithRecoveryCode(
+        body.username,
+        body.recoveryCode,
+        body.newPassword,
+      );
+      setRefreshCookie(res, tokens);
+      res.json({
+        jwt: tokens.jwt,
+        expiresIn: tokens.expiresIn,
+        recoveryCode: tokens.recoveryCode,
+      });
+    } catch (error) {
+      sendAuthError(res, error);
+    }
+  });
+
+  // Change the password of the signed-in account. The current password is
+  // required; the refresh session that made the request survives, every other
+  // device is logged out.
+  app.post("/api/auth/password", limiter, async (req, res) => {
+    const subject = await authenticatedSubject(req, res, store);
+    if (!subject) return;
+    const body = jsonBody(req, ["currentPassword", "newPassword"]);
+    if (!body) {
+      res.status(400).json({ error: "invalid_request" });
+      return;
+    }
+    try {
+      await store.changePassword(
+        subject,
+        body.currentPassword,
+        body.newPassword,
+        readCookie(req, LOCAL_REFRESH_COOKIE) ?? undefined,
+      );
+      res.json({ ok: true });
+    } catch (error) {
+      sendAuthError(res, error);
+    }
+  });
+
+  app.get("/api/auth/recovery", async (req, res) => {
+    const subject = await authenticatedSubject(req, res, store);
+    if (!subject) return;
+    res.json({ enabled: await store.hasRecoveryCode(subject) });
+  });
+
+  // Generate a replacement recovery code for the signed-in account. The old
+  // code stops working; the new one is returned once and never again.
+  app.post("/api/auth/recovery", limiter, async (req, res) => {
+    const subject = await authenticatedSubject(req, res, store);
+    if (!subject) return;
+    const body = jsonBody(req, ["currentPassword"]);
+    if (!body) {
+      res.status(400).json({ error: "invalid_request" });
+      return;
+    }
+    try {
+      const recoveryCode = await store.regenerateRecoveryCode(
+        subject,
+        body.currentPassword,
+      );
+      res.json({ recoveryCode });
+    } catch (error) {
       sendAuthError(res, error);
     }
   });

@@ -47,77 +47,225 @@ export function googleLogin() {
   window.location.href = `${getApiBase()}/auth/login/google?redirect_uri=${redirectUri}`;
 }
 
+export type LocalAuthErrorCode =
+  | "invalid_username"
+  | "invalid_password"
+  | "username_taken"
+  | "invalid_credentials"
+  | "invalid_current_password"
+  | "invalid_recovery_code"
+  | "rate_limited"
+  | "failed";
+
 export type LocalAuthResult =
   | { ok: true }
-  | {
-      ok: false;
-      code:
-        | "invalid_username"
-        | "invalid_password"
-        | "username_taken"
-        | "invalid_credentials"
-        | "rate_limited"
-        | "failed";
-    };
+  | { ok: false; code: LocalAuthErrorCode };
 
-async function localAuthRequest(
+// Registration and a recovery-code reset both hand back a fresh recovery code
+// (shown once) and leave the client signed in.
+export type LocalRecoveryCodeResult =
+  | { ok: true; recoveryCode: string }
+  | { ok: false; code: LocalAuthErrorCode };
+
+type LocalAuthResponse = {
+  jwt?: unknown;
+  expiresIn?: unknown;
+  recoveryCode?: unknown;
+  error?: unknown;
+};
+
+function localAuthErrorCode(
+  response: Response,
+  body: LocalAuthResponse | null,
+  unauthorized: LocalAuthErrorCode = "invalid_credentials",
+): LocalAuthErrorCode {
+  if (response.status === 429) return "rate_limited";
+  if (response.status === 409) return "username_taken";
+  switch (body?.error) {
+    case "invalid_username":
+    case "invalid_password":
+    case "invalid_current_password":
+    case "invalid_recovery_code":
+      return body.error;
+  }
+  if (response.status === 401) return unauthorized;
+  return "failed";
+}
+
+async function postLocalAuth(
   path: string,
-  username: string,
-  password: string,
-): Promise<LocalAuthResult> {
+  body: Record<string, unknown>,
+  authenticated = false,
+): Promise<{ response: Response; body: LocalAuthResponse | null } | null> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  if (authenticated) {
+    const authHeader = await getAuthHeader();
+    if (authHeader === "") return null;
+    headers.Authorization = authHeader;
+  }
   try {
     const response = await fetch(`${getApiBase()}${path}`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers,
       credentials: "include",
-      body: JSON.stringify({ username, password }),
+      body: JSON.stringify(body),
     });
-    const body = (await response.json().catch(() => null)) as {
-      jwt?: unknown;
-      expiresIn?: unknown;
-      error?: unknown;
-    } | null;
-    if (response.ok && typeof body?.jwt === "string") {
-      __jwt = body.jwt;
-      __expiresAt =
-        Date.now() +
-        (typeof body.expiresIn === "number" ? body.expiresIn : 900) * 1000;
-      return { ok: true };
-    }
-    if (response.status === 429) {
-      return { ok: false, code: "rate_limited" };
-    }
-    if (response.status === 409) {
-      return { ok: false, code: "username_taken" };
-    }
-    if (response.status === 401) {
-      return { ok: false, code: "invalid_credentials" };
-    }
-    switch (body?.error) {
-      case "invalid_username":
-      case "invalid_password":
-        return { ok: false, code: body.error };
-      default:
-        return { ok: false, code: "failed" };
-    }
+    const parsed = (await response
+      .json()
+      .catch(() => null)) as LocalAuthResponse | null;
+    return { response, body: parsed };
   } catch (error) {
     console.error("local auth request failed", error);
-    return { ok: false, code: "failed" };
+    return null;
   }
 }
 
-export function localLogin(
+function acceptLocalSession(body: LocalAuthResponse | null): boolean {
+  if (typeof body?.jwt !== "string") return false;
+  __jwt = body.jwt;
+  __expiresAt =
+    Date.now() +
+    (typeof body.expiresIn === "number" ? body.expiresIn : 900) * 1000;
+  return true;
+}
+
+async function localCredentialsRequest(
+  path: string,
+  username: string,
+  password: string,
+): Promise<LocalRecoveryCodeResult> {
+  const result = await postLocalAuth(path, { username, password });
+  if (!result) return { ok: false, code: "failed" };
+  if (result.response.ok && acceptLocalSession(result.body)) {
+    return {
+      ok: true,
+      recoveryCode:
+        typeof result.body?.recoveryCode === "string"
+          ? result.body.recoveryCode
+          : "",
+    };
+  }
+  return {
+    ok: false,
+    code: localAuthErrorCode(result.response, result.body),
+  };
+}
+
+export async function localLogin(
   username: string,
   password: string,
 ): Promise<LocalAuthResult> {
-  return localAuthRequest("/auth/login", username, password);
+  const result = await localCredentialsRequest(
+    "/auth/login",
+    username,
+    password,
+  );
+  return result.ok ? { ok: true } : result;
 }
 
 export function localRegister(
   username: string,
   password: string,
+): Promise<LocalRecoveryCodeResult> {
+  return localCredentialsRequest("/auth/register", username, password);
+}
+
+// Forgot-password flow. Proving the recovery code sets a new password, signs
+// this browser in, and rotates the code; the new one must be shown once.
+export async function localResetPassword(
+  username: string,
+  recoveryCode: string,
+  newPassword: string,
+): Promise<LocalRecoveryCodeResult> {
+  const result = await postLocalAuth("/auth/reset", {
+    username,
+    recoveryCode,
+    newPassword,
+  });
+  if (!result) return { ok: false, code: "failed" };
+  if (result.response.ok && acceptLocalSession(result.body)) {
+    return {
+      ok: true,
+      recoveryCode:
+        typeof result.body?.recoveryCode === "string"
+          ? result.body.recoveryCode
+          : "",
+    };
+  }
+  return {
+    ok: false,
+    code: localAuthErrorCode(
+      result.response,
+      result.body,
+      "invalid_recovery_code",
+    ),
+  };
+}
+
+// Signed-in password change. The server requires the current password and
+// keeps this device's session while revoking every other one.
+export async function localChangePassword(
+  currentPassword: string,
+  newPassword: string,
 ): Promise<LocalAuthResult> {
-  return localAuthRequest("/auth/register", username, password);
+  const result = await postLocalAuth(
+    "/auth/password",
+    { currentPassword, newPassword },
+    true,
+  );
+  if (!result) return { ok: false, code: "failed" };
+  if (result.response.ok) return { ok: true };
+  return {
+    ok: false,
+    code: localAuthErrorCode(
+      result.response,
+      result.body,
+      "invalid_current_password",
+    ),
+  };
+}
+
+export async function localGenerateRecoveryCode(
+  currentPassword: string,
+): Promise<LocalRecoveryCodeResult> {
+  const result = await postLocalAuth(
+    "/auth/recovery",
+    { currentPassword },
+    true,
+  );
+  if (!result) return { ok: false, code: "failed" };
+  if (result.response.ok && typeof result.body?.recoveryCode === "string") {
+    return { ok: true, recoveryCode: result.body.recoveryCode };
+  }
+  return {
+    ok: false,
+    code: localAuthErrorCode(
+      result.response,
+      result.body,
+      "invalid_current_password",
+    ),
+  };
+}
+
+export async function localRecoveryCodeEnabled(): Promise<boolean> {
+  const authHeader = await getAuthHeader();
+  if (authHeader === "") return false;
+  try {
+    const response = await fetch(`${getApiBase()}/auth/recovery`, {
+      headers: { Authorization: authHeader },
+      credentials: "include",
+    });
+    if (!response.ok) return false;
+    const body = (await response.json().catch(() => null)) as {
+      enabled?: unknown;
+    } | null;
+    return body?.enabled === true;
+  } catch (error) {
+    console.error("local recovery status request failed", error);
+    return false;
+  }
 }
 
 // Link a Google account to the currently logged-in player. Unlike login this is
