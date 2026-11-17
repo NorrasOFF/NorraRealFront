@@ -14,10 +14,12 @@ only, and publishes no Elo".
 - Ship target: `origin` = `hexfront-dev/NorraRealFront-Remus-`, branch `main`
   (`git push origin HEAD:main`; use a credential-in-URL remote because the
   credential-manager prompts fail in this shell).
-- This session's commits: **`4771404b7`** ("List verified names only on the
-  topplist and drop its rating fields"), **`e0df0e635`** (handoff),
-  **`a63ab39fa`** ("Move the ranked games count from the topplist to the player
-  profile"), plus this note's commit on top.
+- This session's work is merged into `NorrasOFF/NorraRealFront` `main`
+  (cherry-picked; the fork `hexfront-dev/NorraRealFront-Remus-` has the same
+  content under different hashes): "List verified names only on the topplist
+  and drop its rating fields", the games-count move to the player profile, and
+  the handoff notes. On this branch the commits are `9955f6a0e`, `41c75a312`,
+  `3286d1b42`, `d99d7dd16`.
 - Live app: Fly app `openfrontio`, built from `NorrasOFF/NorraRealFront` `main`
   — **nothing from this session is live**. PR #42 is already merged there
   (`ae2a0ac6d`).
@@ -60,13 +62,16 @@ No rankings were reset; `ranked-ratings.json` keeps its `version: 1` files.
 
 ## 4. Open items
 
-- **Deploy** the feature: these commits exist only in the Remus fork, so merge
-  them into `NorrasOFF/NorraRealFront` `main` before the next Fly deploy. The
-  ladder hides unverified names immediately, so a deploy with no
+- **Deploy** `NorrasOFF/NorraRealFront` `main` (now contains this work, plus the
+  metadata-only checkpoint validation and health check). Nothing is live yet.
+  The ladder hides unverified names immediately, so a deploy with no
   `verifiedName` data relies on the local-auth backfill to keep the board
   populated. The profile's "ranked games played" stat needs
   `GET /api/player/:publicId/ranked` from the same deploy; against an older
   server the card is simply hidden.
+- After deploy: run one ranked game, confirm the topplist shows account names
+  only and the player profile shows "Ranked games played", and confirm
+  `accepted host checkpoint` still follows a large chunked upload.
 - **Website** (`NorrasOFF/norrasoff.github.io`): there is nothing to change.
   Its Topplista renders Placering / Spelare / Matcher from the API's `rank`,
   `accountUsername`, `total` (checked in `layouts/topplista.html` and the live
