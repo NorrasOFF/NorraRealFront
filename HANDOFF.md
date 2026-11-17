@@ -1,11 +1,11 @@
-# Handoff — self-service password reset with recovery codes
+# Handoff — verified-name topplist, no Elo in the ladder payload
 
 > Future sessions: this file holds the current handoff. Overwrite it rather than
 > appending; keep only the latest handoff. Write one only when the session leaves
 > open items or partially verified work.
 
-Companion notes: `testnotes.md` (section "Self-service password reset
-(recovery codes)") and `LOGIN.md` (full design and endpoint table).
+Companion notes: `testnotes.md`, section "Topplist shows verified account names
+only, and publishes no Elo".
 
 ## 1. Where things are
 
@@ -14,71 +14,65 @@ Companion notes: `testnotes.md` (section "Self-service password reset
 - Ship target: `origin` = `hexfront-dev/NorraRealFront-Remus-`, branch `main`
   (`git push origin HEAD:main`; use a credential-in-URL remote because the
   credential-manager prompts fail in this shell).
-- This session's commit: **`18bfa70c6`** ("Add self-service password reset with
-  recovery codes"), pushed to `main` and verified with `git ls-remote`. It sits
-  on top of the four checkpoint/save commits from the previous session
-  (`9c2b5f1e3..ae3a33f5e`), which were also pushed by this session.
-- Live app: Fly app `openfrontio`, one machine, image built from
-  `NorrasOFF/NorraRealFront` `main` — **the deploy still has to happen from that
-  repo**. Nothing from this session or the previous checkpoint fix is live yet.
+- This session's feature commit: **`4771404b7`** ("List verified names only on
+  the topplist and drop its rating fields"), plus the handoff commit on top.
+- Live app: Fly app `openfrontio`, built from `NorrasOFF/NorraRealFront` `main`
+  — **nothing from this session is live**. PR #42 is already merged there
+  (`ae2a0ac6d`).
 
 ## 2. What landed
 
-Password recovery for the self-hosted `LOCAL_AUTH` accounts. There is no email
-address on file and no mail transport, so verification is a one-time
-**recovery code** (100 bits, five 4-char groups, SHA-256 at rest), shown once at
-registration and rotated on use.
+1. **Topplist = verified names only.** `verifiedAccountName()` in
+   `src/core/ApiSchemas.ts` is the single blue-check rule (premium/indefinite
+   bare name, not `TEMPORARY####`); the client badge delegates to it.
+   `GameServer.captureRankedRoster` stores `verifiedName` only when the
+   join-time badge vouched for that exact name; `PlayerRating.verifiedName` is
+   optional in the file schema (no version bump). `leaderboard()` hides entries
+   without a verified name but keeps their Elo and **true ladder rank**; the
+   client filters too. `backfillVerifiedNames()` (memoised in
+   `registerRankedRoutes`, local-auth only) labels legacy entries with the
+   account username so the board does not look reset.
+2. **No Elo on the topplist data path.** `RankedLeaderboardEntrySchema` and the
+   client row now carry rank/player/games only; the hidden
+   `PlayerRating.elo`/`peakElo` still rank and balance the ladder. `3bc9b4384`
+   had already removed the visible column.
 
-- `POST /api/auth/reset` — username + recovery code + new password. Signs the
-  browser in, revokes every session, rotates the code. Unknown username and
-  wrong code share `401 invalid_recovery_code`.
-- `POST /api/auth/password` — change while signed in (Bearer), current password
-  required; keeps the requesting refresh session, revokes the rest.
-- `GET/POST /api/auth/recovery` — status and regeneration for accounts created
-  before the feature.
-- Per-account failure window: 5 failed checks per 15 min → `429 rate_limited`,
-  on top of per-IP limits (reset 10/15 min, other auth routes 20/15 min).
-- Admin reset (`POST /api/admin/account-password`) now retires the recovery
-  code.
-- UI (`src/client/AccountModal.ts`): "Forgot password?" view, one-time code
-  panel after signup/reset, and an "Account security" panel with change-password
-  and regenerate-code forms.
+No rankings were reset; `ranked-ratings.json` keeps its `version: 1` files.
 
-## 3. Verification already done
+## 3. Verification
 
 - `npx tsc --noEmit`, `npm run lint`, Prettier clean.
-- New suites: `tests/server/LocalAuthPasswordReset.test.ts`,
-  `tests/server/LocalAuthResetRoutes.test.ts`,
-  `tests/client/AccountModalReset.test.ts` (plus the pre-existing `LocalAuth*`
-  and `AccountModal*` suites). 46–48 targeted tests pass.
-- Full `tests/server`: 796 passed; only the 3 documented pre-existing failures
+- `tests/server`: 800 passed; only the three documented pre-existing failures
   (`GameServerPhase`, `GameServerWire` golden, `HostedLobbyListing`).
-- `EnJsonSorted` passes; `TranslationSystem` fails only on its four documented
-  pre-existing unused keys.
-- Browser-verified end to end against `npm run dev` (`LOCAL_AUTH=1`, temp
-  `AUTH_DIR`, throwaway `e2e` script): register → one-time code → signed-in
-  security panel → clear session → reset with the code → rotated code shown →
-  new password accepted → wrong code shows the generic error → no page errors.
-  Screenshots in `e2e/artifacts/reset-0*.png`; the driver script was deleted.
+- Targeted: `RankedRatings`, `RankedLobby`, `ApiSchemas`, `LeaderboardModal`,
+  `ApiPlayerLeaderboard`, `PlayerName`, `EnJsonSorted` pass.
+  `TranslationSystem` fails only on its four documented unused keys.
+- Not browser-tested: the modal changes are covered by component tests; the
+  single-player e2e harness cannot set up a ranked lobby.
 
 ## 4. Open items
 
-- **Deploy** `NorrasOFF/NorraRealFront` `main` (this feature plus the previous
-  metadata-only checkpoint validation and health check). Nothing is live yet.
-- After deploy, do one real reset in production and confirm
-  `accepted host checkpoint` still follows a large chunked upload.
-- Two known limits, both intentional and documented in `LOGIN.md`:
-  - JWTs already issued stay valid until expiry (≤15 min) after a reset; only
-    refresh sessions are revoked.
-  - The per-account failure window is in memory, so a master restart clears it
-    (the code entropy, not the window, is the real protection).
+- **Deploy** the feature: these commits exist only in the Remus fork, so merge
+  them into `NorrasOFF/NorraRealFront` `main` before the next Fly deploy. The
+  ladder hides unverified names immediately, so a deploy with no
+  `verifiedName` data relies on the local-auth backfill to keep the board
+  populated.
+- **Website** (`NorrasOFF/norrasoff.github.io`): there is nothing to change.
+  Its Topplista renders Placering / Spelare / Matcher from the API's `rank`,
+  `accountUsername`, `total` (checked in `layouts/topplista.html` and the live
+  page); the rating was never in the template. The build workflow fetches
+  `/api/leaderboard/ranked` into `data/leaderboard.json` at build time (not
+  committed). If Elo is still seen on a page, it is a cached old build.
+- Website pushes need `H:\Documents\Norrasoff-token.txt` for PRs (the
+  `Hexfront-token.txt` can push branches but not open PRs).
 
 ## 5. Operational caveats (carried forward)
 
 - `fly.toml` deliberately has `min_machines_running = 0`. Do not set it to 1
   without asking the owner.
-- `AUTH_DIR` must stay on the `openfront_auth` volume (`/data/auth`); accounts
-  written into the image or an ephemeral path vanish on deploy.
-- The game worker has 472 MB RAM / 1 shared vCPU; large checkpoints are the
-  known way to wedge the master. The metadata-only decode fix is in `main` but
-  not deployed.
+- `AUTH_DIR` must stay on the `openfront_auth` volume (`/data/auth`). The
+  verified-name backfill reads `accounts.json` from it.
+- `LOCAL_AUTH` returns `usernameStatus: "indefinite"` for every local account,
+  so in this deployment every signed-in account counts as verified; the visible
+  effect is account usernames replacing typed-in join names. Do not "fix" this
+  by making names unverified without checking with the owner.
