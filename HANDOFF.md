@@ -14,8 +14,10 @@ only, and publishes no Elo".
 - Ship target: `origin` = `hexfront-dev/NorraRealFront-Remus-`, branch `main`
   (`git push origin HEAD:main`; use a credential-in-URL remote because the
   credential-manager prompts fail in this shell).
-- This session's feature commit: **`4771404b7`** ("List verified names only on
-  the topplist and drop its rating fields"), plus the handoff commit on top.
+- This session's commits: **`4771404b7`** ("List verified names only on the
+  topplist and drop its rating fields"), **`e0df0e635`** (handoff),
+  **`a63ab39fa`** ("Move the ranked games count from the topplist to the player
+  profile"), plus this note's commit on top.
 - Live app: Fly app `openfrontio`, built from `NorrasOFF/NorraRealFront` `main`
   — **nothing from this session is live**. PR #42 is already merged there
   (`ae2a0ac6d`).
