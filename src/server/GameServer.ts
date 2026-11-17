@@ -4,7 +4,7 @@ import { Logger } from "winston";
 import WebSocket from "ws";
 import { z } from "zod";
 import { ZbContext } from "../../zbin";
-import { isAdminRole } from "../core/ApiSchemas";
+import { isAdminRole, isVerifiedUsername } from "../core/ApiSchemas";
 import {
   decodeCheckpoint,
   decodeCheckpointWireMetadata,
@@ -354,9 +354,12 @@ export class GameServer {
   // Account identities of the players who started a ranked lobby, keyed by the
   // simulation clientID. gameStartInfo is deliberately PII-free, so this is
   // what lets the game-end hook turn winner clientIDs into accounts.
+  // `verifiedName` is the account's verified display name, known only when the
+  // player joined under it (the join-time badge vouches for exactly that name);
+  // the ranked topplist displays verified names only.
   private readonly rankedRoster = new Map<
     ClientID,
-    { publicId: string; username: string }
+    { publicId: string; username: string; verifiedName: string | null }
   >();
   private rankedResultApplied = false;
   // One Discord announcement per game, from whichever start path runs.
@@ -2000,6 +2003,13 @@ export class GameServer {
   // Snapshot the account identity behind each starting client. Only signed-in
   // players have a publicId (ranked lobbies require it at join), and the frozen
   // gameStartInfo intentionally has no PII to fall back on.
+  //
+  // The verified name is the name the player joined under, but only when the
+  // join-time badge vouched for it: the client sends `cosmetics.verified` when
+  // it plays under its account's verified display name, and the join path
+  // strips the claim unless it matches the account (Privilege.enforceVerifiedBadge).
+  // Anyone playing under a typed-in name therefore has no verified name here,
+  // which is exactly what keeps that name off the topplist.
   private captureRankedRoster(): void {
     this.rankedRoster.clear();
     if (!this.isRanked()) return;
@@ -2008,6 +2018,11 @@ export class GameServer {
         this.rankedRoster.set(client.clientID, {
           publicId: client.publicId,
           username: client.username,
+          verifiedName:
+            client.cosmetics?.verified === true &&
+            isVerifiedUsername(client.username)
+              ? client.username
+              : null,
         });
       }
     }

@@ -177,7 +177,7 @@ describe("LeaderboardModal", () => {
             peakElo: 1300,
             total: 10,
             public_id: "player-1",
-            accountUsername: "alpha.4821",
+            accountUsername: "alpha",
           },
           {
             rank: 2,
@@ -185,7 +185,7 @@ describe("LeaderboardModal", () => {
             peakElo: 1250,
             total: 10,
             public_id: "player-2",
-            accountUsername: null,
+            accountUsername: "beta",
           },
         ],
       });
@@ -201,22 +201,69 @@ describe("LeaderboardModal", () => {
       expect(playerData[0]).toEqual(
         expect.objectContaining({
           playerId: "player-1",
-          accountUsername: "alpha.4821",
-          elo: 1200,
+          accountUsername: "alpha",
           games: 10,
         }),
       );
-      // No account username: the player-name component displays public_id.
       expect(playerData[1]).toEqual(
         expect.objectContaining({
           playerId: "player-2",
-          accountUsername: null,
-          elo: 1100,
+          accountUsername: "beta",
           games: 10,
         }),
       );
+      // No rating is carried on a topplist row at all.
+      expect(playerData[0]).not.toHaveProperty("elo");
       expect(playerList!.currentUserEntry?.playerId).toBe("player-2");
-      expect(modal.textContent).toContain("player-2");
+      expect(modal.textContent).toContain("beta");
+    });
+
+    // The topplist shows verified account names only. A dotted "base.suffix"
+    // name, a null name or a server rename never reaches the table.
+    it("hides leaderboard rows without a verified account name", async () => {
+      (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+        jsonRes([
+          {
+            rank: 1,
+            elo: 1300,
+            peakElo: 1300,
+            total: 10,
+            public_id: "unverified-1",
+            accountUsername: "alpha.4821",
+          },
+          {
+            rank: 2,
+            elo: 1250,
+            peakElo: 1250,
+            total: 10,
+            public_id: "unverified-2",
+            accountUsername: null,
+          },
+          {
+            rank: 3,
+            elo: 1200,
+            peakElo: 1200,
+            total: 10,
+            public_id: "verified-3",
+            accountUsername: "gamma",
+          },
+        ]),
+      );
+
+      const playerList = getPlayerList()!;
+      await playerList.loadPlayerLeaderboard(true);
+      await playerList.updateComplete;
+
+      expect(playerList.playerData.map((player) => player.playerId)).toEqual([
+        "verified-3",
+      ]);
+      // The ladder position is kept as reported, not renumbered around the
+      // hidden rows.
+      expect(playerList.playerData[0].rank).toBe(3);
+      const rendered = (playerList as unknown as HTMLElement).textContent ?? "";
+      expect(rendered).not.toContain("alpha.4821");
+      expect(rendered).not.toContain("unverified-1");
+      expect(rendered).not.toContain("unverified-2");
     });
 
     // The pinned "your ranking" row has to stay inside the table — its column
@@ -237,7 +284,7 @@ describe("LeaderboardModal", () => {
             peakElo: 1300,
             total: 10,
             public_id: "player-1",
-            accountUsername: "alpha.4821",
+            accountUsername: "alpha",
           },
         ]),
       );
@@ -273,7 +320,7 @@ describe("LeaderboardModal", () => {
             peakElo: 1300,
             total: 10,
             public_id: "player-1",
-            accountUsername: "alpha.4821",
+            accountUsername: "alpha",
           },
         ]),
       );
@@ -298,7 +345,7 @@ describe("LeaderboardModal", () => {
         peakElo: 2000,
         total: 10,
         public_id: `player-${startRank + i}`,
-        accountUsername: null,
+        accountUsername: `player${startRank + i}`,
       }));
 
     it("shows only the top five and does not page further", async () => {

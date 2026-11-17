@@ -145,9 +145,37 @@ export function isVerifiedUsername(
 ): boolean {
   return (
     typeof username === "string" &&
+    username.length > 0 &&
     !username.includes(".") &&
     !isTemporaryUsername(username)
   );
+}
+
+// The account's verified display name, or null when the account may not play
+// under one. This is the single rule behind the blue check and the ranked
+// topplist's "verified names only" display: a premium/indefinite bare-name
+// claim holder whose server-resolved display form is a real chosen name.
+// `player` is the `/users/@me` player payload (the game server holds the same
+// shape at join), so callers never re-derive eligibility on their own.
+export function verifiedAccountName(
+  player:
+    | {
+        username?: string | null;
+        usernameBase?: string | null;
+        usernameStatus?: UsernameStatus;
+      }
+    | null
+    | undefined,
+): string | null {
+  if (player === null || player === undefined) return null;
+  const status = player.usernameStatus;
+  if (status !== "premium" && status !== "indefinite") return null;
+  const name = player.username;
+  if (typeof name !== "string" || !isVerifiedUsername(name)) return null;
+  // A TEMPORARY#### base means the server renamed the account and the player
+  // has not chosen this name, even when the display form is bare.
+  if (isTemporaryUsername(player.usernameBase ?? name)) return null;
+  return name;
 }
 
 export const UserMeResponseSchema = z.object({
@@ -639,7 +667,6 @@ export const PlayerLeaderboardEntrySchema = z.object({
   // the playerId.
   accountUsername: z.string().nullable(),
   flag: z.string().optional(),
-  elo: z.number(),
   games: z.number(),
 });
 export type PlayerLeaderboardEntry = z.infer<
@@ -653,10 +680,13 @@ export type PlayerLeaderboardResponse = z.infer<
   typeof PlayerLeaderboardResponseSchema
 >;
 
+// One row of the single ranked ladder. The rating itself is deliberately NOT
+// part of this payload: the topplist shows rank, player and match count only,
+// so neither the game nor the Norra Real website can display Elo. The ladder
+// still ranks by the hidden rating server-side; nothing about a stored result
+// changes.
 export const RankedLeaderboardEntrySchema = z.object({
   rank: z.number(),
-  elo: z.number(),
-  peakElo: z.number().nullable(),
   total: z.number(),
   public_id: z.string(),
   // Account username (null = never set). The client displays

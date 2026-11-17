@@ -2,9 +2,13 @@ import type { Express } from "express";
 import { promises as fs } from "fs";
 import path from "path";
 import { z } from "zod";
-import type { RankedLeaderboardEntry } from "../../core/ApiSchemas";
+import {
+  isVerifiedUsername,
+  type RankedLeaderboardEntry,
+} from "../../core/ApiSchemas";
 import { authDataDir } from "../AuthPaths";
 import { gameApiCors } from "../GameApiCors";
+import { getLocalAuth, isLocalAuthEnabled } from "../LocalAuth";
 import type { RankedPlacement } from "./Placements";
 
 // The single ranked ladder. Games that produce a rating are private lobbies
@@ -32,6 +36,11 @@ const LOCK_STALE_MS = 10_000;
 export interface RankedParticipant {
   publicId: string;
   username: string;
+  // The account's verified display name, when the player joined the ranked
+  // game under it. `undefined` means "the caller has no information" (leave a
+  // previously stored name alone, which is what older callers and tests do);
+  // `null` means "this player has no verified name" and clears it.
+  verifiedName?: string | null;
 }
 
 export interface RankedMatch {
@@ -48,6 +57,11 @@ export interface RankedMatch {
 export interface PlayerRating {
   publicId: string;
   username: string;
+  // The verified account name the topplist displays. null covers legacy
+  // entries recorded before name verification existed (and players who only
+  // ever joined under a typed-in name): they keep their Elo, they are just not
+  // listed, because the topplist shows verified names only.
+  verifiedName: string | null;
   elo: number;
   peakElo: number;
   games: number;
@@ -67,6 +81,9 @@ export type RatingAlgorithm = (
 const PlayerRatingSchema = z.object({
   publicId: z.string(),
   username: z.string(),
+  // Optional so `ranked-ratings.json` files written before verified-name
+  // display parse unchanged (they load as unverified, with no reset).
+  verifiedName: z.string().nullable().optional(),
   elo: z.number(),
   peakElo: z.number(),
   games: z.number().int().nonnegative(),
@@ -89,6 +106,7 @@ function defaultRating(
   return {
     publicId,
     username,
+    verifiedName: null,
     elo: RANKED_START_ELO,
     peakElo: RANKED_START_ELO,
     games: 0,
@@ -266,7 +284,7 @@ export class RankedRatingsStore {
     this.players = new Map(
       Object.entries(snapshot.players).map(([id, rating]) => [
         id,
-        { ...rating },
+        { ...rating, verifiedName: rating.verifiedName ?? null },
       ]),
     );
     this.appliedMatches = [...snapshot.appliedMatches];
@@ -299,6 +317,13 @@ export class RankedRatingsStore {
     return rating === undefined ? null : { ...rating };
   }
 
+  // The public topplist. Only verified account names are listed: an entry
+  // without one is skipped, but it keeps its Elo, games and — crucially — its
+  // position in the ladder, so ranks never shift because of this filter and no
+  // ranking data is ever reset. Paging walks the visible (verified) entries.
+  //
+  // The rating itself is never published: this response carries rank, player
+  // and match count only, so no client (game or website) can render Elo.
   async leaderboard(
     page = 1,
     pageSize = 50,
@@ -310,15 +335,53 @@ export class RankedRatingsStore {
       if (b.elo !== a.elo) return b.elo - a.elo;
       return a.publicId < b.publicId ? -1 : a.publicId > b.publicId ? 1 : 0;
     });
+    // Rank is the entry's place on the full ladder, not its index among the
+    // visible rows: a verified player at ladder #7 is honestly shown as #7.
+    const visible = sorted.flatMap((rating, index) => {
+      const name = rating.verifiedName;
+      if (typeof name !== "string" || !isVerifiedUsername(name)) return [];
+      return [{ rating, name, rank: index + 1 }];
+    });
     const start = (safePage - 1) * safeSize;
-    return sorted.slice(start, start + safeSize).map((rating, index) => ({
-      rank: start + index + 1,
-      elo: rating.elo,
-      peakElo: rating.peakElo,
-      total: rating.games,
-      public_id: rating.publicId,
-      accountUsername: rating.username,
+    return visible.slice(start, start + safeSize).map((entry) => ({
+      rank: entry.rank,
+      total: entry.rating.games,
+      public_id: entry.rating.publicId,
+      accountUsername: entry.name,
     }));
+  }
+
+  /**
+   * Label ladder entries that have no verified name yet with the name their
+   * account is entitled to. Used on local-auth deployments, where every account
+   * has a known verified name: without this, entries recorded before the
+   * verified-name capture would simply vanish from the topplist, which reads as
+   * a reset even though nothing was deleted.
+   *
+   * Only `verifiedName` is written — Elo, peak, games and updatedAt are
+   * untouched, and the count of entries labelled is returned. Idempotent: an
+   * entry that already has a name is never re-resolved.
+   */
+  async backfillVerifiedNames(
+    resolve: (publicId: string) => string | null | Promise<string | null>,
+  ): Promise<number> {
+    await this.init();
+    const release = await acquireFileLock(this.lockFile);
+    try {
+      await this.reload();
+      let labelled = 0;
+      for (const rating of this.players.values()) {
+        if (rating.verifiedName !== null) continue;
+        const name = await resolve(rating.publicId);
+        if (typeof name !== "string" || !isVerifiedUsername(name)) continue;
+        rating.verifiedName = name;
+        labelled++;
+      }
+      if (labelled > 0) await this.persist();
+      return labelled;
+    } finally {
+      await release();
+    }
   }
 
   /**
@@ -365,6 +428,11 @@ export class RankedRatingsStore {
         rating.peakElo = Math.max(rating.peakElo, rating.elo);
         if (participant.username.length > 0) {
           rating.username = participant.username;
+        }
+        // undefined = the caller has no information (legacy callers/tests), so
+        // a stored verified name is preserved; null clears it.
+        if (participant.verifiedName !== undefined) {
+          rating.verifiedName = participant.verifiedName;
         }
         rating.games += 1;
         rating.updatedAt = now;
@@ -415,11 +483,36 @@ export function resetRankedRatingsForTests(): void {
 
 const LEADERBOARD_PAGE_SIZE = 50;
 
+// Local-auth deployments can name every account. Ladder entries recorded before
+// the verified-name capture get their account's verified name filled in once
+// per process, so the topplist stays populated instead of looking reset. The
+// promise is memoised (including failures) and never rejects into the route.
+let verifiedNamesBackfill: Promise<void> | null = null;
+
+function ensureRankedVerifiedNames(): Promise<void> {
+  verifiedNamesBackfill ??= (async () => {
+    if (!isLocalAuthEnabled()) return;
+    const localAuth = getLocalAuth();
+    await getRankedRatings().backfillVerifiedNames(async (publicId) => {
+      const info = await localAuth.accountTierInfo(publicId);
+      return info === null ? null : info.username;
+    });
+  })().catch((error) => {
+    console.error("ranked leaderboard verified-name backfill failed", error);
+  });
+  return verifiedNamesBackfill;
+}
+
+export function resetRankedVerifiedNamesBackfillForTests(): void {
+  verifiedNamesBackfill = null;
+}
+
 // GET /api/leaderboard/ranked?page=N
 // The single ranked ladder. Pages are 1-based; an out-of-range page is an
 // empty array (the client stops paging on a short page). This route is public
 // and is also read cross-origin by the Norra Real website's Topplista page, so
-// it carries the game API's CORS grant.
+// it carries the game API's CORS grant. Only verified account names are
+// listed; ranks stay the true ladder positions.
 export function registerRankedRoutes(app: Express): void {
   app.get("/api/leaderboard/ranked", gameApiCors, async (req, res) => {
     const raw = Array.isArray(req.query.page)
@@ -427,6 +520,7 @@ export function registerRankedRoutes(app: Express): void {
       : req.query.page;
     const page = typeof raw === "string" ? Number.parseInt(raw, 10) : 1;
     try {
+      await ensureRankedVerifiedNames();
       const entries = await getRankedRatings().leaderboard(
         Number.isFinite(page) ? page : 1,
         LEADERBOARD_PAGE_SIZE,

@@ -1,6 +1,7 @@
 import { html, LitElement, nothing } from "lit";
 import { customElement, query, state } from "lit/decorators.js";
 import {
+  isVerifiedUsername,
   PlayerLeaderboardEntry,
   RankedLeaderboardEntry,
 } from "../../../core/ApiSchemas";
@@ -14,7 +15,6 @@ const toPlayerEntry = (
   rank: entry.rank,
   playerId: entry.public_id,
   accountUsername: entry.accountUsername,
-  elo: entry.elo,
   games: entry.total,
 });
 
@@ -104,7 +104,15 @@ export class LeaderboardPlayerList extends LitElement {
         this.currentUserId = userMe ? userMe.player.publicId : null;
       }
 
-      const nextPlayers = result.map(toPlayerEntry);
+      // The topplist displays verified account names only. The game server
+      // already filters its own ladder, but the same modal can be pointed at an
+      // upstream API (dev:prod), so enforce the display rule here too: a row
+      // without a verified account name is not shown, and ranks are left as the
+      // ladder reports them. Paging checks the raw page length so a page of
+      // hidden rows cannot stop the walk early.
+      const nextPlayers = result
+        .filter((entry) => isVerifiedUsername(entry.accountUsername))
+        .map(toPlayerEntry);
       const existingIds = new Set(
         this.entries.map((player) => player.playerId),
       );
@@ -118,8 +126,8 @@ export class LeaderboardPlayerList extends LitElement {
         null;
       this.hasMore =
         this.entries.length < TOP_PLAYER_LIMIT &&
-        nextPlayers.length >= this.playerPageSize;
-      if (nextPlayers.length > 0) {
+        result.length >= this.playerPageSize;
+      if (result.length > 0) {
         this.currentPage++;
       }
 

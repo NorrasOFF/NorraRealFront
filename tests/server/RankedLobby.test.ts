@@ -77,8 +77,61 @@ describe("ranked lobbies", () => {
     ]);
     expect(match.participants).toEqual(
       expect.arrayContaining([
-        { publicId: "winner-account", username: "Winner" },
-        { publicId: "loser-account", username: "Loser" },
+        { publicId: "winner-account", username: "Winner", verifiedName: null },
+        { publicId: "loser-account", username: "Loser", verifiedName: null },
+      ]),
+    );
+  });
+
+  test("a player joining under their verified name is recorded with it", async () => {
+    const ranked = vi.fn(async (_match: RankedMatch) => true);
+    const game = makeGame({ deps: { ranked } });
+    game.setListed(true);
+
+    // The join path only keeps `cosmetics.verified` when the account vouched
+    // for the exact join name (Privilege.enforceVerifiedBadge), so the roster
+    // can treat it as the verified display name.
+    const winner = makeClient({
+      clientID: cid("verWin"),
+      publicId: "verified-account",
+      username: "Alice",
+      ip: "10.0.2.1",
+      claims: signedIn,
+      cosmetics: { verified: true },
+    });
+    const loser = makeClient({
+      clientID: cid("verLose"),
+      publicId: "typed-account",
+      username: "some nickname",
+      ip: "10.0.2.2",
+      claims: signedIn,
+    });
+    expect(game.joinClient(winner)).toBe("joined");
+    expect(game.joinClient(loser)).toBe("joined");
+    startGame(game);
+
+    const vote = {
+      type: "winner" as const,
+      winner: ["player", winner.clientID] as ["player", string],
+      allPlayersStats: {},
+    };
+    await mockWsOf(winner).emit(vote);
+    await mockWsOf(loser).emit(vote);
+
+    expect(ranked).toHaveBeenCalledTimes(1);
+    const match = ranked.mock.calls[0][0];
+    expect(match.participants).toEqual(
+      expect.arrayContaining([
+        {
+          publicId: "verified-account",
+          username: "Alice",
+          verifiedName: "Alice",
+        },
+        {
+          publicId: "typed-account",
+          username: "some nickname",
+          verifiedName: null,
+        },
       ]),
     );
   });

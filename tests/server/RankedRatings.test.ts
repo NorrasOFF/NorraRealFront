@@ -20,10 +20,22 @@ afterEach(async () => {
   await fs.rm(dir, { recursive: true, force: true });
 });
 
-const alice = { publicId: "alice-account", username: "Alice" };
-const bob = { publicId: "bob-account", username: "Bob" };
-const carol = { publicId: "carol-account", username: "Carol" };
-const dave = { publicId: "dave-account", username: "Dave" };
+const alice = {
+  publicId: "alice-account",
+  username: "Alice",
+  verifiedName: "Alice",
+};
+const bob = { publicId: "bob-account", username: "Bob", verifiedName: "Bob" };
+const carol = {
+  publicId: "carol-account",
+  username: "Carol",
+  verifiedName: "Carol",
+};
+const dave = {
+  publicId: "dave-account",
+  username: "Dave",
+  verifiedName: "Dave",
+};
 
 function places(
   entries: [string, number][],
@@ -195,8 +207,8 @@ describe("RankedRatingsStore", () => {
       await store.applyMatch({
         gameId: `game-${i}`,
         participants: [
-          { publicId: `a${i}`, username: `A${i}` },
-          { publicId: `b${i}`, username: `B${i}` },
+          { publicId: `a${i}`, username: `A${i}`, verifiedName: `A${i}` },
+          { publicId: `b${i}`, username: `B${i}`, verifiedName: `B${i}` },
         ],
         winnerPublicIds: [`a${i}`],
       });
@@ -242,6 +254,140 @@ describe("RankedRatingsStore", () => {
   });
 });
 
+describe("verified names only", () => {
+  function written(
+    rating: { publicId: string; username: string },
+    elo: number,
+    verifiedName?: string | null,
+  ) {
+    const base = {
+      publicId: rating.publicId,
+      username: rating.username,
+      elo,
+      peakElo: elo,
+      games: 4,
+      updatedAt: Date.now(),
+    };
+    return verifiedName === undefined ? base : { ...base, verifiedName };
+  }
+
+  async function writeLadder(players: Record<string, Record<string, unknown>>) {
+    await fs.writeFile(
+      path.join(dir, "ranked-ratings.json"),
+      JSON.stringify({ version: 1, players, appliedMatches: [] }),
+    );
+  }
+
+  test("hides unverified entries but keeps their points and true ranks", async () => {
+    await writeLadder({
+      [alice.publicId]: written(alice, 1200, "Alice"),
+      [carol.publicId]: written(carol, 2100, null),
+      [bob.publicId]: written(bob, 1100, "Bob"),
+      // A dotted name is not a verified (bare) account name.
+      [dave.publicId]: written(dave, 1000, "dave.1234"),
+    });
+    const store = new RankedRatingsStore(dir);
+
+    const ladder = await store.leaderboard();
+    expect(ladder.map((entry) => entry.public_id)).toEqual([
+      alice.publicId,
+      bob.publicId,
+    ]);
+    // The ladder positions are untouched: no renumbering around hidden rows.
+    expect(ladder.map((entry) => entry.rank)).toEqual([2, 3]);
+    expect(ladder.map((entry) => entry.accountUsername)).toEqual([
+      "Alice",
+      "Bob",
+    ]);
+
+    // Nothing was reset or dropped for the hidden players.
+    expect((await store.player(carol.publicId))?.elo).toBe(2100);
+    expect((await store.player(carol.publicId))?.games).toBe(4);
+    expect((await store.player(dave.publicId))?.elo).toBe(1000);
+
+    // Paging walks visible entries only, still reporting true ranks.
+    const page2 = await store.leaderboard(2, 1);
+    expect(page2.map((entry) => entry.public_id)).toEqual([bob.publicId]);
+    expect(page2[0].rank).toBe(3);
+  });
+
+  test("a legacy file without verified names still loads and is backfilled", async () => {
+    await writeLadder({
+      [alice.publicId]: written(alice, 2000),
+      [bob.publicId]: written(bob, 1900),
+    });
+    const store = new RankedRatingsStore(dir);
+
+    // Old entries parse, keep their points, and are simply not listed yet.
+    expect((await store.player(alice.publicId))?.verifiedName).toBeNull();
+    expect((await store.player(alice.publicId))?.elo).toBe(2000);
+    expect(await store.leaderboard()).toEqual([]);
+
+    const labelled = await store.backfillVerifiedNames((publicId) =>
+      publicId === alice.publicId ? "Alice" : "Bob",
+    );
+    expect(labelled).toBe(2);
+    expect(await store.leaderboard()).toEqual([
+      expect.objectContaining({
+        rank: 1,
+        public_id: alice.publicId,
+        accountUsername: "Alice",
+        total: 4,
+      }),
+      expect.objectContaining({
+        rank: 2,
+        public_id: bob.publicId,
+        accountUsername: "Bob",
+      }),
+    ]);
+    // Backfilling a name never touches the ranking itself.
+    expect((await store.player(alice.publicId))?.elo).toBe(2000);
+    expect((await store.player(bob.publicId))?.elo).toBe(1900);
+    // Idempotent: an already-labelled entry is not resolved again.
+    expect(await store.backfillVerifiedNames(() => "Changed")).toBe(0);
+    expect((await store.player(alice.publicId))?.verifiedName).toBe("Alice");
+  });
+
+  test("a match records, clears and preserves the verified name", async () => {
+    const store = new RankedRatingsStore(dir);
+
+    await store.applyMatch({
+      gameId: "verified-match",
+      participants: [alice, bob],
+      winnerPublicIds: [alice.publicId],
+    });
+    expect((await store.player(alice.publicId))?.verifiedName).toBe("Alice");
+
+    // Playing under a typed-in name clears the stored verified name (that name
+    // may not be shown on the topplist).
+    await store.applyMatch({
+      gameId: "custom-name-match",
+      participants: [
+        { ...alice, verifiedName: null },
+        { ...bob, verifiedName: null },
+      ],
+      winnerPublicIds: [alice.publicId],
+    });
+    expect((await store.player(alice.publicId))?.verifiedName).toBeNull();
+
+    // A caller with no name information (undefined) leaves the stored name be.
+    await store.applyMatch({
+      gameId: "verified-again",
+      participants: [alice, bob],
+      winnerPublicIds: [alice.publicId],
+    });
+    await store.applyMatch({
+      gameId: "legacy-caller",
+      participants: [
+        { publicId: alice.publicId, username: "Ali" },
+        { publicId: bob.publicId, username: "Bob" },
+      ],
+      winnerPublicIds: [alice.publicId],
+    });
+    expect((await store.player(alice.publicId))?.verifiedName).toBe("Alice");
+  });
+});
+
 describe("zero baseline and no decay", () => {
   test("a new player starts at zero", () => {
     expect(RANKED_START_ELO).toBe(0);
@@ -275,9 +421,16 @@ describe("zero baseline and no decay", () => {
 
     const store = new RankedRatingsStore(dir);
     const ladder = await store.leaderboard();
-    expect(ladder[0].elo).toBe(2000);
-    expect(ladder[1].elo).toBe(1900);
+    // The topplist says nothing about the rating; the ordering still comes from
+    // it and the stored points are untouched.
+    expect(ladder.map((entry) => entry.public_id)).toEqual([
+      alice.publicId,
+      bob.publicId,
+    ]);
+    expect(ladder[0]).not.toHaveProperty("elo");
+    expect(ladder[0]).not.toHaveProperty("peakElo");
     expect((await store.player(alice.publicId))?.elo).toBe(2000);
+    expect((await store.player(bob.publicId))?.elo).toBe(1900);
   });
 
   test("adds the next award to the full stored total", async () => {

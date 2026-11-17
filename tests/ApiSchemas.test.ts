@@ -22,6 +22,7 @@ import {
   TribeNameSchema,
   TribeStatsResponseSchema,
   UserMeResponseSchema,
+  verifiedAccountName,
 } from "../src/core/ApiSchemas";
 
 describe("UserMeResponseSchema ban", () => {
@@ -334,7 +335,6 @@ describe("PlayerLeaderboardEntrySchema accountUsername", () => {
       PlayerLeaderboardEntrySchema.safeParse({
         rank: 1,
         playerId: "abc123",
-        elo: 1500,
         games: 15,
       }).success,
     ).toBe(false);
@@ -344,8 +344,6 @@ describe("PlayerLeaderboardEntrySchema accountUsername", () => {
 describe("RankedLeaderboardEntrySchema accountUsername", () => {
   const base = {
     rank: 1,
-    elo: 1500,
-    peakElo: 1600,
     total: 15,
     public_id: "abc123",
   };
@@ -389,6 +387,23 @@ describe("RankedLeaderboardEntrySchema accountUsername", () => {
       expect(result.data).not.toHaveProperty("user");
       expect(result.data).not.toHaveProperty("username");
       expect(result.data).not.toHaveProperty("clanTag");
+    }
+  });
+
+  // The topplist publishes no rating at all: a server that still sends the old
+  // fields parses fine, but the parsed row carries no Elo for a UI to render.
+  it("drops the rating fields from a topplist row", () => {
+    const result = RankedLeaderboardEntrySchema.safeParse({
+      ...base,
+      accountUsername: "bob.4821",
+      elo: 1500,
+      peakElo: 1600,
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data).not.toHaveProperty("elo");
+      expect(result.data).not.toHaveProperty("peakElo");
     }
   });
 
@@ -916,6 +931,38 @@ describe("isVerifiedUsername", () => {
 
   it("never verifies a TEMPORARY#### server rename, even though it is bare", () => {
     expect(isVerifiedUsername("TEMPORARY1234")).toBe(false);
+  });
+});
+
+describe("verifiedAccountName", () => {
+  const account = (
+    username: string | null,
+    usernameStatus: "unclaimed" | "claimed" | "premium" | "indefinite",
+    usernameBase?: string,
+  ) => ({ username, usernameStatus, usernameBase: usernameBase ?? username });
+
+  it("returns the bare display name for an entitled account", () => {
+    expect(verifiedAccountName(account("alice", "premium"))).toBe("alice");
+    expect(verifiedAccountName(account("alice", "indefinite"))).toBe("alice");
+  });
+
+  it("requires an entitled status", () => {
+    expect(verifiedAccountName(account("alice", "unclaimed"))).toBeNull();
+    expect(verifiedAccountName(account("alice", "claimed"))).toBeNull();
+    expect(verifiedAccountName(null)).toBeNull();
+    expect(verifiedAccountName(undefined)).toBeNull();
+  });
+
+  it("rejects suffixed, temporary and missing names", () => {
+    expect(verifiedAccountName(account("alice.4821", "premium"))).toBeNull();
+    expect(
+      verifiedAccountName(account("TEMPORARY1234", "indefinite")),
+    ).toBeNull();
+    expect(
+      verifiedAccountName(account("Alice", "premium", "TEMPORARY1234")),
+    ).toBeNull();
+    expect(verifiedAccountName(account(null, "premium"))).toBeNull();
+    expect(verifiedAccountName(account("", "premium"))).toBeNull();
   });
 });
 

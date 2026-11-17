@@ -1,5 +1,5 @@
 import { ANON_WORDS, anonWordName } from "../core/AnonNames";
-import { isTemporaryUsername, type UserMeResponse } from "../core/ApiSchemas";
+import { type UserMeResponse, verifiedAccountName } from "../core/ApiSchemas";
 import {
   RENDERABLE_NAME_CHAR_RE,
   RENDERABLE_NAME_HAS_ALNUM_RE,
@@ -59,16 +59,14 @@ export function clampUsername(name: string): string {
 
 // The server-resolved bare name this player may play verified under, or null
 // when ineligible. Sub-only by design: `claimed` (lapsed) holders and
-// TEMPORARY####-renamed players don't qualify.
+// TEMPORARY####-renamed players don't qualify. The rule lives in core
+// (verifiedAccountName) so the game server and the ranked ladder apply exactly
+// the same one.
 export function accountVerifiedName(
   userMe: UserMeResponse | false | null,
 ): string | null {
   if (userMe === null || userMe === false) return null;
-  const player = userMe.player;
-  const status = player.usernameStatus;
-  if (status !== "premium" && status !== "indefinite") return null;
-  if (!player.username || isTemporaryUsername(player.usernameBase)) return null;
-  return player.username;
+  return verifiedAccountName(userMe.player);
 }
 
 // Cut to the free-form cap, not the wire cap: the result becomes the name in

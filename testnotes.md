@@ -1355,3 +1355,89 @@ from "Forgot password?" with that code — the new code was shown and differed,
 the old one no longer works, and a wrong code displayed the generic
 "username and recovery code don't match" message with no page errors.
 Screenshots in `e2e/artifacts/reset-0*.png`; the throwaway script was deleted.
+
+## Topplist shows verified account names only, and publishes no Elo
+
+Two linked changes to the ranked topplist (`GET /api/leaderboard/ranked`, the
+home Leaderboard/Topplista modal and the Norra Real website's page):
+
+**Only verified names are listed.** "Verified" is the product's blue-check rule,
+now in one place: `verifiedAccountName()` (`src/core/ApiSchemas.ts`) — a
+premium/indefinite bare-name claim holder whose server-resolved display form is
+a real chosen name (no dot, not `TEMPORARY####`). The client's
+`accountVerifiedName()` delegates to it, so the badge and the topplist cannot
+drift apart.
+
+- Capture: `GameServer.captureRankedRoster` records `verifiedName` only when the
+  join-time badge vouched for the exact join name (`cosmetics.verified`,
+  enforced by `Privilege.enforceVerifiedBadge`) and the name passes
+  `isVerifiedUsername`. A player who joined under a typed-in name has
+  `verifiedName: null`.
+- Storage: `PlayerRating.verifiedName` (optional in the file schema, so old
+  `ranked-ratings.json` files load unchanged; file `version` stays 1). Elo,
+  peak, games and updatedAt are never touched by this feature.
+- `applyMatch`: `verifiedName: undefined` means "caller has no information"
+  (keeps a stored name, which is what legacy callers/tests do); `null` clears
+  it.
+- `leaderboard()` lists only entries with a verified name. **Ranks stay true
+  ladder positions** — a verified player at ladder #7 is shown as #7, and
+  hidden rows are not renumbered around. Paging walks the visible rows.
+- `backfillVerifiedNames()` + the memoised `ensureRankedVerifiedNames()` in
+  `registerRankedRoutes` (local-auth deployments only) label entries recorded
+  before this feature with the account username, so the existing board does not
+  go blank and nothing looks reset. Only `verifiedName` is written; it is
+  idempotent and runs once per process.
+- Client: `LeaderboardPlayerList` also filters on `isVerifiedUsername`, so the
+  modal obeys the rule even when pointed at an upstream API (`dev:prod`). The
+  top-five cap is unchanged; paging checks the raw page length so a page of
+  hidden rows cannot stop the walk early.
+- `isVerifiedUsername("")` is now false (an empty string was treated as a bare
+  name).
+
+Note for this deployment: `LOCAL_AUTH` hardcodes `usernameStatus: "indefinite"`
+for every account, so every signed-in account qualifies as verified. The
+practical effect here is that the topplist shows **account usernames** instead
+of typed-in join names (anti-impersonation); rows with no account name are
+hidden. On a deployment backed by the closed API, only real bare-name claim
+holders remain listed.
+
+**No Elo in the payload.** `3bc9b4384` had already removed the visible Elo
+column (and the lobby/profile rating text); this finishes the job on the data
+path:
+
+- `RankedLeaderboardEntrySchema` no longer has `elo`/`peakElo`; a row is
+  `rank`, `total`, `public_id`, `accountUsername`.
+- `RankedRatingsStore.leaderboard()` no longer emits them, and the client row
+  type (`PlayerLeaderboardEntry`) no longer carries `elo` (`toPlayerEntry` maps
+  rank/player/games only).
+- The ladder still **ranks and balances by the hidden rating**
+  (`PlayerRating.elo`/`peakElo` are untouched internal state), so no stored
+  result or ordering changes.
+- Zod strips unknown keys, so an older server still sending `elo` parses fine
+  while the parsed row carries no rating for a UI to render. The website's
+  Topplista template/JS only reads `rank`, `accountUsername` and `total`, so it
+  needed no change.
+
+Tests: `tests/server/RankedRatings.test.ts` (verified-only listing with true
+ranks and untouched points, legacy file + backfill + idempotency, match
+records/clears/preserves the name, no `elo`/`peakElo` on a row),
+`tests/server/RankedLobby.test.ts` (verified vs typed-in capture, null for
+unverified), `tests/ApiSchemas.test.ts` (`verifiedAccountName`, rating fields
+dropped from a row), `tests/client/LeaderboardModal.test.ts` (unverified rows
+hidden, true rank kept, no rating carried),
+`tests/client/ApiPlayerLeaderboard.test.ts` (parsed row has no rating).
+
+Verification: `npx tsc --noEmit`, `npm run lint` and Prettier clean.
+`tests/server`: 800 passed, only the three documented pre-existing failures
+(`GameServerPhase`, `GameServerWire` golden, `HostedLobbyListing`).
+`TranslationSystem` fails only on the four documented unused keys;
+`EnJsonSorted` passes. `tests/client/LeaderboardModal`,
+`tests/client/PlayerName`, `tests/client/ApiPlayerLeaderboard`,
+`tests/server/Ranked*` and `tests/ApiSchemas` pass.
+
+Unrelated pre-existing failure noticed while checking username surfaces:
+`tests/client/UsernameVerifiedRoute.test.ts` fails on clean `HEAD` too
+(verified by stashing this work) — its player has `username: null`, so the
+verified toggle it looks for is not rendered.
+
+No ratings were reset, and no `ranked-ratings.json` version bump was needed.

@@ -17,8 +17,6 @@ import { fetchPlayerLeaderboard } from "../../src/client/Api";
 
 const entry = (rank: number) => ({
   rank,
-  elo: 1500,
-  peakElo: 1600,
   total: 15,
   public_id: `player-${rank}`,
   accountUsername: "alpha.0001",
@@ -48,7 +46,11 @@ describe("fetchPlayerLeaderboard", () => {
     const result = await fetchPlayerLeaderboard(1);
     expect(result).not.toBe(false);
     expect(result).not.toBe("reached_limit");
-    expect(result as unknown[]).toHaveLength(1);
+    const rows = result as Record<string, unknown>[];
+    expect(rows).toHaveLength(1);
+    // The topplist row carries no rating at all.
+    expect(rows[0]).not.toHaveProperty("elo");
+    expect(rows[0]).not.toHaveProperty("peakElo");
   });
 
   it("requests the page it was asked for", async () => {
