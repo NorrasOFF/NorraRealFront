@@ -202,16 +202,18 @@ describe("LeaderboardModal", () => {
         expect.objectContaining({
           playerId: "player-1",
           accountUsername: "alpha",
-          games: 10,
         }),
       );
       expect(playerData[1]).toEqual(
         expect.objectContaining({
           playerId: "player-2",
           accountUsername: "beta",
-          games: 10,
         }),
       );
+      // Neither the rating nor the games count is carried on a topplist row:
+      // the games stat now lives on the player profile.
+      expect(playerData[0]).not.toHaveProperty("elo");
+      expect(playerData[0]).not.toHaveProperty("games");
       // No rating is carried on a topplist row at all.
       expect(playerData[0]).not.toHaveProperty("elo");
       expect(playerList!.currentUserEntry?.playerId).toBe("player-2");
@@ -445,6 +447,22 @@ describe("LeaderboardModal", () => {
       expect(rendered).not.toContain("1100");
       expect(rendered).not.toContain("Elo");
       expect(playerList.currentUserEntry?.playerId).toBe("player-2");
+    });
+
+    it("shows only rank and player — the games count moved to the profile", async () => {
+      (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+        jsonRes([entry(1, "player-1", 1200)]),
+      );
+
+      const playerList = getPlayerList()!;
+      await playerList.loadPlayerLeaderboard(true);
+      await playerList.updateComplete;
+
+      const headers = [
+        ...modal.querySelectorAll("leaderboard-player-list thead th"),
+      ].map((th) => th.textContent?.trim());
+      expect(headers).toEqual(["Rank", "Player"]);
+      expect(playerList.playerData[0]).not.toHaveProperty("games");
     });
 
     it("shows a no data state for an empty ladder", async () => {

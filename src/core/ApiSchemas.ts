@@ -667,7 +667,6 @@ export const PlayerLeaderboardEntrySchema = z.object({
   // the playerId.
   accountUsername: z.string().nullable(),
   flag: z.string().optional(),
-  games: z.number(),
 });
 export type PlayerLeaderboardEntry = z.infer<
   typeof PlayerLeaderboardEntrySchema
@@ -704,6 +703,16 @@ export const RankedLeaderboardResponseSchema =
 export type RankedLeaderboardResponse = z.infer<
   typeof RankedLeaderboardResponseSchema
 >;
+
+// GET /api/player/:publicId/ranked — the public half of one player's ladder
+// entry, used by the player profile. Only the number of ranked games played is
+// published (the topplist shows no rating, and neither does the profile); a
+// player who never played a ranked game on this ladder reads 0 rather than a
+// 404, so profile pages do not have to special-case it.
+export const RankedPlayerStatsSchema = z.object({
+  games: z.number().int().nonnegative(),
+});
+export type RankedPlayerStats = z.infer<typeof RankedPlayerStatsSchema>;
 
 export const FriendEntrySchema = z.object({
   publicId: z.string(),

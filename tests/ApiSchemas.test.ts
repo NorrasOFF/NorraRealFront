@@ -17,6 +17,7 @@ import {
   PublicPlayerGamesResponseSchema,
   PutUsernameResponseSchema,
   RankedLeaderboardEntrySchema,
+  RankedPlayerStatsSchema,
   RewardSchema,
   TribeLeaderboardResponseSchema,
   TribeNameSchema,
@@ -409,6 +410,22 @@ describe("RankedLeaderboardEntrySchema accountUsername", () => {
 
   it("rejects an entry without accountUsername", () => {
     expect(RankedLeaderboardEntrySchema.safeParse(base).success).toBe(false);
+  });
+});
+
+describe("RankedPlayerStatsSchema", () => {
+  it("accepts a non-negative whole count", () => {
+    expect(RankedPlayerStatsSchema.safeParse({ games: 0 }).success).toBe(true);
+    expect(RankedPlayerStatsSchema.safeParse({ games: 12 }).success).toBe(true);
+  });
+
+  it("rejects negative and fractional counts", () => {
+    expect(RankedPlayerStatsSchema.safeParse({ games: -1 }).success).toBe(
+      false,
+    );
+    expect(RankedPlayerStatsSchema.safeParse({ games: 1.5 }).success).toBe(
+      false,
+    );
   });
 });
 

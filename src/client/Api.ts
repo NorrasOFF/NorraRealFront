@@ -26,6 +26,7 @@ import {
   PutUsernameResponseSchema,
   RankedLeaderboardResponse,
   RankedLeaderboardResponseSchema,
+  RankedPlayerStatsSchema,
   StreamsFeedSchema,
   TribeLeaderboardResponse,
   TribeLeaderboardResponseSchema,
@@ -1574,6 +1575,41 @@ export async function fetchPlayerLeaderboard(
   } catch (err) {
     console.error("fetchPlayerLeaderboard: request failed", err);
     return false;
+  }
+}
+
+// GET /player/:publicId/ranked — how many ranked games the account has played
+// on this ladder, shown as a stat on the player profile now that the topplist
+// no longer shows the games count. Public; null means unavailable (older
+// server, network, bad payload) and the stat is simply not rendered.
+export async function fetchRankedPlayerGames(
+  publicId: string,
+): Promise<number | null> {
+  try {
+    const url = `${getApiBase()}/player/${encodeURIComponent(publicId)}/ranked`;
+    const res = await fetch(url, {
+      headers: { Accept: "application/json" },
+    });
+    if (res.status !== 200) {
+      console.warn(
+        "fetchRankedPlayerGames: unexpected status",
+        res.status,
+        res.statusText,
+      );
+      return null;
+    }
+    const parsed = RankedPlayerStatsSchema.safeParse(await res.json());
+    if (!parsed.success) {
+      console.warn(
+        "fetchRankedPlayerGames: Zod validation failed",
+        parsed.error.toString(),
+      );
+      return null;
+    }
+    return parsed.data.games;
+  } catch (err) {
+    console.warn("fetchRankedPlayerGames: request failed", err);
+    return null;
   }
 }
 

@@ -1441,3 +1441,41 @@ Unrelated pre-existing failure noticed while checking username surfaces:
 verified toggle it looks for is not rendered.
 
 No ratings were reset, and no `ranked-ratings.json` version bump was needed.
+
+## Ranked games moved off the topplist onto the player profile
+
+The ranked topplist (game modal) no longer shows a Games column: it is Rank /
+Player only, and the sticky "your ranking" footer lost its third cell too.
+`PlayerLeaderboardEntry` (the client row) drops `games`. `total` stays in the
+`/api/leaderboard/ranked` payload because the Norra Real website's Topplista
+still shows "Matcher".
+
+The count moved to the profile as **Ranked games played**:
+
+- New public route `GET /api/player/:publicId/ranked` → `{ games }`, read from
+  `PlayerRating.games`. An account that never played ranked on this ladder
+  reads 0 rather than 404, so profile pages do not special-case it. CORS uses
+  the same grant as the ladder.
+- Core `RankedPlayerStatsSchema`; client `fetchRankedPlayerGames()` returns
+  `null` when the stat is unavailable (older server, network, bad payload), and
+  the stat is then simply hidden.
+- `PlayerProfileModal` fetches it on open as its own generation-guarded load
+  (independent of the account profile) and renders a card above the stats tree.
+  It sits outside the stats-tree conditional, so it still shows when the account
+  profile response is missing — the normal local case, since this fork has no
+  local `/public/player/:id` route.
+- New `en.json` key `player_profile.ranked_games`. `leaderboard_modal.games`
+  stays because the clan and tribe tables still use it.
+
+Tests: `tests/server/RankedPlayerStatsRoute.test.ts` (count, a player hidden
+from the topplist still counts, unknown → 0),
+`tests/client/PlayerProfileModal.test.ts` (stat shown/hidden, shown when the
+profile is missing), `tests/client/LeaderboardModal.test.ts` (headers are
+Rank/Player, a row carries no games), `tests/client/ApiPlayerLeaderboard.test.ts`
+(`fetchRankedPlayerGames` success and null paths), `tests/ApiSchemas.test.ts`
+(`RankedPlayerStatsSchema`).
+
+Verification: `npx tsc --noEmit`, `npm run lint` and Prettier clean.
+`tests/server`: 803 passed, only the three documented pre-existing failures.
+`TranslationSystem` still fails only on the four documented unused keys;
+`EnJsonSorted` passes.

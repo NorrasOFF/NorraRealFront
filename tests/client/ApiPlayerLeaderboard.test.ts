@@ -13,7 +13,10 @@ vi.mock("../../src/client/Auth", () => ({
   userAuth: vi.fn(async () => false),
 }));
 
-import { fetchPlayerLeaderboard } from "../../src/client/Api";
+import {
+  fetchPlayerLeaderboard,
+  fetchRankedPlayerGames,
+} from "../../src/client/Api";
 
 const entry = (rank: number) => ({
   rank,
@@ -153,5 +156,31 @@ describe("fetchPlayerLeaderboard", () => {
     );
 
     expect(await fetchPlayerLeaderboard(1)).toBe(false);
+  });
+});
+
+describe("fetchRankedPlayerGames", () => {
+  it("returns the ranked games count", async () => {
+    (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      res({ games: 5 }),
+    );
+
+    expect(await fetchRankedPlayerGames("player-1")).toBe(5);
+    expect(
+      String((global.fetch as ReturnType<typeof vi.fn>).mock.calls[0][0]),
+    ).toContain("/player/player-1/ranked");
+  });
+
+  it("returns null when the stat is unavailable", async () => {
+    const fetchMock = global.fetch as ReturnType<typeof vi.fn>;
+
+    fetchMock.mockResolvedValueOnce(res({}, false, 503));
+    expect(await fetchRankedPlayerGames("player-1")).toBeNull();
+
+    fetchMock.mockResolvedValueOnce(res({ games: -1 }));
+    expect(await fetchRankedPlayerGames("player-1")).toBeNull();
+
+    fetchMock.mockRejectedValueOnce(new TypeError("network down"));
+    expect(await fetchRankedPlayerGames("player-1")).toBeNull();
   });
 });

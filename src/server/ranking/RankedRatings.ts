@@ -531,4 +531,24 @@ export function registerRankedRoutes(app: Express): void {
       res.status(503).json({ error: "ranked_leaderboard_unavailable" });
     }
   });
+
+  // GET /api/player/:publicId/ranked — how many ranked games this account has
+  // played on this ladder. The player profile shows it as a stat (the topplist
+  // itself no longer carries the games count in the game UI). Public, and
+  // CORS-open for the same readers as the ladder. An unknown account (never
+  // played ranked here) reads 0, not 404.
+  app.get("/api/player/:publicId/ranked", gameApiCors, async (req, res) => {
+    const raw = req.params.publicId;
+    const publicId = Array.isArray(raw) ? raw[0] : raw;
+    try {
+      const rating =
+        typeof publicId === "string" && publicId.length > 0
+          ? await getRankedRatings().player(publicId)
+          : null;
+      res.json({ games: rating?.games ?? 0 });
+    } catch (error) {
+      console.error("ranked player stats read failed", error);
+      res.status(503).json({ error: "ranked_player_stats_unavailable" });
+    }
+  });
 }

@@ -15,7 +15,6 @@ const toPlayerEntry = (
   rank: entry.rank,
   playerId: entry.public_id,
   accountUsername: entry.accountUsername,
-  games: entry.total,
 });
 
 /** Only the top players are shown on the ranked leaderboard. */
@@ -265,9 +264,6 @@ export class LeaderboardPlayerList extends LitElement {
               ></player-name>
             </div>
           </td>
-          <td class="py-3 px-4 text-right">
-            <span class="font-mono text-white font-bold">${entry.games}</span>
-          </td>
         </tr>
       </tfoot>
     `;
@@ -314,9 +310,6 @@ export class LeaderboardPlayerList extends LitElement {
               .onNameClick=${() => this.openProfile(player.playerId)}
             ></player-name>
           </div>
-        </td>
-        <td class="py-3 px-4 text-right">
-          <span class="font-mono text-white font-medium">${player.games}</span>
         </td>
       </tr>
     `;
@@ -461,7 +454,6 @@ export class LeaderboardPlayerList extends LitElement {
               <colgroup>
                 <col style="width: 4rem" />
                 <col style="width: 18rem" />
-                <col style="width: 6rem" />
               </colgroup>
               <thead class="sticky top-0 z-10">
                 <tr
@@ -472,9 +464,6 @@ export class LeaderboardPlayerList extends LitElement {
                   </th>
                   <th class="py-4 px-4 text-left font-bold">
                     ${translateText("leaderboard_modal.player")}
-                  </th>
-                  <th class="py-4 px-4 text-right font-bold">
-                    ${translateText("leaderboard_modal.games")}
                   </th>
                 </tr>
               </thead>

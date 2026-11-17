@@ -32,20 +32,26 @@ only, and publishes no Elo".
    client filters too. `backfillVerifiedNames()` (memoised in
    `registerRankedRoutes`, local-auth only) labels legacy entries with the
    account username so the board does not look reset.
-2. **No Elo on the topplist data path.** `RankedLeaderboardEntrySchema` and the
-   client row now carry rank/player/games only; the hidden
-   `PlayerRating.elo`/`peakElo` still rank and balance the ladder. `3bc9b4384`
-   had already removed the visible column.
+2. **No Elo on the topplist data path.** `RankedLeaderboardEntrySchema` publishes
+   `rank`, `total`, `public_id`, `accountUsername` only (the client row keeps
+   rank/player); the hidden `PlayerRating.elo`/`peakElo` still rank and balance
+   the ladder. `3bc9b4384` had already removed the visible column.
+3. **Games count moved to the profile.** The game topplist is Rank / Player
+   only. `GET /api/player/:publicId/ranked` (`{ games }`) feeds a "Ranked games
+   played" card on `PlayerProfileModal`; unknown players read 0 and the card is
+   hidden when the route is unavailable. `total` stays in the leaderboard
+   payload because the website's Topplista still shows "Matcher".
 
 No rankings were reset; `ranked-ratings.json` keeps its `version: 1` files.
 
 ## 3. Verification
 
 - `npx tsc --noEmit`, `npm run lint`, Prettier clean.
-- `tests/server`: 800 passed; only the three documented pre-existing failures
+- `tests/server`: 803 passed; only the three documented pre-existing failures
   (`GameServerPhase`, `GameServerWire` golden, `HostedLobbyListing`).
-- Targeted: `RankedRatings`, `RankedLobby`, `ApiSchemas`, `LeaderboardModal`,
-  `ApiPlayerLeaderboard`, `PlayerName`, `EnJsonSorted` pass.
+- Targeted: `RankedRatings`, `RankedLobby`, `RankedPlayerStatsRoute`,
+  `ApiSchemas`, `LeaderboardModal`, `ApiPlayerLeaderboard`,
+  `PlayerProfileModal`, `PlayerName`, `EnJsonSorted` pass.
   `TranslationSystem` fails only on its four documented unused keys.
 - Not browser-tested: the modal changes are covered by component tests; the
   single-player e2e harness cannot set up a ranked lobby.
@@ -56,13 +62,16 @@ No rankings were reset; `ranked-ratings.json` keeps its `version: 1` files.
   them into `NorrasOFF/NorraRealFront` `main` before the next Fly deploy. The
   ladder hides unverified names immediately, so a deploy with no
   `verifiedName` data relies on the local-auth backfill to keep the board
-  populated.
+  populated. The profile's "ranked games played" stat needs
+  `GET /api/player/:publicId/ranked` from the same deploy; against an older
+  server the card is simply hidden.
 - **Website** (`NorrasOFF/norrasoff.github.io`): there is nothing to change.
   Its Topplista renders Placering / Spelare / Matcher from the API's `rank`,
   `accountUsername`, `total` (checked in `layouts/topplista.html` and the live
-  page); the rating was never in the template. The build workflow fetches
-  `/api/leaderboard/ranked` into `data/leaderboard.json` at build time (not
-  committed). If Elo is still seen on a page, it is a cached old build.
+  page); the rating was never in the template. The games column stays on the
+  website only. The build workflow fetches `/api/leaderboard/ranked` into
+  `data/leaderboard.json` at build time (not committed). If Elo is still seen
+  on a page, it is a cached old build.
 - Website pushes need `H:\Documents\Norrasoff-token.txt` for PRs (the
   `Hexfront-token.txt` can push branches but not open PRs).
 

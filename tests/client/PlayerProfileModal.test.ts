@@ -14,6 +14,7 @@ const copyToClipboardMock = vi.hoisted(() =>
 );
 
 const fetchPublicPlayerProfileMock = vi.hoisted(() => vi.fn());
+const fetchRankedPlayerGamesMock = vi.hoisted(() => vi.fn());
 
 vi.mock("../../src/client/Utils", () => ({
   translateText: vi.fn((key: string) => key),
@@ -22,6 +23,7 @@ vi.mock("../../src/client/Utils", () => ({
 
 vi.mock("../../src/client/Api", () => ({
   fetchPublicPlayerProfile: fetchPublicPlayerProfileMock,
+  fetchRankedPlayerGames: fetchRankedPlayerGamesMock,
 }));
 
 vi.mock(
@@ -65,6 +67,10 @@ describe("public player profile route", () => {
   beforeEach(async () => {
     copyToClipboardMock.mockClear();
     fetchPublicPlayerProfileMock.mockReset();
+    fetchRankedPlayerGamesMock.mockReset();
+    // Default: no ranked stat (older server / unknown player), so tests that do
+    // not care about it render exactly as before.
+    fetchRankedPlayerGamesMock.mockResolvedValue(null);
     vi.stubGlobal("localStorage", { getItem: vi.fn(() => null) });
     history.replaceState(null, "", "/");
     modalRouter.register("profile", {
@@ -129,6 +135,62 @@ describe("public player profile route", () => {
 
     expect(modal.isOpen()).toBe(false);
     expect(window.location.hash).toBe("");
+  });
+
+  it("shows the ranked games stat on the profile", async () => {
+    fetchPublicPlayerProfileMock.mockResolvedValue({
+      createdAt: "2026-01-01T00:00:00.000Z",
+      stats: statsTree,
+    });
+    fetchRankedPlayerGamesMock.mockResolvedValue(12);
+    history.replaceState(null, "", "/#modal=profile&publicID=ranked-player");
+
+    expect(modalRouter.routeFromHash()).toBe(true);
+
+    await vi.waitFor(async () => {
+      await modal.updateComplete;
+      const shell = modal.querySelector("o-modal") as ModalShell | null;
+      await shell?.updateComplete;
+      expect(modal.textContent).toContain("player_profile.ranked_games");
+      expect(modal.textContent).toContain("12");
+    });
+    expect(fetchRankedPlayerGamesMock).toHaveBeenCalledWith("ranked-player");
+  });
+
+  it("hides the ranked games stat when it is unavailable", async () => {
+    fetchPublicPlayerProfileMock.mockResolvedValue({
+      createdAt: "2026-01-01T00:00:00.000Z",
+      stats: statsTree,
+    });
+    fetchRankedPlayerGamesMock.mockResolvedValue(null);
+    history.replaceState(null, "", "/#modal=profile&publicID=no-ranked-stat");
+
+    expect(modalRouter.routeFromHash()).toBe(true);
+
+    await vi.waitFor(async () => {
+      await modal.updateComplete;
+      const shell = modal.querySelector("o-modal") as ModalShell | null;
+      await shell?.updateComplete;
+      expect(modal.textContent).not.toContain("player_profile.ranked_games");
+    });
+    expect(fetchRankedPlayerGamesMock).toHaveBeenCalledWith("no-ranked-stat");
+  });
+
+  // The ranked count comes from the game server, the rest of the profile from
+  // the API. A player who only exists on this server still sees their count.
+  it("keeps the ranked games stat when the account profile is missing", async () => {
+    fetchPublicPlayerProfileMock.mockResolvedValue(false);
+    fetchRankedPlayerGamesMock.mockResolvedValue(7);
+    history.replaceState(null, "", "/#modal=profile&publicID=local-only");
+
+    expect(modalRouter.routeFromHash()).toBe(true);
+
+    await vi.waitFor(async () => {
+      await modal.updateComplete;
+      expect(modal.textContent).toContain("player_profile.not_found");
+      expect(modal.textContent).toContain("player_profile.ranked_games");
+      expect(modal.textContent).toContain("7");
+    });
   });
 
   it("shows not-found when the profile fetch fails", async () => {

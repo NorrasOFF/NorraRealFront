@@ -6,7 +6,7 @@ import {
   type PlayerProfile,
   type PlayerStatsTree,
 } from "../core/ApiSchemas";
-import { fetchPublicPlayerProfile } from "./Api";
+import { fetchPublicPlayerProfile, fetchRankedPlayerGames } from "./Api";
 import "./components/baseComponents/stats/PlayerGameHistoryView";
 import type { PlayerGameHistoryCache } from "./components/baseComponents/stats/PlayerGameHistoryView";
 import "./components/baseComponents/stats/PlayerStatsTree";
@@ -32,6 +32,10 @@ export class PlayerProfileModal extends BaseModal {
   @state() private username: string | null = null;
   @state() private statsTree: PlayerStatsTree | null = null;
   @state() private clans: NonNullable<PlayerProfile["clans"]> = [];
+  // Ranked games played on this ladder, fetched from the game server. Shown as
+  // a profile stat now that the topplist no longer displays a games column.
+  // null until loaded (or when the server cannot answer) -> stat hidden.
+  @state() private rankedGames: number | null = null;
   @state() private loading = false;
   private openedFrom: ProfileOrigin | null = null;
   // Mirrors the account modal's Games tab: keep the accumulated history list +
@@ -207,15 +211,40 @@ export class PlayerProfileModal extends BaseModal {
 
   private renderProfile() {
     if (this.loading) {
-      return this.renderLoadingSpinner(translateText("player_profile.loading"));
+      return html`${this.renderRankedGames()}${this.renderLoadingSpinner(
+        translateText("player_profile.loading"),
+      )}`;
     }
     if (!this.profileLoaded()) {
-      return this.renderNotFound();
+      return html`${this.renderRankedGames()}${this.renderNotFound()}`;
     }
     return html`
+      ${this.renderRankedGames()}
       <player-stats-tree-view
         .statsTree=${this.statsTree}
       ></player-stats-tree-view>
+    `;
+  }
+
+  // "Ranked games played" — the games count moved off the topplist and onto the
+  // profile. Kept outside the stats-tree conditional: the ranked ladder is a
+  // game-server stat, independent of whether the account profile (which may be
+  // served by the API) loaded.
+  private renderRankedGames() {
+    if (this.rankedGames === null) return nothing;
+    return html`
+      <div
+        class="mb-4 flex items-center justify-between gap-4 rounded-lg border border-white/10 bg-white/5 px-4 py-3"
+      >
+        <span
+          class="text-[11px] font-bold uppercase tracking-widest text-white/50"
+        >
+          ${translateText("player_profile.ranked_games")}
+        </span>
+        <span class="font-mono text-lg font-bold text-white">
+          ${this.rankedGames}
+        </span>
+      </div>
     `;
   }
 
@@ -265,12 +294,14 @@ export class PlayerProfileModal extends BaseModal {
     this.username = null;
     this.statsTree = null;
     this.clans = [];
+    this.rankedGames = null;
     this.gameHistoryCache = null;
     this.gamesScrollTop = 0;
     this.restoreGamesScrollAfterOpen = false;
     this.loading = publicId !== null;
     if (publicId !== null) {
       void this.loadProfile(publicId);
+      void this.loadRankedGames(publicId);
     }
   }
 
@@ -285,6 +316,16 @@ export class PlayerProfileModal extends BaseModal {
     this.statsTree = profile === false ? null : profile.stats;
     this.username = profile === false ? null : (profile.username ?? null);
     this.clans = profile === false ? [] : (profile.clans ?? []);
+  }
+
+  // Independent of loadProfile: the ranked count lives on the game server, not
+  // in the account profile response. Same generation guard so a superseded load
+  // cannot overwrite a newer profile.
+  private async loadRankedGames(publicId: string): Promise<void> {
+    const gen = this.loadGeneration;
+    const games = await fetchRankedPlayerGames(publicId);
+    if (gen !== this.loadGeneration || this.publicId !== publicId) return;
+    this.rankedGames = games;
   }
 
   // Intentionally preserves publicId/statsTree/history cache/scroll: the page
